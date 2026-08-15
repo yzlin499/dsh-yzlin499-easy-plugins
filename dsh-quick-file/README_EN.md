@@ -14,6 +14,8 @@ dsh plugin --profile web add ./dsh-quick-file
 
 Restart DSH Web to activate.
 
+> Or enable it quickly from the **dsh-yzlin499-plugins-manager** settings panel (Settings → Plugin Manager).
+
 ## Usage
 
 Type `@` in the input box → a menu appears (grouped with other `@` sources) →

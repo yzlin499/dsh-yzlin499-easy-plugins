@@ -13,6 +13,8 @@ dsh plugin --profile web add ./dsh-oc-usage
 
 Restart DSH Web to activate.
 
+> Or enable it quickly from the **dsh-yzlin499-plugins-manager** settings panel (Settings → Plugin Manager).
+
 ## Usage
 
 1. Click ⚙ on the floating window and paste the full Cookie from opencode.ai

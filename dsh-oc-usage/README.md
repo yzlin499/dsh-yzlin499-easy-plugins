@@ -12,6 +12,8 @@ dsh plugin --profile web add ./dsh-oc-usage
 
 重启 DSH Web 后生效。
 
+> 或者：直接通过 **dsh-yzlin499-plugins-manager** 的设置面板 →「插件管理」快速启用。
+
 ## 使用
 
 1. 点悬浮窗 ⚙ 粘贴 opencode.ai 登录后的完整 Cookie（必须含 `auth=`）。

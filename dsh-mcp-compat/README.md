@@ -11,6 +11,8 @@ dsh plugin --profile web add ./dsh-mcp-compat
 
 重启 DSH Web 后生效。
 
+> 或者：直接通过 **dsh-yzlin499-plugins-manager** 的设置面板 →「插件管理」快速启用。
+
 ## 支持的配置来源（按优先级，先出现者胜；项目级 + 用户级）
 
 - `.mcp.json` —— Claude Code / Codex / Cursor 约定（`mcpServers`）

@@ -12,6 +12,8 @@ dsh plugin --profile web add ./dsh-mcp-compat
 
 Restart DSH Web to activate.
 
+> Or enable it quickly from the **dsh-yzlin499-plugins-manager** settings panel (Settings → Plugin Manager).
+
 ## Supported config sources (priority order, first match wins; project + user level)
 
 - `.mcp.json` — Claude Code / Codex / Cursor convention (`mcpServers`)

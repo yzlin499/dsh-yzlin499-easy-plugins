@@ -13,6 +13,8 @@ dsh plugin --profile web add ./dsh-quick-file
 
 重启 DSH Web 后生效。
 
+> 或者：直接通过 **dsh-yzlin499-plugins-manager** 的设置面板 →「插件管理」快速启用。
+
 ## 使用
 
 输入框打 `@` → 弹出文件列表（与其它 `@` 源分组并列）→ 继续打字过滤
