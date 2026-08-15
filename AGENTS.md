@@ -6,16 +6,16 @@
 
 `dsh-yzlin499-easy-plugins` 是一个 **DSH（DeepSeek Harness）插件包（bundle）合集**。
 每个 `dsh-*/` 子目录是一个独立插件包，用 `dsh plugin` 一条命令安装，DSH 启动自动加载、
-重启不丢。根目录还有一键安装/卸载脚本。
+重启不丢。
 
 ## 仓库结构
 
 ```
-├── README.md / Install.md      # 使用与安装文档
-├── Docs/                       # 知识库（开发者视角）
+├── README.md                   # 使用文档
+├── Docs/                       # 知识库（参考、安装、插件开发）
+│   ├── 参考.md                  # 官方文档与生态链接
+│   └── Install.md              # 安装/卸载说明
 ├── AGENTS.md                   # 本文件
-├── install-all.ps1             # 一键安装全部插件
-├── uninstall-all.ps1           # 一键卸载全部插件
 ├── package.json                # 仓库元信息（private，勿发布）
 └── dsh-*/                      # 每个插件包
     ├── package.json            # 含 dsh.bundle.patch 声明
@@ -71,8 +71,6 @@
 ## 常用命令
 
 ```powershell
-./install-all.ps1                              # 一键安装全部插件
-./uninstall-all.ps1                            # 一键卸载全部插件
 dsh plugin --profile web add ./dsh-oc-usage    # 单个安装（可换包名）
 dsh plugin --profile web remove dsh-oc-usage   # 单个卸载
 ```

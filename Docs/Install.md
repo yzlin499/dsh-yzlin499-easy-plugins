@@ -11,16 +11,6 @@
 
 ## 安装
 
-### 方式一：一键安装全部（推荐）
-
-在仓库根目录打开 PowerShell，运行：
-
-```powershell
-./install-all.ps1
-```
-
-### 方式二：逐个安装
-
 在仓库根目录打开 PowerShell，运行：
 
 ```powershell
@@ -33,14 +23,6 @@ dsh plugin --profile web add ./dsh-mcp-compat
 安装完成后**重启 DSH Web**，完成。
 
 ## 卸载
-
-### 一键卸载全部
-
-```powershell
-./uninstall-all.ps1
-```
-
-### 逐个卸载
 
 ```powershell
 dsh plugin --profile web remove dsh-oc-usage

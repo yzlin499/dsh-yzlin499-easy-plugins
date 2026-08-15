@@ -13,7 +13,7 @@ DSH 启动自动加载、重启不丢。每个 `dsh-*/` 子目录都是一个标
 | [`dsh-oc-usage`](#dsh-oc-usageopencode-用量悬浮窗) | OpenCode 用量悬浮窗：右上角可拖拽悬浮窗，显示 opencode.ai Go 订阅 5h/7d/30d 用量 + 重置倒计时，5 分钟自动刷新 | `dsh plugin --profile web add ./dsh-oc-usage` |
 | [`dsh-mcp-compat`](#dsh-mcp-compat标准-mcp-配置兼容) | 标准 MCP 配置兼容：自动读取 `.mcp.json` / `opencode.json` / `.cursor/mcp.json` / `.codex/config.toml`（项目级 + 用户级），把每个 MCP 服务器挂载为 dsh-mcp-client 实例，工具以 `mcp__<名>__*` 出现 | `dsh plugin --profile web add ./dsh-mcp-compat` |
 
-> profile 名按你的 DSH 实例调整（例如 `web`），详见 [Install.md](Install.md)。
+> profile 名按你的 DSH 实例调整（例如 `web`），详见 [Docs/Install.md](Docs/Install.md)。
 
 ## 快速开始
 
@@ -24,13 +24,7 @@ DSH 启动自动加载、重启不丢。每个 `dsh-*/` 子目录都是一个标
    cd dsh-yzlin499-easy-plugins
    ```
 
-2. 一键安装全部插件（推荐）：
-
-   ```powershell
-   ./install-all.ps1
-   ```
-
-   或逐个安装：
+2. 安装插件：
 
    ```powershell
    dsh plugin --profile web add ./dsh-oc-usage
@@ -39,7 +33,7 @@ DSH 启动自动加载、重启不丢。每个 `dsh-*/` 子目录都是一个标
 
 3. **重启 DSH Web**，插件自动加载。
 
-卸载同理：`./uninstall-all.ps1` 或 `dsh plugin --profile web remove dsh-oc-usage`。
+卸载同理：`dsh plugin --profile web remove dsh-oc-usage`。
 
 ---
 
@@ -61,7 +55,7 @@ DSH 启动自动加载、重启不丢。每个 `dsh-*/` 子目录都是一个标
 
 ### 使用
 
-1. 安装（见 [Install.md](Install.md)）→ 重启 DSH → 右上角出现悬浮窗。
+1. 安装（见 [Docs/Install.md](Docs/Install.md)）→ 重启 DSH → 右上角出现悬浮窗。
 2. 点 ⚙ 粘贴 opencode.ai 登录后的完整 Cookie（必须含 `auth=`）。
 3. Workspace ID 可留空（自动发现）或手动填 `wrk_…`。
 
@@ -106,7 +100,7 @@ dsh-xxx/
 2. 在 `index.js` 实现 Host 逻辑；需要浏览器界面时加 `client.js` 并声明
    `dsh.client` 与 `exports["./client"]`。
 3. 本地验证：`dsh plugin --profile web add ./dsh-xxx` → 重启 DSH Web。
-4. 更新本 README 的插件表格与 Install.md，提交贡献。
+4. 更新本 README 的插件表格与 Docs/Install.md，提交贡献。
 
 ## 目录结构
 
@@ -114,10 +108,9 @@ dsh-xxx/
 dsh-yzlin499-easy-plugins/
 ├── README.md
 ├── AGENTS.md            # 给 AI 编码代理的项目说明
-├── Docs/                # 知识库（插件格式、架构、踩坑）
-├── Install.md           # 安装/卸载详细说明
-├── install-all.ps1      # 一键安装全部插件
-├── uninstall-all.ps1    # 一键卸载全部插件
+├── Docs/                # 知识库（参考、安装、插件开发）
+│   ├── 参考.md           # 官方文档与生态链接
+│   └── Install.md       # 安装/卸载详细说明
 ├── LICENSE              # MIT
 ├── package.json         # 仓库元信息
 └── dsh-*/               # 每个插件包（bundle）
