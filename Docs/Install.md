@@ -9,6 +9,7 @@
 | `dsh-oc-usage` | OpenCode 用量悬浮窗（右上角，5h/7d/30d 用量） |
 | `dsh-mcp-compat` | 自动读取 `.mcp.json` / `opencode.json` 等标准 MCP 配置并连接 |
 | `dsh-quick-file` | @ 快速输入文件（输入框 `@` 弹出文件列表，回车即插入路径） |
+| `dsh-yzlin499-plugins-manager` | 插件管理（设置页开关本集合插件，走 dsh CLI） |
 
 ## 安装
 
@@ -18,6 +19,7 @@
 dsh plugin --profile web add ./dsh-oc-usage
 dsh plugin --profile web add ./dsh-mcp-compat
 dsh plugin --profile web add ./dsh-quick-file
+dsh plugin --profile web add ./dsh-yzlin499-plugins-manager
 ```
 
 > `--profile web` 中的 `web` 是你的 DSH 实例名，按实际情况调整。
@@ -30,6 +32,7 @@ dsh plugin --profile web add ./dsh-quick-file
 dsh plugin --profile web remove dsh-oc-usage
 dsh plugin --profile web remove dsh-mcp-compat
 dsh plugin --profile web remove dsh-quick-file
+dsh plugin --profile web remove dsh-yzlin499-plugins-manager
 ```
 
 ## 原理（可选看）

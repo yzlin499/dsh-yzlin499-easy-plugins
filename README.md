@@ -13,6 +13,7 @@ DSH 启动自动加载、重启不丢。每个 `dsh-*/` 子目录都是一个标
 | [`dsh-oc-usage`](#dsh-oc-usageopencode-用量悬浮窗) | OpenCode 用量悬浮窗：右上角可拖拽悬浮窗，显示 opencode.ai Go 订阅 5h/7d/30d 用量 + 重置倒计时，5 分钟自动刷新 | `dsh plugin --profile web add ./dsh-oc-usage` |
 | [`dsh-mcp-compat`](#dsh-mcp-compat标准-mcp-配置兼容) | 标准 MCP 配置兼容：自动读取 `.mcp.json` / `opencode.json` / `.cursor/mcp.json` / `.codex/config.toml`（项目级 + 用户级），把每个 MCP 服务器挂载为 dsh-mcp-client 实例，工具以 `mcp__<名>__*` 出现 | `dsh plugin --profile web add ./dsh-mcp-compat` |
 | [`dsh-quick-file`](#dsh-quick-file快速输入文件) | @ 快速输入文件：输入框打 `@` 弹出工作区文件列表，回车/点击即把文件路径插入输入框（复用内置输入触发管道） | `dsh plugin --profile web add ./dsh-quick-file` |
+| [`dsh-yzlin499-plugins-manager`](#dsh-yzlin499-plugins-manager插件管理) | 插件管理：设置页列出本集合全部插件（含 `cordis.patch.yml` 的文件夹），一键启用/停用（走 dsh CLI，批量开关后重启生效）；只管理本项目插件 | `dsh plugin --profile web add ./dsh-yzlin499-plugins-manager` |
 
 > profile 名按你的 DSH 实例调整（例如 `web`），详见 [Docs/Install.md](Docs/Install.md)。
 
@@ -31,6 +32,7 @@ DSH 启动自动加载、重启不丢。每个 `dsh-*/` 子目录都是一个标
    dsh plugin --profile web add ./dsh-oc-usage
    dsh plugin --profile web add ./dsh-mcp-compat
    dsh plugin --profile web add ./dsh-quick-file
+   dsh plugin --profile web add ./dsh-yzlin499-plugins-manager
    ```
 
 3. **重启 DSH Web**，插件自动加载。
@@ -96,6 +98,18 @@ DSH 启动自动加载、重启不丢。每个 `dsh-*/` 子目录都是一个标
 
 输入框打 `@` 弹出文件列表（与其它 `@` 源分组并列）→ 继续打字过滤
 （按文件名/路径模糊匹配）→ ↑↓/回车或点击选中 → `@查询词` 被替换为文件路径。
+
+---
+
+## dsh-yzlin499-plugins-manager（插件管理）
+
+- **面板**：设置 →「插件管理」，列出本集合文件夹（管理器父目录）下所有含
+  `cordis.patch.yml` 的插件 + 已安装状态。
+- **开关**：走 `dsh plugin --profile web add/remove`；支持批量开关后一次性
+  重启 DSH Web 生效（面板会提示"有 N 项变更"）。
+- **边界**：只管理本集合内的插件，绝不触碰其它位置安装的插件；管理器自身
+  不可停用；目标 profile 默认 `web`、面板可改（内存态）。
+- **路由**：`GET /plugins-manager/list`、`POST /plugins-manager/profile`、`POST /plugins-manager/toggle`
 
 ---
 
