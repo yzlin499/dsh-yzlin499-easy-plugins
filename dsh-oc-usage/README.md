@@ -4,6 +4,10 @@ DSH 插件：**OpenCode（opencode.ai Go 订阅）用量悬浮窗**。
 
 右上角可拖拽悬浮窗，显示 5h / 7d / 30d 用量百分比 + 重置倒计时，每 5 分钟自动刷新。
 
+## 截图
+
+![截图](screenshot.png)
+
 ## 安装
 
 ```powershell

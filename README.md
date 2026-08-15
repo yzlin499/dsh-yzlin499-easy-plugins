@@ -9,7 +9,7 @@
 
 | 插件 | 截图 | 用途 | 安装命令 | 开发状态 |
 |---|---|---|---|---|
-| [dsh-oc-usage](dsh-oc-usage/README.md) | — | OpenCode 用量悬浮窗：右上角可拖拽悬浮窗，显示 opencode.ai Go 订阅 5h/7d/30d 用量 + 重置倒计时，5 分钟自动刷新 | `dsh plugin --profile web add ./dsh-oc-usage` | 序列化还没做完 |
+| [dsh-oc-usage](dsh-oc-usage/README.md) | <img src="dsh-oc-usage/screenshot.png" width="150" alt="dsh-oc-usage 截图"> | OpenCode 用量悬浮窗：右上角可拖拽悬浮窗，显示 opencode.ai Go 订阅 5h/7d/30d 用量 + 重置倒计时，5 分钟自动刷新 | `dsh plugin --profile web add ./dsh-oc-usage` | 序列化还没做完 |
 | [dsh-mcp-compat](dsh-mcp-compat/README.md) | — | 标准 MCP 配置兼容：自动读取 `.mcp.json` / `opencode.json` / `.cursor/mcp.json` / `.codex/config.toml`（项目级 + 用户级），把每个 MCP 服务器挂载为 dsh-mcp-client 实例，工具以 `mcp__<名>__*` 出现 | `dsh plugin --profile web add ./dsh-mcp-compat` | 没那么稳定 |
 | [dsh-quick-file](dsh-quick-file/README.md) | <img src="dsh-quick-file/screenshot.png" width="150" alt="dsh-quick-file 截图"> | @ 快速输入文件：输入框打 `@` 弹出工作区文件列表，回车/点击即把文件路径插入输入框（复用内置输入触发管道） | `dsh plugin --profile web add ./dsh-quick-file` | |
 | [dsh-yzlin499-plugins-manager](dsh-yzlin499-plugins-manager/README.md) | <img src="dsh-yzlin499-plugins-manager/screenshot.png" width="150" alt="插件管理器截图"> | 插件管理：设置页列出本集合全部插件，一键启用/停用（走 dsh CLI，批量开关后重启生效）；只管理本项目插件 | `dsh plugin --profile web add ./dsh-yzlin499-plugins-manager` | |

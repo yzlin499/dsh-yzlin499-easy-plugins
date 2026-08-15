@@ -5,6 +5,10 @@ DSH plugin: **OpenCode (opencode.ai Go subscription) usage floating window**.
 A draggable floating window in the top-right corner showing 5h / 7d / 30d usage
 percentages plus reset countdown, auto-refreshing every 5 minutes.
 
+## Screenshot
+
+![Screenshot](screenshot.png)
+
 ## Install
 
 ```powershell
