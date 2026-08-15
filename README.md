@@ -113,6 +113,8 @@ dsh-xxx/
 ```
 dsh-yzlin499-easy-plugins/
 ├── README.md
+├── AGENTS.md            # 给 AI 编码代理的项目说明
+├── Docs/                # 知识库（插件格式、架构、踩坑）
 ├── Install.md           # 安装/卸载详细说明
 ├── install-all.ps1      # 一键安装全部插件
 ├── uninstall-all.ps1    # 一键卸载全部插件
