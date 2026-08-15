@@ -41,6 +41,7 @@ window.__ModuleLoader__.load({
 			".pm-empty{font-size:12px;color:var(--dsw-alias-label-secondary);padding:16px 4px}",
 			".pm-mask{position:fixed;inset:0;z-index:2147483000;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;padding:24px}",
 			".pm-modal{width:min(720px,92vw);max-height:80vh;background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l2);border-radius:12px;box-shadow:0 12px 48px rgba(0,0,0,.4);display:flex;flex-direction:column;overflow:hidden}",
+			"body[data-ds-dark-theme] .pm-modal{background:var(--dsw-alias-bg-base)}",
 			".pm-modal-head{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--dsw-alias-border-l1)}",
 			".pm-modal-title{font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary)}",
 			".pm-modal-src{font-size:11px;color:var(--dsw-alias-label-secondary);flex:1}",

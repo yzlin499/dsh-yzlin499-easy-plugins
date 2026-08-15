@@ -25,7 +25,7 @@ window.__ModuleLoader__.load({
 			"body[data-ds-dark-theme] .wo-btn:hover{background:rgba(255,255,255,.08)}",
 			".wo-btn .wo-caret{margin-left:2px;font-size:9px;opacity:.7}",
 			".wo-menu{position:absolute;top:calc(100% + 4px);right:0;z-index:2147483000;min-width:160px;background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l2);border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.18);padding:4px;display:flex;flex-direction:column}",
-			"body[data-ds-dark-theme] .wo-menu{box-shadow:0 8px 28px rgba(0,0,0,.6)}",
+			"body[data-ds-dark-theme] .wo-menu{background:var(--dsw-alias-bg-base);box-shadow:0 8px 28px rgba(0,0,0,.6)}",
 			".wo-item{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 10px;border-radius:6px;color:var(--dsw-alias-label-primary);font-size:12.5px;cursor:pointer;background:transparent;border:none;text-align:left}",
 			".wo-item:hover{background:rgba(0,0,0,.06)}",
 			"body[data-ds-dark-theme] .wo-item:hover{background:rgba(255,255,255,.08)}",
