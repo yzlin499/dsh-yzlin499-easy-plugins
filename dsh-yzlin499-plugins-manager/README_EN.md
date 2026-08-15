@@ -2,6 +2,10 @@
 
 DSH plugin manager: enable/disable plugins in this collection from **Settings → Plugin Manager**.
 
+## Screenshot
+
+![Screenshot](screenshot.png)
+
 ## Features
 
 - Auto-scans the manager's parent folder (the collection root) for every

@@ -6,6 +6,10 @@ Type `@` in the input box to get a file list of the workspace; press Enter or
 click to insert the file path into the input (powered by the built-in input
 trigger pipeline — the input box itself is untouched).
 
+## Screenshot
+
+![Screenshot](screenshot.png)
+
 ## Install
 
 ```powershell

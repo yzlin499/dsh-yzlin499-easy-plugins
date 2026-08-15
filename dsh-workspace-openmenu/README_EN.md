@@ -4,6 +4,10 @@ DSH plugin: **workspace quick-open menu**. Adds an "Open as" button to the
 session header top-right (left of the session-log button) with a submenu to
 open the workspace location in: **pwsh / cmd / Explorer / VS Code**.
 
+## Screenshot
+
+![Screenshot](screenshot.png)
+
 ## Install
 
 ```powershell

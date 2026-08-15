@@ -3,6 +3,10 @@
 DSH 插件：**工作区快捷打开菜单**。在会话头部右上角（session log 按钮左侧）
 加一个「打开为」按钮，二级菜单在工作区位置打开：**pwsh / cmd / 资源管理器 / vscode**。
 
+## 截图
+
+![截图](screenshot.png)
+
 ## 安装
 
 ```powershell
