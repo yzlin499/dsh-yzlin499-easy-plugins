@@ -1,0 +1,24 @@
+{
+  "name": "dsh-workspace-openmenu",
+  "version": "0.1.0",
+  "description": "DSH plugin: a '打开为 / Open as' button beside the session-log utility — open the current workspace folder in pwsh, cmd, Explorer, or VS Code",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "inject": [
+        "slots"
+      ],
+      "platform": "web"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "license": "MIT"
+}
