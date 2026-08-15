@@ -1,0 +1,24 @@
+{
+  "name": "dsh-yzlin499-plugins-manager",
+  "version": "0.1.0",
+  "description": "DSH plugin manager: a settings panel that lists every plugin in this collection folder (folders containing cordis.patch.yml) and toggles them via the dsh CLI — install/uninstall without touching other plugins",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "inject": [
+        "slots"
+      ],
+      "platform": "web"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "license": "MIT"
+}

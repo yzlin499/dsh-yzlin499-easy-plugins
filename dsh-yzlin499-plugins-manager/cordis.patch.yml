@@ -1,0 +1,6 @@
+# dsh bundle layer: mount the plugin manager.
+# The manager scans its own parent folder for plugin bundles (dirs containing
+# cordis.patch.yml) and toggles them through the dsh CLI from a settings panel.
+- insert:
+    - id: plugins-manager
+      name: dsh-yzlin499-plugins-manager
