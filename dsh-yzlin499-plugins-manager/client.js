@@ -90,7 +90,7 @@ window.__ModuleLoader__.load({
 				fetch("/plugins-manager/toggle", {
 					method: "POST",
 					headers: { "content-type": "application/json" },
-					body: JSON.stringify({ dir: pl.dir, enable: !pl.installed }),
+					body: JSON.stringify({ dir: pl.dir, enable: !pl.enabled }),
 				})
 					.then((r) => r.json())
 					.then((d) => {
@@ -125,12 +125,12 @@ window.__ModuleLoader__.load({
 
 			// 插件行
 			const rows = (state.plugins || []).map((pl) => {
-				const badgeCls = pl.isSelf ? "pm-badge pm-badge-self" : (pl.installed ? "pm-badge pm-badge-on" : "pm-badge pm-badge-off");
-				const badgeText = pl.isSelf ? "管理器" : (pl.installed ? "已安装" : "未安装");
+				const badgeCls = pl.isSelf ? "pm-badge pm-badge-self" : (pl.enabled ? "pm-badge pm-badge-on" : "pm-badge pm-badge-off");
+				const badgeText = pl.isSelf ? "管理器" : (pl.enabled ? "已启用" : "未启用");
 				let btn = null;
 				if (!pl.isSelf) {
 					const onClick = () => toggle(pl);
-					const label = pl.installed ? "停用" : "启用";
+					const label = pl.enabled ? "停用" : "启用";
 					btn = react.createElement("button", {
 						className: "pm-btn",
 						disabled: state.busy != null,

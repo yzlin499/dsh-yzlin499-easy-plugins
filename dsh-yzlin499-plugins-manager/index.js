@@ -67,15 +67,16 @@ export function apply(ctx) {
     return out
   }
 
-  /** 已安装集合：读 profile package.json 的 dependencies 键 */
-  function readInstalled() {
+  /** 已启用集合：读 profile package.json 的 dsh.profile.bundles（真正的挂载清单） */
+  function readEnabled() {
     try {
       const pj = join(DSH_HOME, 'profiles', profile, 'package.json')
       if (!existsSync(pj)) return new Set()
       const pkg = JSON.parse(readFileSync(pj, 'utf8'))
-      return new Set(Object.keys(pkg.dependencies || {}))
+      const bundles = (pkg.dsh && pkg.dsh.profile && pkg.dsh.profile.bundles) || []
+      return new Set(bundles)
     } catch (e) {
-      log('读取已安装列表失败:', String((e && e.message) || e))
+      log('读取启用列表失败:', String((e && e.message) || e))
       return new Set()
     }
   }
@@ -121,6 +122,34 @@ export function apply(ctx) {
     return { exitCode: outcome.exitCode, output: (out + '\n' + err).trim() }
   }
 
+  /**
+   * 启用：dsh add；若该包已是依赖但链接失效（reconcile 判定非 bundle）导致
+   * 没进挂载清单，先 remove 再 add，用新仓库路径干净重装。
+   */
+  async function ensureEnabled(dir, name) {
+    const addArgs = ['plugin', '--profile', profile, 'add', join(ROOT, dir)]
+    let r = await runDsh(addArgs)
+    if (r.exitCode !== 0) return r
+    if (!readEnabled().has(name)) {
+      log('add 后未进挂载清单（疑似旧链接失效），remove 后重装:', name)
+      const rm = await runDsh(['plugin', '--profile', profile, 'remove', name])
+      if (rm.exitCode !== 0) return rm
+      r = await runDsh(addArgs)
+    }
+    return r
+  }
+
+  /** 停用：dsh remove，并校验已从挂载清单移除 */
+  async function ensureDisabled(name) {
+    const rm = await runDsh(['plugin', '--profile', profile, 'remove', name])
+    if (rm.exitCode !== 0) return rm
+    if (readEnabled().has(name)) {
+      log('remove 后仍在挂载清单:', name)
+      return { exitCode: 1, output: 'remove 后仍存在于挂载清单' }
+    }
+    return rm
+  }
+
   const sendJson = (res, obj, status = 200) => {
     res.writeHead(status, {
       'content-type': 'application/json; charset=utf-8',
@@ -146,8 +175,8 @@ export function apply(ctx) {
         const url = new URL(req.url, 'http://localhost')
         const p = url.pathname
         if (p === '/plugins-manager/list' && req.method === 'GET') {
-          const installed = readInstalled()
-          const plugins = scanPlugins().map((pl) => ({ ...pl, installed: installed.has(pl.name) }))
+          const enabled = readEnabled()
+          const plugins = scanPlugins().map((pl) => ({ ...pl, enabled: enabled.has(pl.name) }))
           sendJson(res, { root: ROOT, profile, plugins })
           return
         }
@@ -177,13 +206,10 @@ export function apply(ctx) {
             return
           }
           // 只允许操作扫描结果内的目录，防止任意路径注入
-          const args = [
-            'plugin', '--profile', profile,
-            enable ? 'add' : 'remove',
-            enable ? join(ROOT, dir) : match.name,
-          ]
-          log('执行:', args.join(' '))
-          const r = await runDsh(args)
+          log('执行:', enable ? '启用' : '停用', match.name)
+          const r = enable
+            ? await ensureEnabled(match.dir, match.name)
+            : await ensureDisabled(match.name)
           if (r.exitCode === 0) {
             sendJson(res, { ok: true, exitCode: r.exitCode, output: r.output, restart: true })
           } else {
