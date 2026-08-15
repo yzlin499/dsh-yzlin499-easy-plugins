@@ -14,6 +14,7 @@ DSH 启动自动加载、重启不丢。每个 `dsh-*/` 子目录都是一个标
 | [`dsh-mcp-compat`](#dsh-mcp-compat标准-mcp-配置兼容) | 标准 MCP 配置兼容：自动读取 `.mcp.json` / `opencode.json` / `.cursor/mcp.json` / `.codex/config.toml`（项目级 + 用户级），把每个 MCP 服务器挂载为 dsh-mcp-client 实例，工具以 `mcp__<名>__*` 出现 | `dsh plugin --profile web add ./dsh-mcp-compat` |
 | [`dsh-quick-file`](#dsh-quick-file快速输入文件) | @ 快速输入文件：输入框打 `@` 弹出工作区文件列表，回车/点击即把文件路径插入输入框（复用内置输入触发管道） | `dsh plugin --profile web add ./dsh-quick-file` |
 | [`dsh-yzlin499-plugins-manager`](#dsh-yzlin499-plugins-manager插件管理) | 插件管理：设置页列出本集合全部插件（含 `cordis.patch.yml` 的文件夹），一键启用/停用（走 dsh CLI，批量开关后重启生效）；只管理本项目插件 | `dsh plugin --profile web add ./dsh-yzlin499-plugins-manager` |
+| [`dsh-workspace-openmenu`](#dsh-workspace-openmenu工作区快捷打开) | 工作区快捷打开：会话头部右上角（session log 左侧）「打开为」按钮，二级菜单在工作区位置打开 pwsh / cmd / 资源管理器 / vscode | `dsh plugin --profile web add ./dsh-workspace-openmenu` |
 
 > profile 名按你的 DSH 实例调整（例如 `web`），详见 [Docs/Install.md](Docs/Install.md)。
 
@@ -33,6 +34,7 @@ DSH 启动自动加载、重启不丢。每个 `dsh-*/` 子目录都是一个标
    dsh plugin --profile web add ./dsh-mcp-compat
    dsh plugin --profile web add ./dsh-quick-file
    dsh plugin --profile web add ./dsh-yzlin499-plugins-manager
+   dsh plugin --profile web add ./dsh-workspace-openmenu
    ```
 
 3. **重启 DSH Web**，插件自动加载。
@@ -110,6 +112,18 @@ DSH 启动自动加载、重启不丢。每个 `dsh-*/` 子目录都是一个标
 - **边界**：只管理本集合内的插件，绝不触碰其它位置安装的插件；管理器自身
   不可停用；目标 profile 默认 `web`、面板可改（内存态）。
 - **路由**：`GET /plugins-manager/list`、`POST /plugins-manager/profile`、`POST /plugins-manager/toggle`
+
+---
+
+## dsh-workspace-openmenu（工作区快捷打开）
+
+- **入口**：`conversation.session.header.utilities` 插槽（右对齐会话工具区，
+  `order: -10`，排在 session log 按钮左侧）——「打开为」按钮 + 下拉二级菜单。
+- **菜单项**：pwsh（新 PowerShell 7 窗口）/ cmd（新命令提示符窗口）/
+  资源管理器（Explorer）/ vscode（VS Code 打开目录）。
+- **Host**：`/workspace-open/open` 按会话工作区根（`SessionHeader.cwd`）启动应用；
+  explorer 直接 spawn，pwsh/cmd 经 `cmd /c start` 开新窗口，vscode 优先定位 `Code.exe`
+  再回退 `code` 命令；应用缺失或会话无工作区时返回明确错误。
 
 ---
 
