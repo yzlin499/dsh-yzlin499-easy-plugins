@@ -47,6 +47,11 @@
 4. **生命周期**：所有副作用（timer / watcher / 路由 / 监听）必须可逆——
    用 `ctx.effect(() => { ...; return disposer })` 或 `ctx.on()` 的返回 off 函数，
    `ctx.webServer.register` 卸载时自动清理。
+5. **README 双份（必须）**：每个插件包必须带 `README.md`（中文）和 `README_EN.md`（英文）。
+   - 语言规则：中文界面显示 `README.md`；英文界面优先 `README_EN.md`（缺失回退 `README.md`）。
+   - 内容至少覆盖：用途 / 安装 / 使用 / 工作原理 / License。
+   - 这是插件管理器（`dsh-yzlin499-plugins-manager`）详情弹窗的展示来源，
+     其 `/plugins-manager/readme` 路由按此规范读取；新增插件缺 README 会被视为不完整。
 
 ## 已有插件要点
 
