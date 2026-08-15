@@ -88,11 +88,11 @@ dsh plugin --profile web remove dsh-oc-usage   # 单个卸载
   只读任务需要的叶子字段。
 - 日志用 `console.log('[<plugin>]', ...)` 前缀。
 
-## 发布 npm（可选，需用户确认）
+## 分发方式
 
-- 每个插件包是独立 npm 包；发布在**插件目录内**执行：`npm login`（强制 2FA）→ `npm publish`。
-- 候选包名（`dsh-oc-usage` / `dsh-mcp-compat`）经核实可用；公开发布不可撤回（72h 内可 unpublish）。
-- 根 `package.json` 是 `"private": true`，**禁止**对根目录 publish。
+- 只通过 **GitHub** 分发，**不发布 npm**：使用者克隆仓库后用本地路径安装
+  （`dsh plugin --profile web add ./dsh-xxx`）。
+- 根 `package.json` 是 `"private": true`，禁止 publish。
 
 ## Git 约定
 
