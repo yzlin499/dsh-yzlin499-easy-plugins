@@ -1,0 +1,24 @@
+{
+  "name": "dsh-oc-usage",
+  "version": "0.1.0",
+  "description": "DSH plugin: opencode.ai Go subscription usage floating window (5h/7d/30d usage percent + reset countdown) for the DeepSeek Harness web GUI",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "inject": [
+        "slots"
+      ],
+      "platform": "web"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "license": "MIT"
+}

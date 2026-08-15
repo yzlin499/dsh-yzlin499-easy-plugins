@@ -1,0 +1,8 @@
+# dsh bundle layer: mount the opencode usage window plugin.
+# - id: oc-usage   —— the row key in the composed tree
+#   name: dsh-oc-usage —— the package whose `main` (index.js) is the host half
+# `dsh plugin --profile web add <this-package>` installs it and auto-registers
+# this patch as a bundle layer (dsh.bundle.patch), so DSH mounts it on boot.
+- insert:
+    - id: oc-usage
+      name: dsh-oc-usage

@@ -1,0 +1,16 @@
+{
+  "id": "dsh-external/dsh-oc-usage",
+  "version": "0.1.0",
+  "main": "./index.js",
+  "description": "DSH plugin: opencode.ai Go subscription usage floating window for the DeepSeek Harness web GUI — 5h/7d/30d usage percent + reset countdown, auto-refresh every 5 minutes",
+  "engines": {
+    "dsh": ">=0.0.1"
+  },
+  "contributes": {
+    "tools": [],
+    "skills": []
+  },
+  "client": {
+    "main": "./client.js"
+  }
+}

@@ -1,0 +1,7 @@
+# dsh bundle layer: mount the .mcp.json compatibility plugin.
+# The plugin reads every workspace's .mcp.json / opencode.json / .cursor/mcp.json /
+# .codex/config.toml plus the user-home equivalents, and mounts one dsh-mcp-client
+# instance per server found — no manual translation of MCP configs needed.
+- insert:
+    - id: mcp-compat
+      name: dsh-mcp-compat

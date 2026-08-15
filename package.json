@@ -1,0 +1,22 @@
+{
+  "name": "dsh-yzlin499-easy-plugins",
+  "version": "0.1.0",
+  "private": true,
+  "description": "个人 DSH 插件合集 —— DeepSeek Harness Web 的可安装插件包集合（dsh plugin 即装即用）",
+  "license": "MIT",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "plugin",
+    "plugins",
+    "mcp",
+    "opencode"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yzlin499/dsh-yzlin499-easy-plugins.git"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
