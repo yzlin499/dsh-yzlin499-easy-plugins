@@ -45,7 +45,24 @@ window.__ModuleLoader__.load({
 			".pm-modal-title{font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary)}",
 			".pm-modal-src{font-size:11px;color:var(--dsw-alias-label-secondary);flex:1}",
 			".pm-modal-body{padding:14px;overflow:auto}",
-			".pm-readme{margin:0;font-size:12px;line-height:1.6;color:var(--dsw-alias-label-primary);white-space:pre-wrap;word-break:break-word;font-family:system-ui,'Segoe UI',sans-serif}",
+			".pm-readme{font-size:12.5px;line-height:1.7;color:var(--dsw-alias-label-primary);word-break:break-word}",
+			".pm-readme h1,.pm-readme h2,.pm-readme h3,.pm-readme h4{margin:14px 0 8px;line-height:1.35;color:var(--dsw-alias-label-primary)}",
+			".pm-readme h1{font-size:17px;border-bottom:1px solid var(--dsw-alias-border-l1);padding-bottom:6px}",
+			".pm-readme h2{font-size:15px;border-bottom:1px solid var(--dsw-alias-border-l1);padding-bottom:4px}",
+			".pm-readme h3{font-size:13.5px}",
+			".pm-readme h4{font-size:12.5px}",
+			".pm-readme p{margin:8px 0}",
+			".pm-readme ul,.pm-readme ol{margin:8px 0;padding-left:22px}",
+			".pm-readme li{margin:3px 0}",
+			".pm-readme code{font-family:Consolas,'Courier New',monospace;font-size:11.5px;background:rgba(128,128,128,.14);border-radius:4px;padding:1px 5px}",
+			".pm-readme pre{background:rgba(0,0,0,.25);border:1px solid var(--dsw-alias-border-l1);border-radius:8px;padding:10px 12px;overflow:auto;margin:10px 0}",
+			".pm-readme pre code{background:none;padding:0}",
+			".pm-readme blockquote{margin:8px 0;padding:2px 12px;border-left:3px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary)}",
+			".pm-readme table{border-collapse:collapse;margin:10px 0}",
+			".pm-readme th,.pm-readme td{border:1px solid var(--dsw-alias-border-l2);padding:5px 10px;font-size:12px}",
+			".pm-readme a{color:var(--dsw-alias-brand-primary)}",
+			".pm-readme img{max-width:100%;border-radius:6px}",
+			".pm-readme hr{border:none;border-top:1px solid var(--dsw-alias-border-l1);margin:14px 0}",
 		].join("");
 		const tagId = "dsh-yzlin499-plugins-manager/style";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId) + "]") === null) {
@@ -86,8 +103,8 @@ window.__ModuleLoader__.load({
 							setState((s) => ({
 								...s, detailLoading: false,
 								detail: d.ok
-									? { ...s.detail, text: d.text, source: d.source }
-									: { ...s.detail, text: d.error || "读取失败", source: "" },
+									? { ...s.detail, text: d.text, html: d.html, source: d.source }
+									: { ...s.detail, text: d.error || "读取失败", html: "", source: "" },
 							}));
 						})
 						.catch(() => setState((s) => ({ ...s, detailLoading: false })));
@@ -143,7 +160,7 @@ window.__ModuleLoader__.load({
 
 				const openDetail = (pl) => {
 					setState((s) => ({
-						...s, detail: { dir: pl.dir, name: pl.name, text: "", source: "" }, detailLoading: true,
+						...s, detail: { dir: pl.dir, name: pl.name, text: "", html: "", source: "" }, detailLoading: true,
 					}));
 				};
 				const closeDetail = () => setState((s) => ({ ...s, detail: null }));
@@ -211,7 +228,7 @@ window.__ModuleLoader__.load({
 							react.createElement("div", { className: "pm-modal-body" },
 								state.detailLoading
 									? react.createElement("div", { className: "pm-empty" }, "加载中…")
-									: react.createElement("pre", { className: "pm-readme" }, state.detail.text || ""),
+									: react.createElement("div", { className: "pm-readme", dangerouslySetInnerHTML: { __html: state.detail.html || "" } }),
 							),
 						),
 					)

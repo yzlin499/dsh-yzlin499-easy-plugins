@@ -20,6 +20,9 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
+// 三方库 vendored（相对路径引入，规避 bundle 源目录裸 import 解析失败的坑）：
+// marked —— README markdown 渲染（MIT，见 vendor/marked.esm.js 头部许可）
+import { marked } from './vendor/marked.esm.js'
 
 export const name = 'plugins-manager'
 export const inject = ['subprocess', 'webServer']
@@ -31,6 +34,32 @@ const PROFILE_RE = /^[A-Za-z0-9_-]+$/
 const SELF_DIR = 'dsh-yzlin499-plugins-manager'
 
 const log = (...a) => console.log('[plugins-manager]', ...a)
+
+/** HTML 转义（纯文本回退用） */
+const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => (
+  { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+))
+
+/** 轻量 XSS 卫生：README 可能来自社区插件，渲染前剥掉危险标签与事件属性 */
+function sanitizeHtml(html) {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<iframe[\s\S]*?<\/iframe>/gi, '')
+    .replace(/<object[\s\S]*?<\/object>/gi, '')
+    .replace(/<embed[\s\S]*?(?:\/?>|<\/embed>)/gi, '')
+    .replace(/\s+on\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    .replace(/javascript:/gi, '')
+}
+
+/** README markdown → 消毒后的 HTML（渲染失败则转义纯文本） */
+function renderReadme(text) {
+  try {
+    return sanitizeHtml(marked.parse(text, { gfm: true, breaks: true }))
+  } catch (e) {
+    log('markdown 渲染失败，回退纯文本:', String((e && e.message) || e))
+    return escapeHtml(text)
+  }
+}
 
 // 内存态：目标 profile（默认 web，面板可改）
 let profile = 'web'
@@ -232,7 +261,7 @@ export function apply(ctx) {
             text = match.description || '(该插件没有 README 或描述)'
             source = 'package.json'
           }
-          sendJson(res, { ok: true, dir, lang, source, text })
+          sendJson(res, { ok: true, dir, lang, source, text, html: renderReadme(text) })
           return
         }
         if (p === '/plugins-manager/profile' && req.method === 'POST') {

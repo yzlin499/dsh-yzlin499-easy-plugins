@@ -92,6 +92,11 @@ dsh plugin --profile web remove dsh-oc-usage   # 单个卸载
 - 不把 Services/Events/Slots 等运行时对象 JSON.stringify 或整体拷贝，
   只读任务需要的叶子字段。
 - 日志用 `console.log('[<plugin>]', ...)` 前缀。
+- **引入三方库（vendored 相对路径）**：bundle 顶层裸 import 会按源目录解析失败
+  （历史教训）；Client 的 `require()` 只能解析已注册模块表。因此把库的 ESM 构建
+  放进插件包 `vendor/` 目录（保留原许可证头），Host 侧 `import ... from './vendor/xxx.js'`
+  相对引入（示例：plugins-manager 的 `marked`）。渲染外来内容（如 README）前必须做
+  XSS 消毒（剥 script/iframe/on* 等）。
 
 ## 分发方式
 
