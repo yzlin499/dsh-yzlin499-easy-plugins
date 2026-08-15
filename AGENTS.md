@@ -101,6 +101,7 @@ dsh plugin --profile web remove dsh-oc-usage   # 单个卸载
 
 ## Git 约定
 
+- **提交日志一律使用中文**：标题与正文都用中文描述（技术名词/命令可保留英文）。
 - 分支 `main`；换行符由 `.gitattributes` 统一（仓库存 LF）。
 - 本仓库 `.git/config` 里有 github.com 专用的 NAS 代理
   （`http.https://github.com/.proxy`），**只写仓库级，不要动全局 git 配置**。
