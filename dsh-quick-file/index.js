@@ -15,8 +15,8 @@ export const inject = ['fs', 'sessions', 'webServer']
 
 const log = (...a) => console.log('[quick-file]', ...a)
 
-const MAX_DEPTH = 3
-const MAX_FILES = 50
+// 内存态配置（设置卡片可改，重启恢复默认）
+let config = { depth: 3, max: 50 }
 const IGNORE_DIRS = new Set([
   'node_modules', '.git', 'dist', 'build', 'coverage', '.next',
   '.cache', '__pycache__', '.venv', 'venv', 'target', '.dsh',
@@ -39,7 +39,7 @@ export function apply(ctx) {
   async function collectFiles(root) {
     const out = []
     const walk = async (dir, depth) => {
-      if (depth > MAX_DEPTH || out.length >= MAX_FILES) return
+      if (depth > config.depth || out.length >= config.max) return
       let entries
       try {
         const target = await ctx.fs.resolve(dir)
@@ -48,7 +48,7 @@ export function apply(ctx) {
         return
       }
       for (const entry of entries) {
-        if (out.length >= MAX_FILES) return
+        if (out.length >= config.max) return
         const isDir = entry.type === 'directory'
         if (isDir && IGNORE_DIRS.has(entry.name)) continue
         const abs = join(dir, entry.name)
@@ -68,6 +68,14 @@ export function apply(ctx) {
     })
     res.end(JSON.stringify(obj))
   }
+  const readBody = (req) => new Promise((resolve) => {
+    let data = ''
+    req.on('data', (c) => { data += c })
+    req.on('end', () => {
+      try { resolve(data ? JSON.parse(data) : {}) } catch { resolve({}) }
+    })
+    req.on('error', () => resolve({}))
+  })
 
   // ── 注册 /quick-file/* 路由（随插件卸载自动清理）──
   ctx.webServer.register({
@@ -90,7 +98,33 @@ export function apply(ctx) {
               (f) => f.path.toLowerCase().includes(q) || f.name.toLowerCase().includes(q),
             )
           }
-          sendJson(res, { files: files.slice(0, MAX_FILES) })
+          sendJson(res, { files: files.slice(0, config.max) })
+          return
+        }
+        if (url.pathname === '/quick-file/config' && req.method === 'GET') {
+          sendJson(res, { depth: config.depth, max: config.max })
+          return
+        }
+        if (url.pathname === '/quick-file/config' && req.method === 'POST') {
+          const a = await readBody(req)
+          if (a.depth != null) {
+            const d = Number(a.depth)
+            if (!Number.isInteger(d) || d < 1 || d > 10) {
+              sendJson(res, { ok: false, error: 'depth 需为 1-10 的整数' }, 400)
+              return
+            }
+            config.depth = d
+          }
+          if (a.max != null) {
+            const m = Number(a.max)
+            if (!Number.isInteger(m) || m < 10 || m > 200) {
+              sendJson(res, { ok: false, error: 'max 需为 10-200 的整数' }, 400)
+              return
+            }
+            config.max = m
+          }
+          log('config ->', JSON.stringify(config))
+          sendJson(res, { ok: true, depth: config.depth, max: config.max })
           return
         }
         sendJson(res, { ok: false, error: 'not-found' }, 404)

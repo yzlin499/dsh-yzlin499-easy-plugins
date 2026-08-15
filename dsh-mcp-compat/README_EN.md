@@ -12,7 +12,7 @@ dsh plugin --profile web add ./dsh-mcp-compat
 
 Restart DSH Web to activate.
 
-> Or enable it quickly from the **dsh-yzlin499-plugins-manager** settings panel (Settings → Plugin Manager).
+> Or enable it quickly from the **dsh-yzlin499-plugins-manager** Plugin Manager card (Settings → Plugins).
 
 ## Supported config sources (priority order, first match wins; project + user level)
 

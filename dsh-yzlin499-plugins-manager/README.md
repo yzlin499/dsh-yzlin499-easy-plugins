@@ -1,6 +1,6 @@
 # dsh-yzlin499-plugins-manager
 
-DSH 插件管理器：在**设置 → 插件管理**面板里开关本插件集合中的插件。
+DSH 插件管理器：在官方**设置 → 插件 →「插件管理」卡片**里开关本插件集合中的插件。
 
 ## 截图
 
@@ -26,7 +26,7 @@ DSH 插件管理器：在**设置 → 插件管理**面板里开关本插件集�
 dsh plugin --profile web add ./dsh-yzlin499-plugins-manager
 ```
 
-重启 DSH Web 后，设置 → 插件管理 即可使用。
+重启 DSH Web 后，设置 → 插件 →「插件管理」卡片即可使用。
 
 ## License
 

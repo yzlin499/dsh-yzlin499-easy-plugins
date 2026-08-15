@@ -12,7 +12,8 @@
   "dsh": {
     "client": {
       "inject": [
-        "inputTriggers"
+        "inputTriggers",
+        "slots"
       ],
       "platform": "web"
     },

@@ -51,7 +51,7 @@
    - 语言规则：中文界面显示 `README.md`；英文界面优先 `README_EN.md`（缺失回退 `README.md`）。
    - 内容至少覆盖：用途 / 安装 / 使用 / 工作原理 / License。
    - 安装段需注明：已装 **dsh-yzlin499-plugins-manager** 时，可直接在
-     「设置 → 插件管理」面板一键启用。
+     「设置 → 插件 → 插件管理」卡片一键启用。
    - 这是插件管理器（`dsh-yzlin499-plugins-manager`）详情弹窗的展示来源，
      其 `/plugins-manager/readme` 路由按此规范读取；新增插件缺 README 会被视为不完整。
 

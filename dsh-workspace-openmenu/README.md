@@ -15,7 +15,7 @@ dsh plugin --profile web add ./dsh-workspace-openmenu
 
 重启 DSH Web 后生效。
 
-> 或者：直接通过 **dsh-yzlin499-plugins-manager** 的设置面板 →「插件管理」快速启用。
+> 或者：直接通过 **dsh-yzlin499-plugins-manager** 的「插件管理」卡片（设置 → 插件）快速启用。
 
 ## 使用
 

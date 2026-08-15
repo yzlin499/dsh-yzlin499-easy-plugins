@@ -44,7 +44,18 @@ window.__ModuleLoader__.load({
 			".ocu-save{margin-left:auto}",
 			".ocu-meta{font-size:10px;color:var(--dsw-alias-label-secondary);padding:0 12px 8px}",
 			".ocu-pill{display:inline-flex;align-items:center;gap:7px;padding:7px 12px;background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l2);border-radius:999px;box-shadow:0 4px 16px rgba(0,0,0,.3);cursor:pointer;font-size:11px;color:var(--dsw-alias-label-primary)}",
-			".ocu-pill:hover{border-color:var(--dsw-alias-brand-primary)}"
+			".ocu-pill:hover{border-color:var(--dsw-alias-brand-primary)}",
+			".ocu-s-card{display:flex;flex-direction:column;gap:8px}",
+			".ocu-s-row{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--dsw-alias-label-secondary)}",
+			".ocu-s-label{width:100px;flex-shrink:0}",
+			".ocu-s-input{flex:1;min-width:0;background:rgba(0,0,0,.22);border:1px solid var(--dsw-alias-border-l2);border-radius:6px;color:var(--dsw-alias-label-primary);font-size:12px;padding:5px 7px}",
+			".ocu-s-input:focus{outline:none;border-color:var(--dsw-alias-brand-primary)}",
+			".ocu-s-hint{font-size:11px;color:var(--dsw-alias-label-secondary)}",
+			".ocu-s-foot{display:flex;align-items:center;gap:10px;margin-top:2px}",
+			".ocu-s-btn{background:transparent;border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary);border-radius:6px;font-size:12px;line-height:1;padding:5px 12px;cursor:pointer}",
+			".ocu-s-btn:hover{color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-border-l1)}",
+			".ocu-s-btn[disabled]{opacity:.45;cursor:default}",
+			".ocu-s-status{font-size:11px;color:var(--dsw-alias-label-secondary)}"
 		].join("");
 		const tagId = "dsh-oc-usage/style";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId) + "]") === null) {
@@ -264,7 +275,62 @@ window.__ModuleLoader__.load({
 		}
 		//#endregion
 
-		/** 注册进 shell.overlay（帧级浮动层，id 自定义，additive） */
+		//#region SettingsCard（官方「插件」设置页：Cookie / 工作区配置）
+		function SettingsCard() {
+			const [state, setState] = react.useState({ cookie: "", workspaceId: "", cookieSet: false, saving: false, status: "" });
+
+			react.useEffect(() => {
+				api("/oc-usage/config-get").then((r) => {
+					setState((s) => ({ ...s, workspaceId: r.workspaceId || "", cookieSet: !!r.cookieSet }));
+				}).catch(() => setState((s) => ({ ...s, status: "读取配置失败" })));
+			}, []);
+
+			const save = async () => {
+				setState((s) => ({ ...s, saving: true, status: "" }));
+				try {
+					const r = await api("/oc-usage/config-set", { cookie: state.cookie, workspaceId: state.workspaceId });
+					setState((s) => ({
+						...s, saving: false,
+						cookieSet: !!state.cookie.trim(),
+						status: r.ok ? "已保存（Cookie 只存 Host 内存）" : (r.error || "保存失败"),
+					}));
+				} catch (e) {
+					setState((s) => ({ ...s, saving: false, status: String((e && e.message) || e) }));
+				}
+			};
+
+			const input = (label, value, onChange, placeholder, type) =>
+				react.createElement("label", { className: "ocu-s-row" },
+					react.createElement("span", { className: "ocu-s-label" }, label),
+					react.createElement("input", {
+						className: "ocu-s-input",
+						type: type || "text",
+						value: value,
+						placeholder: placeholder || "",
+						onChange: (e) => onChange(e.target.value),
+					}),
+				);
+
+			return react.createElement("div", { className: "ocu-s-card" },
+				react.createElement("div", { className: "ocu-s-hint" },
+					state.cookieSet
+						? "已配置 Cookie（出于安全不回显，如需更换请重新粘贴）"
+						: "尚未配置 Cookie",
+				),
+				input("Cookie", state.cookie, (v) => setState((s) => ({ ...s, cookie: v })),
+					"粘贴 opencode.ai 登录后的完整 Cookie（含 auth=）", "password"),
+				input("Workspace ID", state.workspaceId, (v) => setState((s) => ({ ...s, workspaceId: v })),
+					"留空自动发现，或填 wrk_…"),
+				react.createElement("div", { className: "ocu-s-foot" },
+					react.createElement("button", { className: "ocu-s-btn", disabled: state.saving, onClick: save },
+						state.saving ? "保存中…" : "保存"),
+					state.status ? react.createElement("span", { className: "ocu-s-status" }, state.status) : null,
+				),
+			);
+		}
+		//#endregion
+
+		/** 注册进 shell.overlay（帧级浮动层）+ settings.plugin.item（官方插件设置卡片） */
 		const inject = ["slots"];
 		function apply(ctx) {
 			ctx.slots.inject("shell.overlay", () => ctx.slots.register({
@@ -273,6 +339,13 @@ window.__ModuleLoader__.load({
 				order: 100,
 				label: "OpenCode 用量"
 			}, Overlay));
+
+			ctx.slots.inject("settings.plugin.item", () => ctx.slots.register({
+				name: "settings.plugin.item",
+				id: "oc-usage-settings",
+				order: 20,
+				label: "OpenCode 用量"
+			}, SettingsCard));
 		}
 
 		exports.apply = apply;

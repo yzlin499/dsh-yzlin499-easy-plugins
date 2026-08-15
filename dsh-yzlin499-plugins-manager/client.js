@@ -1,7 +1,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // dsh-yzlin499-plugins-manager — Client 半侧（__ModuleLoader__ 静态格式）
 //
-// 注册一个 settings.section 页"插件管理"：
+// 注册为官方「插件」设置页的一张卡片（settings.plugin.item，list、additive）：
 //   · 列出本集合（管理器父文件夹扫描）的所有插件 + 启用状态（dsh.profile.bundles）
 //   · 每行：名称 + 状态徽标 + [详情] [启用/停用]
 //   · 详情：弹窗显示插件 README——中文界面读 README.md，英文界面优先 README_EN.md
@@ -245,10 +245,11 @@ window.__ModuleLoader__.load({
 				);
 			}
 
-			ctx.slots.inject("settings.section", () => ctx.slots.register({
-				name: "settings.section",
-				id: "yzlin499-plugins",
-				order: 16,
+			// 注册为官方「插件」设置页的一张卡片（settings.plugin.item，替代独立标签页）
+			ctx.slots.inject("settings.plugin.item", () => ctx.slots.register({
+				name: "settings.plugin.item",
+				id: "yzlin499-plugins-manager",
+				order: 30,
 				label: "插件管理",
 			}, Section));
 		}

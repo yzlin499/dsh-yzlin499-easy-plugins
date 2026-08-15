@@ -1,6 +1,6 @@
 # dsh-yzlin499-plugins-manager
 
-DSH plugin manager: enable/disable plugins in this collection from **Settings → Plugin Manager**.
+DSH plugin manager: enable/disable plugins in this collection from the **Plugin Manager** card under **Settings → Plugins**.
 
 ## Screenshot
 
