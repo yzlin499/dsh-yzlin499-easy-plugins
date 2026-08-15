@@ -198,8 +198,41 @@ export function apply(ctx) {
         const p = url.pathname
         if (p === '/plugins-manager/list' && req.method === 'GET') {
           const enabled = readEnabled()
-          const plugins = scanPlugins().map((pl) => ({ ...pl, enabled: enabled.has(pl.name) }))
+          const plugins = scanPlugins().map((pl) => ({
+            dir: pl.dir, name: pl.name, enabled: enabled.has(pl.name), isSelf: pl.isSelf,
+          }))
           sendJson(res, { root: ROOT, profile, plugins })
+          return
+        }
+        if (p === '/plugins-manager/readme' && req.method === 'GET') {
+          const dir = String(url.searchParams.get('dir') || '')
+          const lang = String(url.searchParams.get('lang') || 'zh') === 'en' ? 'en' : 'zh'
+          const match = scanPlugins().find((pl) => pl.dir === dir)
+          if (!match) {
+            sendJson(res, { ok: false, error: '未知插件目录: ' + dir }, 400)
+            return
+          }
+          // 规范：中文默认读 README.md；英文界面优先 README_EN.md（缺失回退 README.md）；
+          // 两者都没有才回退 package.json 的 description
+          const base = join(ROOT, dir)
+          const order = lang === 'en' ? ['README_EN.md', 'README.md'] : ['README.md', 'README_EN.md']
+          let text = null
+          let source = null
+          for (const f of order) {
+            const fp = join(base, f)
+            if (existsSync(fp)) {
+              try {
+                text = readFileSync(fp, 'utf8')
+                source = f
+              } catch {}
+              if (text !== null) break
+            }
+          }
+          if (text === null) {
+            text = match.description || '(该插件没有 README 或描述)'
+            source = 'package.json'
+          }
+          sendJson(res, { ok: true, dir, lang, source, text })
           return
         }
         if (p === '/plugins-manager/profile' && req.method === 'POST') {

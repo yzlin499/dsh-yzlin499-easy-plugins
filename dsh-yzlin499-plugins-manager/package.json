@@ -12,7 +12,8 @@
   "dsh": {
     "client": {
       "inject": [
-        "slots"
+        "slots",
+        "locale"
       ],
       "platform": "web"
     },

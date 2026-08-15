@@ -2,8 +2,10 @@
 // dsh-yzlin499-plugins-manager — Client 半侧（__ModuleLoader__ 静态格式）
 //
 // 注册一个 settings.section 页"插件管理"：
-//   · 列出本集合（管理器父文件夹扫描）的所有插件 + 已安装状态
-//   · 每个插件一个"启用/停用"开关 → POST /plugins-manager/toggle（Host 跑 dsh CLI）
+//   · 列出本集合（管理器父文件夹扫描）的所有插件 + 启用状态（dsh.profile.bundles）
+//   · 每行：名称 + 状态徽标 + [详情] [启用/停用]
+//   · 详情：弹窗显示插件 README——中文界面读 README.md，英文界面优先 README_EN.md
+//     （缺失回退 README.md，都没有才回退 package.json description）；跟随 DSH 语言实时切换
 //   · 批量开关后显示"需要重启 DSH Web 生效"横幅（不自动重启）
 //   · 顶部可改目标 profile（默认 web，内存态）
 // ═══════════════════════════════════════════════════════════════════════════
@@ -31,12 +33,19 @@ window.__ModuleLoader__.load({
 			".pm-row{display:flex;align-items:center;gap:10px;padding:9px 10px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px}",
 			".pm-info{flex:1;min-width:0}",
 			".pm-name{font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary);display:flex;align-items:center;gap:6px}",
-			".pm-desc{font-size:11px;color:var(--dsw-alias-label-secondary);margin-top:2px;line-height:1.4;word-break:break-word}",
+			".pm-btns{display:flex;gap:8px;flex-shrink:0}",
 			".pm-badge{font-size:10px;padding:2px 7px;border-radius:999px;flex-shrink:0}",
 			".pm-badge-on{background:rgba(0,200,120,.14);color:var(--dsw-alias-state-success-primary)}",
 			".pm-badge-off{background:rgba(128,128,128,.15);color:var(--dsw-alias-label-secondary)}",
 			".pm-badge-self{background:rgba(0,120,255,.14);color:var(--dsw-alias-brand-primary)}",
 			".pm-empty{font-size:12px;color:var(--dsw-alias-label-secondary);padding:16px 4px}",
+			".pm-mask{position:fixed;inset:0;z-index:2147483000;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;padding:24px}",
+			".pm-modal{width:min(720px,92vw);max-height:80vh;background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l2);border-radius:12px;box-shadow:0 12px 48px rgba(0,0,0,.4);display:flex;flex-direction:column;overflow:hidden}",
+			".pm-modal-head{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--dsw-alias-border-l1)}",
+			".pm-modal-title{font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary)}",
+			".pm-modal-src{font-size:11px;color:var(--dsw-alias-label-secondary);flex:1}",
+			".pm-modal-body{padding:14px;overflow:auto}",
+			".pm-readme{margin:0;font-size:12px;line-height:1.6;color:var(--dsw-alias-label-primary);white-space:pre-wrap;word-break:break-word;font-family:system-ui,'Segoe UI',sans-serif}",
 		].join("");
 		const tagId = "dsh-yzlin499-plugins-manager/style";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId) + "]") === null) {
@@ -48,125 +57,176 @@ window.__ModuleLoader__.load({
 		}
 		//#endregion
 
-		const inject = ["slots"];
-
-		function Section() {
-			const [state, setState] = react.useState({
-				loading: true, error: "", root: "", profile: "web",
-				profileInput: "", plugins: [], pending: 0, busy: null,
-			});
-
-			const refresh = () => {
-				fetch("/plugins-manager/list")
-					.then((r) => r.json())
-					.then((d) => {
-						setState((s) => ({
-							...s, loading: false,
-							root: d.root || "", profile: d.profile || "web",
-							profileInput: d.profile || "web", plugins: d.plugins || [],
-						}));
-					})
-					.catch(() => setState((s) => ({ ...s, loading: false, error: "无法连接 Host（/plugins-manager/list）" })));
-			};
-			react.useEffect(() => { refresh(); }, []);
-
-			const saveProfile = () => {
-				fetch("/plugins-manager/profile", {
-					method: "POST",
-					headers: { "content-type": "application/json" },
-					body: JSON.stringify({ profile: state.profileInput.trim() }),
-				})
-					.then((r) => r.json())
-					.then((d) => {
-						if (d.ok) { setState((s) => ({ ...s, profile: d.profile })); refresh(); }
-						else setState((s) => ({ ...s, error: d.error || "profile 保存失败" }));
-					})
-					.catch(() => setState((s) => ({ ...s, error: "profile 保存失败" })));
-			};
-
-			const toggle = (pl) => {
-				if (state.busy) return;
-				setState((s) => ({ ...s, busy: pl.dir, error: "" }));
-				fetch("/plugins-manager/toggle", {
-					method: "POST",
-					headers: { "content-type": "application/json" },
-					body: JSON.stringify({ dir: pl.dir, enable: !pl.enabled }),
-				})
-					.then((r) => r.json())
-					.then((d) => {
-						setState((s) => ({
-							...s, busy: null,
-							pending: d.ok ? s.pending + 1 : s.pending,
-							error: d.ok ? "" : (d.error || "切换失败"),
-						}));
-						refresh();
-					})
-					.catch(() => setState((s) => ({ ...s, busy: null, error: "切换失败" })));
-			};
-
-			// 头部：profile 编辑
-			const head = react.createElement("div", { className: "pm-head" },
-				react.createElement("div", { className: "pm-profile" },
-					react.createElement("span", null, "目标 profile"),
-					react.createElement("input", {
-						value: state.profileInput,
-						onChange: (e) => setState((s) => ({ ...s, profileInput: e.target.value })),
-						placeholder: "web",
-					}),
-					react.createElement("button", { className: "pm-btn", onClick: saveProfile, disabled: state.busy != null }, "保存"),
-				),
-			);
-
-			// 需重启横幅
-			const banner = state.pending > 0
-				? react.createElement("div", { className: "pm-banner" },
-					"有 " + state.pending + " 项变更，重启 DSH Web 后生效（可继续批量开关）")
-				: null;
-
-			// 插件行
-			const rows = (state.plugins || []).map((pl) => {
-				const badgeCls = pl.isSelf ? "pm-badge pm-badge-self" : (pl.enabled ? "pm-badge pm-badge-on" : "pm-badge pm-badge-off");
-				const badgeText = pl.isSelf ? "管理器" : (pl.enabled ? "已启用" : "未启用");
-				let btn = null;
-				if (!pl.isSelf) {
-					const onClick = () => toggle(pl);
-					const label = pl.enabled ? "停用" : "启用";
-					btn = react.createElement("button", {
-						className: "pm-btn",
-						disabled: state.busy != null,
-						onClick,
-					}, state.busy === pl.dir ? "处理中…" : label);
-				}
-				return react.createElement("div", { className: "pm-row", key: pl.dir },
-					react.createElement("div", { className: "pm-info" },
-						react.createElement("div", { className: "pm-name" },
-							react.createElement("span", null, pl.name),
-							react.createElement("span", { className: badgeCls }, badgeText),
-						),
-						pl.description
-							? react.createElement("div", { className: "pm-desc" }, pl.description)
-							: null,
-					),
-					btn,
-				);
-			});
-
-			const body = state.loading
-				? react.createElement("div", { className: "pm-empty" }, "加载中…")
-				: (rows.length
-					? react.createElement("div", null, rows)
-					: react.createElement("div", { className: "pm-empty" }, "未在集合文件夹中发现插件（含 cordis.patch.yml 的子文件夹）"));
-
-			return react.createElement("div", { className: "pm-root" },
-				head,
-				banner,
-				state.error ? react.createElement("div", { className: "pm-err" }, state.error) : null,
-				body,
-				state.root ? react.createElement("div", { className: "pm-rootpath" }, "集合目录：" + state.root) : null,
-			);
-		}
+		const inject = ["slots", "locale"];
 
 		function apply(ctx) {
+			const locale = ctx.get("locale");
+			// DSH 当前语言：'en' 才用英文，其余默认中文
+			const activeLang = () => (locale && locale.getLocale().active === "en") ? "en" : "zh";
+
+			function Section() {
+				const [state, setState] = react.useState({
+					loading: true, error: "", root: "", profile: "web",
+					profileInput: "", plugins: [], pending: 0, busy: null,
+					rev: 0, detail: null, detailLoading: false,
+				});
+
+				// 语言切换 → 重取已打开弹窗的 README
+				react.useEffect(() => {
+					if (!locale) return;
+					return locale.subscribe(() => setState((s) => ({ ...s, rev: s.rev + 1 })));
+				}, []);
+
+				react.useEffect(() => {
+					if (!state.detail) return;
+					setState((s) => ({ ...s, detailLoading: true }));
+					fetch("/plugins-manager/readme?dir=" + encodeURIComponent(state.detail.dir) + "&lang=" + activeLang())
+						.then((r) => r.json())
+						.then((d) => {
+							setState((s) => ({
+								...s, detailLoading: false,
+								detail: d.ok
+									? { ...s.detail, text: d.text, source: d.source }
+									: { ...s.detail, text: d.error || "读取失败", source: "" },
+							}));
+						})
+						.catch(() => setState((s) => ({ ...s, detailLoading: false })));
+				}, [state.detail && state.detail.dir, state.rev]);
+
+				const refresh = () => {
+					fetch("/plugins-manager/list")
+						.then((r) => r.json())
+						.then((d) => {
+							setState((s) => ({
+								...s, loading: false,
+								root: d.root || "", profile: d.profile || "web",
+								profileInput: d.profile || "web", plugins: d.plugins || [],
+							}));
+						})
+						.catch(() => setState((s) => ({ ...s, loading: false, error: "无法连接 Host（/plugins-manager/list）" })));
+				};
+				react.useEffect(() => { refresh(); }, []);
+
+				const saveProfile = () => {
+					fetch("/plugins-manager/profile", {
+						method: "POST",
+						headers: { "content-type": "application/json" },
+						body: JSON.stringify({ profile: state.profileInput.trim() }),
+					})
+						.then((r) => r.json())
+						.then((d) => {
+							if (d.ok) { setState((s) => ({ ...s, profile: d.profile })); refresh(); }
+							else setState((s) => ({ ...s, error: d.error || "profile 保存失败" }));
+						})
+						.catch(() => setState((s) => ({ ...s, error: "profile 保存失败" })));
+				};
+
+				const toggle = (pl) => {
+					if (state.busy) return;
+					setState((s) => ({ ...s, busy: pl.dir, error: "" }));
+					fetch("/plugins-manager/toggle", {
+						method: "POST",
+						headers: { "content-type": "application/json" },
+						body: JSON.stringify({ dir: pl.dir, enable: !pl.enabled }),
+					})
+						.then((r) => r.json())
+						.then((d) => {
+							setState((s) => ({
+								...s, busy: null,
+								pending: d.ok ? s.pending + 1 : s.pending,
+								error: d.ok ? "" : (d.error || "切换失败"),
+							}));
+							refresh();
+						})
+						.catch(() => setState((s) => ({ ...s, busy: null, error: "切换失败" })));
+				};
+
+				const openDetail = (pl) => {
+					setState((s) => ({
+						...s, detail: { dir: pl.dir, name: pl.name, text: "", source: "" }, detailLoading: true,
+					}));
+				};
+				const closeDetail = () => setState((s) => ({ ...s, detail: null }));
+
+				// 头部：profile 编辑
+				const head = react.createElement("div", { className: "pm-head" },
+					react.createElement("div", { className: "pm-profile" },
+						react.createElement("span", null, "目标 profile"),
+						react.createElement("input", {
+							value: state.profileInput,
+							onChange: (e) => setState((s) => ({ ...s, profileInput: e.target.value })),
+							placeholder: "web",
+						}),
+						react.createElement("button", { className: "pm-btn", onClick: saveProfile, disabled: state.busy != null }, "保存"),
+					),
+				);
+
+				// 需重启横幅
+				const banner = state.pending > 0
+					? react.createElement("div", { className: "pm-banner" },
+						"有 " + state.pending + " 项变更，重启 DSH Web 后生效（可继续批量开关）")
+					: null;
+
+				// 插件行：名称 + 徽标 + [详情] [启用/停用]
+				const rows = (state.plugins || []).map((pl) => {
+					const badgeCls = pl.isSelf ? "pm-badge pm-badge-self" : (pl.enabled ? "pm-badge pm-badge-on" : "pm-badge pm-badge-off");
+					const badgeText = pl.isSelf ? "管理器" : (pl.enabled ? "已启用" : "未启用");
+					let btns = null;
+					if (!pl.isSelf) {
+						btns = react.createElement("div", { className: "pm-btns" },
+							react.createElement("button", { className: "pm-btn", onClick: () => openDetail(pl) }, "详情"),
+							react.createElement("button", {
+								className: "pm-btn",
+								disabled: state.busy != null,
+								onClick: () => toggle(pl),
+							}, state.busy === pl.dir ? "处理中…" : (pl.enabled ? "停用" : "启用")),
+						);
+					}
+					return react.createElement("div", { className: "pm-row", key: pl.dir },
+						react.createElement("div", { className: "pm-info" },
+							react.createElement("div", { className: "pm-name" },
+								react.createElement("span", null, pl.name),
+								react.createElement("span", { className: badgeCls }, badgeText),
+							),
+						),
+						btns,
+					);
+				});
+
+				const body = state.loading
+					? react.createElement("div", { className: "pm-empty" }, "加载中…")
+					: (rows.length
+						? react.createElement("div", null, rows)
+						: react.createElement("div", { className: "pm-empty" }, "未在集合文件夹中发现插件（含 cordis.patch.yml 的子文件夹）"));
+
+				// 详情弹窗（README）
+				const modal = state.detail
+					? react.createElement("div", { className: "pm-mask", onClick: closeDetail },
+						react.createElement("div", { className: "pm-modal", onClick: (e) => { e.stopPropagation(); } },
+							react.createElement("div", { className: "pm-modal-head" },
+								react.createElement("span", { className: "pm-modal-title" }, state.detail.name),
+								react.createElement("span", { className: "pm-modal-src" }, state.detail.source || ""),
+								react.createElement("button", { className: "pm-btn", onClick: closeDetail }, "关闭"),
+							),
+							react.createElement("div", { className: "pm-modal-body" },
+								state.detailLoading
+									? react.createElement("div", { className: "pm-empty" }, "加载中…")
+									: react.createElement("pre", { className: "pm-readme" }, state.detail.text || ""),
+							),
+						),
+					)
+					: null;
+
+				return react.createElement("div", { className: "pm-root" },
+					head,
+					banner,
+					state.error ? react.createElement("div", { className: "pm-err" }, state.error) : null,
+					body,
+					state.root ? react.createElement("div", { className: "pm-rootpath" }, "集合目录：" + state.root) : null,
+					modal,
+				);
+			}
+
 			ctx.slots.inject("settings.section", () => ctx.slots.register({
 				name: "settings.section",
 				id: "yzlin499-plugins",
