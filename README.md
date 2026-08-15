@@ -12,6 +12,7 @@ DSH 启动自动加载、重启不丢。每个 `dsh-*/` 子目录都是一个标
 |---|---|---|
 | [`dsh-oc-usage`](#dsh-oc-usageopencode-用量悬浮窗) | OpenCode 用量悬浮窗：右上角可拖拽悬浮窗，显示 opencode.ai Go 订阅 5h/7d/30d 用量 + 重置倒计时，5 分钟自动刷新 | `dsh plugin --profile web add ./dsh-oc-usage` |
 | [`dsh-mcp-compat`](#dsh-mcp-compat标准-mcp-配置兼容) | 标准 MCP 配置兼容：自动读取 `.mcp.json` / `opencode.json` / `.cursor/mcp.json` / `.codex/config.toml`（项目级 + 用户级），把每个 MCP 服务器挂载为 dsh-mcp-client 实例，工具以 `mcp__<名>__*` 出现 | `dsh plugin --profile web add ./dsh-mcp-compat` |
+| [`dsh-quick-file`](#dsh-quick-file快速输入文件) | @ 快速输入文件：输入框打 `@` 弹出工作区文件列表，回车/点击即把文件路径插入输入框（复用内置输入触发管道） | `dsh plugin --profile web add ./dsh-quick-file` |
 
 > profile 名按你的 DSH 实例调整（例如 `web`），详见 [Docs/Install.md](Docs/Install.md)。
 
@@ -29,6 +30,7 @@ DSH 启动自动加载、重启不丢。每个 `dsh-*/` 子目录都是一个标
    ```powershell
    dsh plugin --profile web add ./dsh-oc-usage
    dsh plugin --profile web add ./dsh-mcp-compat
+   dsh plugin --profile web add ./dsh-quick-file
    ```
 
 3. **重启 DSH Web**，插件自动加载。
@@ -78,6 +80,22 @@ DSH 启动自动加载、重启不丢。每个 `dsh-*/` 子目录都是一个标
 任何 workspace 根目录（或用户主目录）放入上述任一配置文件即自动生效，无需配置 DSH。
 例如 YZLWork 的 `.mcp.json` 定义了 `yzl-dashboard`，DSH 启动后即出现
 `mcp__yzl-dashboard__*` 工具。
+
+---
+
+## dsh-quick-file（@ 快速输入文件）
+
+- **Client**（`client.js`）：注册一个 `@` 输入触发源（`ctx.inputTriggers`，
+  复用 DSH 内置管道 `dsh-client-ui-input-trigger`）——菜单渲染、键盘导航、
+  输入改写全部由管道负责，本插件只提供文件数据源。
+- **Host**（`index.js`）：`/quick-file/files` 路由，按会话工作区根
+  （`SessionHeader.cwd`）用 `fs` 服务递归列目录；深度 ≤ 3、跳过
+  `node_modules/.git/dist` 等、最多 50 条、路径 `/` 分隔。
+
+### 使用
+
+输入框打 `@` 弹出文件列表（与其它 `@` 源分组并列）→ 继续打字过滤
+（按文件名/路径模糊匹配）→ ↑↓/回车或点击选中 → `@查询词` 被替换为文件路径。
 
 ---
 

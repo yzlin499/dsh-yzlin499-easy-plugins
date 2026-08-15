@@ -1,0 +1,24 @@
+{
+  "name": "dsh-quick-file",
+  "version": "0.1.0",
+  "description": "DSH plugin: type @ in the input box to quickly pick a workspace file — the path is inserted as plain text (powered by the built-in input trigger pipeline)",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "inject": [
+        "inputTriggers"
+      ],
+      "platform": "web"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "license": "MIT"
+}

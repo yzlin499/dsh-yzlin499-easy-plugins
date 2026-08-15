@@ -1,0 +1,6 @@
+# dsh bundle layer: mount the quick-file @-mention input source.
+# Client registers an '@' InputTriggerSource into the built-in input-trigger
+# pipeline (dsh-client-ui-input-trigger); Host serves workspace file lists.
+- insert:
+    - id: quick-file
+      name: dsh-quick-file
