@@ -55,26 +55,6 @@
    - 这是插件管理器（`dsh-yzlin499-plugins-manager`）详情弹窗的展示来源，
      其 `/plugins-manager/readme` 路由按此规范读取；新增插件缺 README 会被视为不完整。
 
-## 已有插件要点
-
-### dsh-mcp-compat（标准 MCP 配置兼容）
-
-- 读取 `.mcp.json` / `opencode.json(.c)` / `.cursor/mcp.json` / `.codex/config.toml`
-  （项目级 + `$HOME` 级），每个服务器挂载一个 `@deepseek-ai/dsh-mcp-client` 实例。
-- **红线**：`dsh-mcp-client` 必须经 `ctx.loader.import('@deepseek-ai/dsh-mcp-client')`
-  获取——顶层裸 import 会按 bundle 源目录解析，报 `ERR_MODULE_NOT_FOUND`（历史教训）。
-- 变更自动重扫：配置文件 `fs.watch` + `session/created` 事件。
-- 解析函数 `parseMcpJson / parseOpencodeJson / parseCodexToml / collectServers`
-  已导出，可被 Node 脚本直接 import 做单测。
-
-### dsh-oc-usage（OpenCode 用量悬浮窗）
-
-- Host 用 Node 全局 `fetch` 直连 `opencode.ai/_server`（server-fn 序列化文本，正则解析），
-  注册 `ctx.webServer.register({ kind: 'prefix', path: '/oc-usage', ... })` 同源路由。
-- **红线**：Cookie 只存模块进程内存，**不落盘、不回显**（`config-get` 不返回 Cookie）。
-- Client 半侧：`__ModuleLoader__` 格式，注册进 `shell.overlay` Slot，React 手写
-  `createElement`，同源 fetch 调 `/oc-usage/*`。
-
 ## 常用命令
 
 ```powershell
@@ -97,6 +77,21 @@ dsh plugin --profile web remove dsh-oc-usage   # 单个卸载
   放进插件包 `vendor/` 目录（保留原许可证头），Host 侧 `import ... from './vendor/xxx.js'`
   相对引入（示例：plugins-manager 的 `marked`）。渲染外来内容（如 README）前必须做
   XSS 消毒（剥 script/iframe/on* 等）。
+- **语言（locale）规范**：Client 的多语言显示跟随 DSH 当前语言。
+  - 服务：`ctx.locale`（`inject: ["locale"]`）；`locale.getLocale().active` 取值
+    `'zh' | 'en'`（服务缺失时默认中文）。
+  - 语言切换：用 `locale.subscribe(fn)` 订阅（返回退订函数），切换后重取数据/重渲染。
+  - 示例：plugins-manager 详情弹窗按语言请求 README（`?lang=zh|en`）；
+    README 文件语言规则见上文契约第 5 条。
+- **主题（theme）规范**：颜色只用令牌表里**真实存在**的 `--dsw-alias-*` 变量
+  （先用 `Theme.listTokens` 核对；`--dsw-alias-label-tertiary`、
+  `--dsw-alias-interactive-bg-hover` 并不存在，曾踩坑导致浅色过黑/深色过白）。
+  - 深色模式切换机制：`body[data-ds-dark-theme]` 属性（官方，由主题呈现器按
+    colorScheme 切换，绝不用主题 id）。用 `body[data-ds-dark-theme] .my-cls { ... }`
+    覆盖，纯 CSS 自适应，无需 JS 检测。
+  - 硬编码中性色用半透明配对：浅色 `rgba(0,0,0,x)`、深色 `rgba(255,255,255,x)`。
+  - 需要 JS 判断主题时：`ctx.theme.getTheme().active.colorScheme`（`'light'|'dark'`），
+    或订阅 `theme/change` 事件。
 
 ## 分发方式
 
