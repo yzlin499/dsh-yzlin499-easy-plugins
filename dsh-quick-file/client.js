@@ -30,6 +30,15 @@ window.__ModuleLoader__.load({
 			".qf-btn:hover{color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-border-l1)}",
 			".qf-btn[disabled]{opacity:.45;cursor:default}",
 			".qf-status{font-size:11px;color:var(--dsw-alias-label-secondary)}",
+			// 官方插件卡片外壳（对齐 PluginCard）
+			".pc-card{border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-3);border-radius:12px;overflow:hidden}",
+			".pc-head{appearance:none;width:100%;font:inherit;color:inherit;text-align:left;cursor:pointer;background:0 0;border:0;display:flex;align-items:center;gap:12px;padding:14px 16px}",
+			".pc-head-text{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}",
+			".pc-name{color:var(--dsw-alias-label-primary);font-size:15px;font-weight:600;line-height:1.4}",
+			".pc-desc{color:var(--dsw-alias-label-tertiary);font-size:13px;line-height:1.5}",
+			".pc-chevron{color:var(--dsw-alias-label-tertiary);font-size:12px;transition:transform .16s}",
+			".pc-open{transform:rotate(180deg)}",
+			".pc-body{border-top:1px solid var(--dsw-alias-border-l2);padding:14px 16px}",
 		].join("");
 		const tagId = "dsh-quick-file/style";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId) + "]") === null) {
@@ -45,6 +54,7 @@ window.__ModuleLoader__.load({
 
 		function SettingsCard() {
 			const [cfg, setCfg] = react.useState({ depth: 3, max: 50, loading: true, status: "" });
+			const [open, setOpen] = react.useState(true);
 
 			react.useEffect(() => {
 				fetch("/quick-file/config")
@@ -77,13 +87,26 @@ window.__ModuleLoader__.load({
 					hint ? react.createElement("span", { className: "qf-hint" }, hint) : null,
 				);
 
-			return react.createElement("div", { className: "qf-card" },
-				row("列表深度上限", cfg.depth, (v) => setCfg((s) => ({ ...s, depth: v })), "1-10"),
-				row("文件数量上限", cfg.max, (v) => setCfg((s) => ({ ...s, max: v })), "10-200"),
-				react.createElement("div", { className: "qf-foot" },
-					react.createElement("button", { className: "qf-btn", onClick: save, disabled: cfg.loading }, "保存"),
-					cfg.status ? react.createElement("span", { className: "qf-status" }, cfg.status) : null,
+			return react.createElement("div", { className: "pc-card" },
+				react.createElement("button", { className: "pc-head", onClick: () => setOpen((v) => !v) },
+					react.createElement("span", { className: "pc-head-text" },
+						react.createElement("span", { className: "pc-name" }, "快速输入文件"),
+						react.createElement("span", { className: "pc-desc" }, "@ 文件列表参数"),
+					),
+					react.createElement("span", { className: "pc-chevron" + (open ? " pc-open" : "") }, "▾"),
 				),
+				open
+					? react.createElement("div", { className: "pc-body" },
+						react.createElement("div", { className: "qf-card" },
+							row("列表深度上限", cfg.depth, (v) => setCfg((s) => ({ ...s, depth: v })), "1-10"),
+							row("文件数量上限", cfg.max, (v) => setCfg((s) => ({ ...s, max: v })), "10-200"),
+							react.createElement("div", { className: "qf-foot" },
+								react.createElement("button", { className: "qf-btn", onClick: save, disabled: cfg.loading }, "保存"),
+								cfg.status ? react.createElement("span", { className: "qf-status" }, cfg.status) : null,
+							),
+						),
+					)
+					: null,
 			);
 		}
 

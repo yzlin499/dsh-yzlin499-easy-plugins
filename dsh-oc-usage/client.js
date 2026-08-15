@@ -55,7 +55,16 @@ window.__ModuleLoader__.load({
 			".ocu-s-btn{background:transparent;border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary);border-radius:6px;font-size:12px;line-height:1;padding:5px 12px;cursor:pointer}",
 			".ocu-s-btn:hover{color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-border-l1)}",
 			".ocu-s-btn[disabled]{opacity:.45;cursor:default}",
-			".ocu-s-status{font-size:11px;color:var(--dsw-alias-label-secondary)}"
+			".ocu-s-status{font-size:11px;color:var(--dsw-alias-label-secondary)}",
+			// 官方插件卡片外壳（对齐 PluginCard）
+			".pc-card{border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-3);border-radius:12px;overflow:hidden}",
+			".pc-head{appearance:none;width:100%;font:inherit;color:inherit;text-align:left;cursor:pointer;background:0 0;border:0;display:flex;align-items:center;gap:12px;padding:14px 16px}",
+			".pc-head-text{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}",
+			".pc-name{color:var(--dsw-alias-label-primary);font-size:15px;font-weight:600;line-height:1.4}",
+			".pc-desc{color:var(--dsw-alias-label-tertiary);font-size:13px;line-height:1.5}",
+			".pc-chevron{color:var(--dsw-alias-label-tertiary);font-size:12px;transition:transform .16s}",
+			".pc-open{transform:rotate(180deg)}",
+			".pc-body{border-top:1px solid var(--dsw-alias-border-l2);padding:14px 16px}"
 		].join("");
 		const tagId = "dsh-oc-usage/style";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId) + "]") === null) {
@@ -278,6 +287,7 @@ window.__ModuleLoader__.load({
 		//#region SettingsCard（官方「插件」设置页：Cookie / 工作区配置）
 		function SettingsCard() {
 			const [state, setState] = react.useState({ cookie: "", workspaceId: "", cookieSet: false, saving: false, status: "" });
+			const [open, setOpen] = react.useState(true);
 
 			react.useEffect(() => {
 				api("/oc-usage/config-get").then((r) => {
@@ -311,21 +321,34 @@ window.__ModuleLoader__.load({
 					}),
 				);
 
-			return react.createElement("div", { className: "ocu-s-card" },
-				react.createElement("div", { className: "ocu-s-hint" },
-					state.cookieSet
-						? "已配置 Cookie（出于安全不回显，如需更换请重新粘贴）"
-						: "尚未配置 Cookie",
+			return react.createElement("div", { className: "pc-card" },
+				react.createElement("button", { className: "pc-head", onClick: () => setOpen((v) => !v) },
+					react.createElement("span", { className: "pc-head-text" },
+						react.createElement("span", { className: "pc-name" }, "OpenCode 用量"),
+						react.createElement("span", { className: "pc-desc" }, "悬浮窗配置（Cookie / 工作区）"),
+					),
+					react.createElement("span", { className: "pc-chevron" + (open ? " pc-open" : "") }, "▾"),
 				),
-				input("Cookie", state.cookie, (v) => setState((s) => ({ ...s, cookie: v })),
-					"粘贴 opencode.ai 登录后的完整 Cookie（含 auth=）", "password"),
-				input("Workspace ID", state.workspaceId, (v) => setState((s) => ({ ...s, workspaceId: v })),
-					"留空自动发现，或填 wrk_…"),
-				react.createElement("div", { className: "ocu-s-foot" },
-					react.createElement("button", { className: "ocu-s-btn", disabled: state.saving, onClick: save },
-						state.saving ? "保存中…" : "保存"),
-					state.status ? react.createElement("span", { className: "ocu-s-status" }, state.status) : null,
-				),
+				open
+					? react.createElement("div", { className: "pc-body" },
+						react.createElement("div", { className: "ocu-s-card" },
+							react.createElement("div", { className: "ocu-s-hint" },
+								state.cookieSet
+									? "已配置 Cookie（出于安全不回显，如需更换请重新粘贴）"
+									: "尚未配置 Cookie",
+							),
+							input("Cookie", state.cookie, (v) => setState((s) => ({ ...s, cookie: v })),
+								"粘贴 opencode.ai 登录后的完整 Cookie（含 auth=）", "password"),
+							input("Workspace ID", state.workspaceId, (v) => setState((s) => ({ ...s, workspaceId: v })),
+								"留空自动发现，或填 wrk_…"),
+							react.createElement("div", { className: "ocu-s-foot" },
+								react.createElement("button", { className: "ocu-s-btn", disabled: state.saving, onClick: save },
+									state.saving ? "保存中…" : "保存"),
+								state.status ? react.createElement("span", { className: "ocu-s-status" }, state.status) : null,
+							),
+						),
+					)
+					: null,
 			);
 		}
 		//#endregion

@@ -83,9 +83,11 @@ dsh plugin --profile web remove dsh-oc-usage   # 单个卸载
   - 语言切换：用 `locale.subscribe(fn)` 订阅（返回退订函数），切换后重取数据/重渲染。
   - 示例：plugins-manager 详情弹窗按语言请求 README（`?lang=zh|en`）；
     README 文件语言规则见上文契约第 5 条。
-- **主题（theme）规范**：颜色只用令牌表里**真实存在**的 `--dsw-alias-*` 变量
-  （先用 `Theme.listTokens` 核对；`--dsw-alias-label-tertiary`、
-  `--dsw-alias-interactive-bg-hover` 并不存在，曾踩坑导致浅色过黑/深色过白）。
+- **主题（theme）规范**：配色用 `--dsw-alias-*` 变量。注意 **`Theme.listTokens`
+  只列出核心可覆盖子集**，完整别名层在主题包的 `styles/design-platform.css`
+  （`label-tertiary` / `label-dimmed` / `bg-layer-3` / `bg-module-platform` /
+  `interactive-bg-hover` 等都在，浅/深两套都有）；不确定时以**官方编译 CSS 已用
+  的变量**为准（例如官方插件卡片的 `bg-layer-3` + `border-l2` + 12px 圆角）。
   - 深色模式切换机制：`body[data-ds-dark-theme]` 属性（官方，由主题呈现器按
     colorScheme 切换，绝不用主题 id）。用 `body[data-ds-dark-theme] .my-cls { ... }`
     覆盖，纯 CSS 自适应，无需 JS 检测。

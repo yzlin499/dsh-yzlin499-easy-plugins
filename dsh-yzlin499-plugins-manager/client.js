@@ -64,6 +64,16 @@ window.__ModuleLoader__.load({
 			".pm-readme a{color:var(--dsw-alias-brand-primary)}",
 			".pm-readme img{max-width:100%;border-radius:6px}",
 			".pm-readme hr{border:none;border-top:1px solid var(--dsw-alias-border-l1);margin:14px 0}",
+			// 官方插件卡片外壳（对齐 PluginCard：border + bg-layer-3 + 12px 圆角 + 可折叠头部）
+			".pc-card{border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-3);border-radius:12px;overflow:hidden}",
+			".pc-head{appearance:none;width:100%;font:inherit;color:inherit;text-align:left;cursor:pointer;background:0 0;border:0;display:flex;align-items:center;gap:12px;padding:14px 16px}",
+			".pc-head:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:-2px}",
+			".pc-head-text{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}",
+			".pc-name{color:var(--dsw-alias-label-primary);font-size:15px;font-weight:600;line-height:1.4}",
+			".pc-desc{color:var(--dsw-alias-label-tertiary);font-size:13px;line-height:1.5}",
+			".pc-chevron{color:var(--dsw-alias-label-tertiary);font-size:12px;transition:transform .16s}",
+			".pc-open{transform:rotate(180deg)}",
+			".pc-body{border-top:1px solid var(--dsw-alias-border-l2);padding:14px 16px}",
 		].join("");
 		const tagId = "dsh-yzlin499-plugins-manager/style";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId) + "]") === null) {
@@ -88,6 +98,7 @@ window.__ModuleLoader__.load({
 					profileInput: "", plugins: [], pending: 0, busy: null,
 					rev: 0, detail: null, detailLoading: false,
 				});
+				const [open, setOpen] = react.useState(true);
 
 				// 语言切换 → 重取已打开弹窗的 README
 				react.useEffect(() => {
@@ -235,12 +246,25 @@ window.__ModuleLoader__.load({
 					)
 					: null;
 
-				return react.createElement("div", { className: "pm-root" },
-					head,
-					banner,
-					state.error ? react.createElement("div", { className: "pm-err" }, state.error) : null,
-					body,
-					state.root ? react.createElement("div", { className: "pm-rootpath" }, "集合目录：" + state.root) : null,
+				return react.createElement("div", { className: "pc-card" },
+					react.createElement("button", { className: "pc-head", onClick: () => setOpen((v) => !v) },
+						react.createElement("span", { className: "pc-head-text" },
+							react.createElement("span", { className: "pc-name" }, "插件管理"),
+							react.createElement("span", { className: "pc-desc" }, "管理本集合插件（启用 / 停用 / 详情）"),
+						),
+						react.createElement("span", { className: "pc-chevron" + (open ? " pc-open" : "") }, "▾"),
+					),
+					open
+						? react.createElement("div", { className: "pc-body" },
+							react.createElement("div", { className: "pm-root" },
+								head,
+								banner,
+								state.error ? react.createElement("div", { className: "pm-err" }, state.error) : null,
+								body,
+								state.root ? react.createElement("div", { className: "pm-rootpath" }, "集合目录：" + state.root) : null,
+							),
+						)
+						: null,
 					modal,
 				);
 			}
