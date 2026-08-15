@@ -81,27 +81,49 @@ export function apply(ctx) {
     }
   }
 
-  /** 解析 dsh 可执行文件（PATH 优先，.cmd 兜底，跳过 .ps1），缓存 */
+  /**
+   * 解析 dsh CLI：.cmd/.ps1 shim 不能被子进程管道无 shell 直接拉起（Windows
+   * spawn EINVAL），所以解析 node + dsh 包的真实入口 bin.js。缓存。
+   * 返回 { node, script } 或 { bin } 或 null。
+   */
   async function resolveDsh() {
     if (dshBin) return dshBin
-    for (const cand of ['dsh', 'dsh.cmd']) {
-      try {
-        const p = await ctx.subprocess.resolveExecutable(cand)
-        if (p && !p.endsWith('.ps1')) {
-          dshBin = p
-          return p
+    try {
+      const node = await ctx.subprocess.resolveExecutable('node')
+      const shim = await ctx.subprocess.resolveExecutable('dsh').catch(() => null)
+      if (node && shim) {
+        const binDir = dirname(shim)
+        const candidates = [
+          join(binDir, '..', '@deepseek-ai', 'dsh', 'lib', 'bin.js'),
+          join(binDir, '..', 'dsh', 'lib', 'bin.js'),
+        ]
+        for (const script of candidates) {
+          if (existsSync(script)) {
+            dshBin = { node, script }
+            return dshBin
+          }
         }
-      } catch {}
-    }
-    dshBin = 'dsh'
+      }
+    } catch {}
+    // 兜底：直接当可执行文件试（非 Windows 或已是 .exe）
+    try {
+      const p = await ctx.subprocess.resolveExecutable('dsh')
+      if (p && !/\.(ps1|cmd|bat)$/i.test(p)) {
+        dshBin = { bin: p }
+        return dshBin
+      }
+    } catch {}
+    dshBin = null
     return dshBin
   }
 
   /** 跑一条 dsh 命令，返回 exitCode + 合并输出 */
   async function runDsh(args) {
-    const bin = await resolveDsh()
+    const dsh = await resolveDsh()
+    if (!dsh) return { exitCode: 1, output: '无法解析 dsh CLI（node 或 dsh bin.js 未找到）' }
+    const argv = dsh.script ? [dsh.node, dsh.script, ...args] : [dsh.bin, ...args]
     const handle = ctx.subprocess.spawn({
-      argv: [bin, ...args],
+      argv,
       cwd: ROOT,
       stdio: {
         stdin: 'ignore',
