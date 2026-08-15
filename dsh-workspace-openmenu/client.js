@@ -25,9 +25,7 @@ window.__ModuleLoader__.load({
 			".wo-item{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 10px;border-radius:6px;color:var(--dsw-alias-label-primary);font-size:12.5px;cursor:pointer;background:transparent;border:none;text-align:left}",
 			".wo-item:hover{background:var(--dsw-alias-interactive-bg-hover)}",
 			".wo-item .wo-hint{font-size:10.5px;color:var(--dsw-alias-label-tertiary)}",
-			".wo-status{font-size:11px;padding:6px 10px;border-radius:6px;margin-top:2px}",
-			".wo-status-ok{color:var(--dsw-alias-state-success-primary)}",
-			".wo-status-err{color:var(--dsw-alias-state-error-primary)}",
+			".wo-status{font-size:11px;padding:6px 10px;border-radius:6px;margin-top:2px;color:var(--dsw-alias-state-error-primary)}",
 		].join("");
 		const tagId = "dsh-workspace-openmenu/style";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId) + "]") === null) {
@@ -75,8 +73,8 @@ window.__ModuleLoader__.load({
 					.then((r) => r.json())
 					.then((d) => {
 						setBusy(null);
-						setStatus({ ok: d.ok, text: d.ok ? "已打开" : (d.error || "失败") });
-						if (d.ok) setOpen(false);
+						if (d.ok) { setStatus(null); setOpen(false); }
+						else setStatus({ ok: false, text: d.error || "失败" });
 					})
 					.catch(() => {
 						setBusy(null);
@@ -100,7 +98,7 @@ window.__ModuleLoader__.load({
 				? react.createElement("div", { className: "wo-menu" },
 					items,
 					status
-						? react.createElement("div", { className: "wo-status " + (status.ok ? "wo-status-ok" : "wo-status-err") }, status.text)
+						? react.createElement("div", { className: "wo-status wo-status-err" }, status.text)
 						: null,
 				)
 				: null;
