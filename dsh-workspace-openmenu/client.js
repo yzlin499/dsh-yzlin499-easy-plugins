@@ -16,15 +16,20 @@ window.__ModuleLoader__.load({
 		let react = require("react");
 
 		//#region styles
+		// 主题适配：仅使用令牌表里真实存在的 --dsw-alias-* 变量；深色模式经
+		// body[data-ds-dark-theme]（官方切换机制）做覆盖，无需 JS 检测。
 		const css = [
 			".wo-root{position:relative;display:inline-flex}",
 			".wo-btn{display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 10px;background:transparent;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;color:var(--dsw-alias-label-secondary);font-size:12px;cursor:pointer;white-space:nowrap}",
-			".wo-btn:hover{color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-border-l1);background:var(--dsw-alias-interactive-bg-hover)}",
+			".wo-btn:hover{color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-border-l1);background:rgba(0,0,0,.06)}",
+			"body[data-ds-dark-theme] .wo-btn:hover{background:rgba(255,255,255,.08)}",
 			".wo-btn .wo-caret{margin-left:2px;font-size:9px;opacity:.7}",
-			".wo-menu{position:absolute;top:calc(100% + 4px);right:0;z-index:2147483000;min-width:160px;background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l2);border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.35);padding:4px;display:flex;flex-direction:column}",
+			".wo-menu{position:absolute;top:calc(100% + 4px);right:0;z-index:2147483000;min-width:160px;background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l2);border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.18);padding:4px;display:flex;flex-direction:column}",
+			"body[data-ds-dark-theme] .wo-menu{box-shadow:0 8px 28px rgba(0,0,0,.6)}",
 			".wo-item{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 10px;border-radius:6px;color:var(--dsw-alias-label-primary);font-size:12.5px;cursor:pointer;background:transparent;border:none;text-align:left}",
-			".wo-item:hover{background:var(--dsw-alias-interactive-bg-hover)}",
-			".wo-item .wo-hint{font-size:10.5px;color:var(--dsw-alias-label-tertiary)}",
+			".wo-item:hover{background:rgba(0,0,0,.06)}",
+			"body[data-ds-dark-theme] .wo-item:hover{background:rgba(255,255,255,.08)}",
+			".wo-item .wo-hint{font-size:10.5px;color:var(--dsw-alias-label-secondary);opacity:.75}",
 			".wo-status{font-size:11px;padding:6px 10px;border-radius:6px;margin-top:2px;color:var(--dsw-alias-state-error-primary)}",
 		].join("");
 		const tagId = "dsh-workspace-openmenu/style";
