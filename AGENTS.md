@@ -95,11 +95,7 @@ dsh plugin --profile web remove dsh-oc-usage   # 单个卸载
   - 硬编码中性色用半透明配对：浅色 `rgba(0,0,0,x)`、深色 `rgba(255,255,255,x)`。
   - 需要 JS 判断主题时：`ctx.theme.getTheme().active.colorScheme`（`'light'|'dark'`），
     或订阅 `theme/change` 事件。
-- **插件设置（settings.plugin.item）规范**：见 **`Docs/Settings.md`**（插件配置持久化
-  读写指南）——设置卡片插槽注册、PluginCard 外壳、默认闭合，以及持久化姿势
-  （不用 Client 的 `settingsScope`；Host 用官方 `ctx.settings.register` +
-  `scope.update()` 落盘 `~/.dsh/settings.yaml`，Client 走插件自己的 webServer 路由
-  转发读写）。
+- **插件设置（settings.plugin.item）规范**：见 `Docs/Settings.md`。
 
 ## 分发方式
 
@@ -109,6 +105,9 @@ dsh plugin --profile web remove dsh-oc-usage   # 单个卸载
 
 ## Git 约定
 
+- **提交节奏**：普通一两行的小修改**不要频繁 commit and push**，留在工作区等用户
+  自己说明要提交时再提交；只有大量修改（一次涉及多个文件/较大改动）才需要
+  完成后立即 commit and push。
 - **提交日志一律使用中文**：标题与正文都用中文描述（技术名词/命令可保留英文）。
 - 分支 `main`；换行符由 `.gitattributes` 统一（仓库存 LF）。
 - 本仓库 `.git/config` 里有 github.com 专用的 NAS 代理
