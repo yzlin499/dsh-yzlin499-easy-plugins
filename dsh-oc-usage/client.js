@@ -285,7 +285,7 @@ window.__ModuleLoader__.load({
 		//#endregion
 
 		/** 注册进 shell.overlay（帧级浮动层）+ settings.plugin.item（官方插件设置卡片） */
-		const inject = ["slots", "settingsScope"];
+		const inject = ["slots"];
 
 		// 官方 IconChevronDownOutline14 同款 SVG 箭头
 		function ChevronIcon({ className }) {
@@ -306,8 +306,10 @@ window.__ModuleLoader__.load({
 				label: "OpenCode 用量"
 			}, Overlay));
 
-			// 设置卡片：workspaceId 经官方 settings 持久化；Cookie 仍走内存路由（红线）
-			const wsScope = ctx.settingsScope.bind({ namespace: "dsh-oc-usage" });
+			// 设置卡片：Cookie 只存 Host 内存（红线）；workspaceId 经自身
+			// /oc-usage/config-set 路由保存（Host 侧经 ctx.settings 持久化到
+			// ~/.dsh/settings.yaml）。不走 settingsScope：官方 api-proxy 的
+			// WEB_SETTINGS_NAMESPACES 白名单不含第三方命名空间，settingsScope 永远不可用。
 
 			function SettingsCard() {
 				const [state, setState] = react.useState({ cookie: "", workspaceId: "", cookieSet: false, saving: false, status: "" });
@@ -315,26 +317,25 @@ window.__ModuleLoader__.load({
 
 				react.useEffect(() => {
 					api("/oc-usage/config-get").then((r) => {
-						setState((s) => ({ ...s, cookieSet: !!r.cookieSet }));
-					}).catch(() => {});
-					const sync = () => {
-						const snap = wsScope.getSnapshot();
-						const v = snap.value;
 						setState((s) => ({
 							...s,
-							workspaceId: v && v.workspaceId != null ? v.workspaceId : s.workspaceId,
-							status: snap.status === "unavailable" ? "设置不可用（内存模式）" : s.status,
+							cookieSet: !!r.cookieSet,
+							workspaceId: r.workspaceId != null ? r.workspaceId : s.workspaceId,
 						}));
-					};
-					sync();
-					return wsScope.subscribe(sync);
+					}).catch(() => {});
 				}, []);
 
 				const save = async () => {
 					setState((s) => ({ ...s, saving: true, status: "" }));
 					try {
-						await api("/oc-usage/config-set", { cookie: state.cookie });
-						if (state.workspaceId.trim()) await wsScope.set("workspaceId", state.workspaceId.trim());
+						const body = {};
+						if (state.cookie.trim()) body.cookie = state.cookie;
+						if (state.workspaceId.trim()) body.workspaceId = state.workspaceId.trim();
+						const r = await api("/oc-usage/config-set", body);
+						if (r && r.ok === false) {
+							setState((s) => ({ ...s, saving: false, status: (r.error) || "保存失败" }));
+							return;
+						}
 						setState((s) => ({
 							...s, saving: false,
 							cookieSet: !!state.cookie.trim(),

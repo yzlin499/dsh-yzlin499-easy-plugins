@@ -7,7 +7,10 @@
 //      · 继续打字 → 管道带 query 调 candidates() → Host /quick-file/files 过滤
 //      · 回车/点击选中 → 管道把 `@查询词` 替换为文件路径文本（onPick 返回 { text }）
 // 2) 设置卡片：注册进官方「插件」设置页（settings.plugin.item），
-//    配置文件列表的深度/数量上限（Host 内存态）。
+//    配置文件列表的深度/数量上限。注意：官方 api-proxy 目前只对白名单内的
+//    settings 命名空间开放 Web 读写（WEB_SETTINGS_NAMESPACES），第三方插件的
+//    settingsScope 永远 unavailable；因此这里改走本插件自己的
+//    /quick-file/config 路由，Host 侧经 ctx.settings 持久化到 ~/.dsh/settings.yaml。
 // ═══════════════════════════════════════════════════════════════════════════
 window.__ModuleLoader__.load({
 	id: "dsh-quick-file",
@@ -50,7 +53,7 @@ window.__ModuleLoader__.load({
 		}
 		//#endregion
 
-		const inject = ["inputTriggers", "slots", "settingsScope"];
+		const inject = ["inputTriggers", "slots"];
 
 		// 官方 IconChevronDownOutline14 同款 SVG 箭头
 		function ChevronIcon({ className }) {
@@ -98,36 +101,59 @@ window.__ModuleLoader__.load({
 
 			ctx.effect(() => ctx.inputTriggers.registerSource(source));
 
-			// 设置卡片：官方「插件」设置页（settings.plugin.item），配置经 settings 持久化
-			const scope = ctx.settingsScope.bind({ namespace: "dsh-quick-file" });
+			// 设置卡片：官方「插件」设置页（settings.plugin.item）。
+			// 官方 api-proxy 的 WEB_SETTINGS_NAMESPACES 白名单不包含第三方命名空间，
+			// settingsScope 会永远 unavailable，因此改走自身 /quick-file/config 路由；
+			// Host 侧经 ctx.settings 持久化到 ~/.dsh/settings.yaml。
 
 			function SettingsCard() {
 				const [cfg, setCfg] = react.useState({ depth: 3, max: 50, loading: true, status: "" });
 				const [open, setOpen] = react.useState(false);
 
 				react.useEffect(() => {
-					const sync = () => {
-						const snap = scope.getSnapshot();
-						const v = snap.value;
-						setCfg((s) => ({
-							...s,
-							loading: snap.status === "loading",
-							depth: v && v.depth != null ? v.depth : s.depth,
-							max: v && v.max != null ? v.max : s.max,
-							status: snap.status === "unavailable" ? "设置不可用（内存模式）" : "",
-						}));
+					let alive = true;
+					const load = () => {
+						fetch("/quick-file/config")
+							.then((r) => r.json())
+							.then((d) => {
+								if (!alive) return;
+								setCfg((s) => ({
+									...s,
+									loading: false,
+									depth: d && d.depth != null ? d.depth : s.depth,
+									max: d && d.max != null ? d.max : s.max,
+									status: "",
+								}));
+							})
+							.catch(() => {
+								if (!alive) return;
+								setCfg((s) => ({ ...s, loading: false, status: "读取失败" }));
+							});
 					};
-					sync();
-					return scope.subscribe(sync);
+					load();
+					return () => { alive = false; };
 				}, []);
 
 				const save = () => {
 					setCfg((s) => ({ ...s, status: "保存中…" }));
-					Promise.all([
-						scope.set("depth", Number(cfg.depth)),
-						scope.set("max", Number(cfg.max)),
-					])
-						.then(() => setCfg((s) => ({ ...s, status: "已保存" })))
+					fetch("/quick-file/config", {
+						method: "POST",
+						headers: { "content-type": "application/json" },
+						body: JSON.stringify({ depth: Number(cfg.depth), max: Number(cfg.max) }),
+					})
+						.then((r) => r.json())
+						.then((d) => {
+							if (d && d.ok) {
+								setCfg((s) => ({
+									...s,
+									depth: d.depth != null ? d.depth : s.depth,
+									max: d.max != null ? d.max : s.max,
+									status: "已保存",
+								}));
+							} else {
+								setCfg((s) => ({ ...s, status: (d && d.error) || "保存失败" }));
+							}
+						})
 						.catch((e) => setCfg((s) => ({ ...s, status: String((e && e.message) || "保存失败") })));
 				};
 

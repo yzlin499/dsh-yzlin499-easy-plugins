@@ -13,8 +13,7 @@
     "client": {
       "inject": [
         "inputTriggers",
-        "slots",
-        "settingsScope"
+        "slots"
       ],
       "platform": "web"
     },

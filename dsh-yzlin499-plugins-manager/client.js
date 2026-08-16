@@ -7,7 +7,9 @@
 //   · 详情：弹窗显示插件 README——中文界面读 README.md，英文界面优先 README_EN.md
 //     （缺失回退 README.md，都没有才回退 package.json description）；跟随 DSH 语言实时切换
 //   · 批量开关后显示"需要重启 DSH Web 生效"横幅（不自动重启）
-//   · 顶部可改目标 profile（默认 web，内存态）
+//   · 顶部可改目标 profile（默认 web；经 /plugins-manager/profile 路由持久化到
+//     ~/.dsh/settings.yaml。注：官方 api-proxy 的 WEB_SETTINGS_NAMESPACES 白名单
+//     不含第三方命名空间，settingsScope 永远 unavailable，故不走 settingsScope）
 // ═══════════════════════════════════════════════════════════════════════════
 window.__ModuleLoader__.load({
 	id: "dsh-yzlin499-plugins-manager",
@@ -85,7 +87,7 @@ window.__ModuleLoader__.load({
 		}
 		//#endregion
 
-		const inject = ["slots", "locale", "settingsScope"];
+		const inject = ["slots", "locale"];
 
 		// 官方 IconChevronDownOutline14 同款 SVG 箭头
 		function ChevronIcon({ className }) {
@@ -100,8 +102,9 @@ window.__ModuleLoader__.load({
 
 		function apply(ctx) {
 			const locale = ctx.get("locale");
-			// 持久化 profile（官方 settings 命名空间 dsh-yzlin499-plugins-manager）
-			const profileScope = ctx.settingsScope.bind({ namespace: "dsh-yzlin499-plugins-manager" });
+			// 目标 profile 持久化：走自身 /plugins-manager/profile 路由（Host 侧
+			// 经 ctx.settings 写入 ~/.dsh/settings.yaml），不走 settingsScope
+			// （官方 api-proxy 白名单不含第三方命名空间，settingsScope 永远不可用）
 			// DSH 当前语言：'en' 才用英文，其余默认中文
 			const activeLang = () => (locale && locale.getLocale().active === "en") ? "en" : "zh";
 
@@ -149,21 +152,20 @@ window.__ModuleLoader__.load({
 				};
 				react.useEffect(() => { refresh(); }, []);
 
-				// profile 持久化同步（settings 命名空间）
-				react.useEffect(() => {
-					const sync = () => {
-						const snap = profileScope.getSnapshot();
-						const p = snap.value && snap.value.profile ? snap.value.profile : "web";
-						setState((s) => ({ ...s, profile: p, profileInput: p }));
-					};
-					sync();
-					return profileScope.subscribe(sync);
-				}, []);
+				// profile 已由 /plugins-manager/list 的 d.profile 载入 state，无需单独同步
 
 				const saveProfile = () => {
 					const next = state.profileInput.trim();
-					profileScope.set("profile", next)
-						.then(() => setState((s) => ({ ...s, profile: next })))
+					fetch("/plugins-manager/profile", {
+						method: "POST",
+						headers: { "content-type": "application/json" },
+						body: JSON.stringify({ profile: next }),
+					})
+						.then((r) => r.json())
+						.then((d) => {
+							if (d && d.ok) setState((s) => ({ ...s, profile: next }));
+							else setState((s) => ({ ...s, error: (d && d.error) || "profile 保存失败" }));
+						})
 						.catch((e) => setState((s) => ({ ...s, error: String((e && e.message) || "profile 保存失败") })));
 				};
 
