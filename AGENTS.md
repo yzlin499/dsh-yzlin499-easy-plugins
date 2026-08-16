@@ -14,7 +14,8 @@
 ├── README.md                   # 使用文档
 ├── Docs/                       # 知识库（参考、安装、插件开发）
 │   ├── 参考.md                  # 官方文档与生态链接
-│   └── Install.md              # 安装/卸载说明
+│   ├── Install.md              # 安装/卸载说明
+│   └── Settings.md             # 插件配置持久化（settings）读写指南
 ├── AGENTS.md                   # 本文件
 ├── package.json                # 仓库元信息（private，勿发布）
 └── dsh-*/                      # 每个插件包
@@ -94,17 +95,17 @@ dsh plugin --profile web remove dsh-oc-usage   # 单个卸载
   - 硬编码中性色用半透明配对：浅色 `rgba(0,0,0,x)`、深色 `rgba(255,255,255,x)`。
   - 需要 JS 判断主题时：`ctx.theme.getTheme().active.colorScheme`（`'light'|'dark'`），
     或订阅 `theme/change` 事件。
-- **插件设置（settings.plugin.item）规范**：插件设置统一进官方「插件」设置页的
-  `settings.plugin.item` 插槽（list、additive），**不要自建 settings.section 标签页**。
-  - 注册：`ctx.slots.inject("settings.plugin.item", () => ctx.slots.register({
-    name: "settings.plugin.item", id: "<唯一id>", order, label }, Component))`；
-    卡片组件自包含、自行拉取/保存配置，**不依赖其它插件（包括管理器）**。
-  - 卡片外壳对齐官方 PluginCard：`.pc-card{border:1px solid var(--dsw-alias-border-l2);
-    background:var(--dsw-alias-bg-layer-3);border-radius:12px;overflow:hidden}` +
-    可折叠头部（名称 + 描述 + CSS 边框下箭头 `rotate(45deg)`，展开翻转 225deg），
-    **默认闭合**；展开区 `.pc-body{border-top:1px solid var(--dsw-alias-border-l2);
-    padding:14px 16px}`。
-  - 无设置项的插件不加卡片（避免空卡）。
+- **插件设置（settings.plugin.item）规范**：见 **`Docs/Settings.md`**（插件配置持久化
+  读写指南），要点：
+  - 设置卡片统一进官方「插件」设置页的 `settings.plugin.item` 插槽（list、additive），
+    **不要自建 settings.section 标签页**；卡片外壳对齐官方 PluginCard（`.pc-card` +
+    可折叠头部 + `pc-body`），默认闭合；无设置项的插件不加卡片。
+  - **持久化不要用 Client 的 `settingsScope`**：官方 api-proxy 的
+    `WEB_SETTINGS_NAMESPACES` 白名单不含第三方命名空间，settingsScope 永远
+    unavailable（官方 deferred work，无配置可开）。正确姿势：Host 侧用官方
+    `ctx.settings.register` + `scope.update()` 落盘 `~/.dsh/settings.yaml`，
+    Client 侧走插件自己的 webServer 路由转发读写（详见 `Docs/Settings.md` 的
+    架构图与 Host/Client 代码示例）。
 
 ## 分发方式
 
