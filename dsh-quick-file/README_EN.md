@@ -26,15 +26,33 @@ Type `@` in the input box → a menu appears (grouped with other `@` sources) �
 keep typing to filter (fuzzy match on file name / path) → pick with ↑↓/Enter or
 click → the `@query` token is replaced by the file path.
 
+## Configuration (Settings → Plugins → Quick File Input)
+
+| Item | Description |
+|---|---|
+| Everything HTTP | **Leave empty = recursive scan** of the workspace; fill in e.g. `http://127.0.0.1:8074` to search via the **Everything HTTP Server** instead (Everything already indexes the whole disk — faster than per-directory traversal) |
+| Max list depth | Max directory depth for the recursive-scan mode (1-10, default 3) |
+| Max file count | Max entries returned (10-200, default 50) |
+
+The Everything mode reuses Everything's index: results are constrained to the
+**current session workspace** (`path:` filter), auto-skip `node_modules/.git/dist`
+etc., and cover everything already indexed — fast and comprehensive.
+
 ## How it works
 
 - **Client** (`client.js`): registers an `@` InputTriggerSource into the built-in
   pipeline `dsh-client-ui-input-trigger` (`ctx.inputTriggers`) — menu rendering,
   keyboard navigation and input rewriting are handled by the pipeline; this
   plugin only provides the file data source.
-- **Host** (`index.js`): `/quick-file/files` route — recursively lists the
-  workspace root (`SessionHeader.cwd`) via the `fs` service; depth ≤ 3, skips
-  `node_modules/.git/dist` etc., max 50 entries, `/`-separated paths.
+- **Host** (`index.js`): `/quick-file/files` route — resolves the workspace root
+  (`SessionHeader.cwd`) and returns the file list:
+  - Without Everything configured: recursively lists via the `fs` service
+    (depth / ignore / count limited)
+  - With Everything HTTP configured: queries the `?search=...&j=1&path_column=1`
+    JSON endpoint, falling back to the recursive scan on failure
+- Config is persisted to `~/.dsh/settings.yaml` through the official
+  `ctx.settings` service (namespace `dsh-quick-file`); the settings card
+  reads/writes via the plugin's own `/quick-file/config` route.
 
 ## License
 

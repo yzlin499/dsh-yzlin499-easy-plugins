@@ -24,8 +24,9 @@ window.__ModuleLoader__.load({
 		const css = [
 			".qf-card{display:flex;flex-direction:column;gap:8px}",
 			".qf-row{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--dsw-alias-label-secondary)}",
-			".qf-label{width:100px;flex-shrink:0}",
+			".qf-label{width:108px;flex-shrink:0}",
 			".qf-input{width:70px;background:rgba(0,0,0,.22);border:1px solid var(--dsw-alias-border-l2);border-radius:6px;color:var(--dsw-alias-label-primary);font-size:12px;padding:4px 7px}",
+			".qf-input-url{flex:1;min-width:0;background:rgba(0,0,0,.22);border:1px solid var(--dsw-alias-border-l2);border-radius:6px;color:var(--dsw-alias-label-primary);font-size:12px;padding:4px 7px}",
 			".qf-input:focus{outline:none;border-color:var(--dsw-alias-brand-primary)}",
 			".qf-hint{font-size:10.5px;color:var(--dsw-alias-label-secondary);opacity:.75}",
 			".qf-foot{display:flex;align-items:center;gap:10px;margin-top:2px}",
@@ -107,7 +108,7 @@ window.__ModuleLoader__.load({
 			// Host 侧经 ctx.settings 持久化到 ~/.dsh/settings.yaml。
 
 			function SettingsCard() {
-				const [cfg, setCfg] = react.useState({ depth: 3, max: 50, loading: true, status: "" });
+				const [cfg, setCfg] = react.useState({ depth: 3, max: 50, everythingUrl: "", loading: true, status: "" });
 				const [open, setOpen] = react.useState(false);
 
 				react.useEffect(() => {
@@ -122,6 +123,7 @@ window.__ModuleLoader__.load({
 									loading: false,
 									depth: d && d.depth != null ? d.depth : s.depth,
 									max: d && d.max != null ? d.max : s.max,
+									everythingUrl: d && typeof d.everythingUrl === "string" ? d.everythingUrl : s.everythingUrl,
 									status: "",
 								}));
 							})
@@ -139,7 +141,7 @@ window.__ModuleLoader__.load({
 					fetch("/quick-file/config", {
 						method: "POST",
 						headers: { "content-type": "application/json" },
-						body: JSON.stringify({ depth: Number(cfg.depth), max: Number(cfg.max) }),
+						body: JSON.stringify({ depth: Number(cfg.depth), max: Number(cfg.max), everythingUrl: cfg.everythingUrl }),
 					})
 						.then((r) => r.json())
 						.then((d) => {
@@ -148,6 +150,7 @@ window.__ModuleLoader__.load({
 									...s,
 									depth: d.depth != null ? d.depth : s.depth,
 									max: d.max != null ? d.max : s.max,
+									everythingUrl: typeof d.everythingUrl === "string" ? d.everythingUrl : s.everythingUrl,
 									status: "已保存",
 								}));
 							} else {
@@ -157,12 +160,12 @@ window.__ModuleLoader__.load({
 						.catch((e) => setCfg((s) => ({ ...s, status: String((e && e.message) || "保存失败") })));
 				};
 
-				const row = (label, value, onChange, hint) =>
+				const row = (label, value, onChange, hint, type, inputCls) =>
 					react.createElement("label", { className: "qf-row" },
 						react.createElement("span", { className: "qf-label" }, label),
 						react.createElement("input", {
-							className: "qf-input",
-							type: "number",
+							className: inputCls || "qf-input",
+							type: type || "number",
 							value: value,
 							onChange: (e) => onChange(e.target.value),
 						}),
@@ -180,6 +183,8 @@ window.__ModuleLoader__.load({
 					open
 						? react.createElement("div", { className: "pc-body" },
 							react.createElement("div", { className: "qf-card" },
+								row("Everything HTTP", cfg.everythingUrl, (v) => setCfg((s) => ({ ...s, everythingUrl: v })),
+									"留空 = 递归扫描；填 http://127.0.0.1:8074 则用 Everything 搜索", "text", "qf-input-url"),
 								row("列表深度上限", cfg.depth, (v) => setCfg((s) => ({ ...s, depth: v })), "1-10"),
 								row("文件数量上限", cfg.max, (v) => setCfg((s) => ({ ...s, max: v })), "10-200"),
 								react.createElement("div", { className: "qf-foot" },

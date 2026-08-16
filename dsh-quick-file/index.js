@@ -3,12 +3,19 @@
 //
 // 为 Client 的 `@` 文件输入源提供文件列表：
 //   GET /quick-file/files?session=<sessionId>&q=<query>
-//   GET/POST /quick-file/config（深度/数量上限）
+//   GET/POST /quick-file/config（深度/数量上限 / Everything HTTP 地址）
+//
+// 两种搜索后端：
+//   1) 默认：递归扫描会话工作区（深度/忽略/数量受限）
+//   2) 配置 everythingUrl 后：走 Everything HTTP Server 搜索
+//      （Everything 已索引全盘，比逐目录遍历更快）
 //
 // 配置经官方 settings 服务持久化（命名空间 dsh-quick-file，schemastery schema
 // 由 ctx.loader.import 从应用侧解析）；settings 不可用时回退内存态。
 // ═══════════════════════════════════════════════════════════════════════════
 import { join, relative, sep } from 'node:path'
+import { request as httpRequest } from 'node:http'
+import { request as httpsRequest } from 'node:https'
 
 export const name = 'quick-file'
 export const inject = ['fs', 'sessions', 'webServer', 'loader', 'settings']
@@ -16,11 +23,30 @@ export const inject = ['fs', 'sessions', 'webServer', 'loader', 'settings']
 const log = (...a) => console.log('[quick-file]', ...a)
 
 const NS = 'dsh-quick-file'
-const DEFAULTS = { depth: 3, max: 50 }
+const DEFAULTS = { depth: 3, max: 50, everythingUrl: '' }
 const IGNORE_DIRS = new Set([
   'node_modules', '.git', 'dist', 'build', 'coverage', '.next',
   '.cache', '__pycache__', '.venv', 'venv', 'target', '.dsh',
 ])
+
+/** 简易 HTTP GET + JSON 解析（Everything HTTP Server 返回 {totalResults, results}） */
+function httpGetJson(href, timeoutMs = 6000) {
+  return new Promise((resolve, reject) => {
+    let u
+    try { u = new URL(href) } catch (e) { reject(e); return }
+    const request = u.protocol === 'https:' ? httpsRequest : httpRequest
+    const req = request(u, { method: 'GET' }, (res) => {
+      let data = ''
+      res.on('data', (c) => { data += c })
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)) } catch (e) { reject(new Error('响应不是合法 JSON: ' + String(e.message || e))) }
+      })
+    })
+    req.on('error', reject)
+    req.setTimeout(timeoutMs, () => { req.destroy(new Error('HTTP 请求超时')) })
+    req.end()
+  })
+}
 
 export async function apply(ctx) {
   // ── 持久化设置：注册命名空间（schemastery schema 经 loader 拉取）──
@@ -32,6 +58,7 @@ export async function apply(ctx) {
     scope = ctx.settings.register(NS, z.object({
       depth: z.natural().min(1).max(10),
       max: z.natural().min(10).max(200),
+      everythingUrl: z.string().default(''),
     }))
   } catch (e) {
     log('settings 注册失败，回退内存态:', String((e && e.message) || e))
@@ -45,6 +72,7 @@ export async function apply(ctx) {
           return {
             depth: Number.isInteger(v.depth) ? v.depth : DEFAULTS.depth,
             max: Number.isInteger(v.max) ? v.max : DEFAULTS.max,
+            everythingUrl: typeof v.everythingUrl === 'string' ? v.everythingUrl : DEFAULTS.everythingUrl,
           }
         }
       } catch {}
@@ -91,6 +119,50 @@ export async function apply(ctx) {
     return out
   }
 
+  /**
+   * 走 Everything HTTP Server 搜索（配置了 everythingUrl 时优先）。
+   * 返回与 collectFiles 相同形状的列表（相对路径，`/` 分隔），失败回退 null。
+   * API（voidtools HTTP Server）：?search=<Everything 语法>&count=N&j=1&path_column=1
+   *   → { totalResults, results: [{ type: 'file'|'folder', name, path }] }
+   */
+  async function collectViaEverything(root, q) {
+    const cfg = readConfig()
+    const base = String(cfg.everythingUrl || '').trim().replace(/\/+$/, '')
+    if (!base) return null
+    // 构造 Everything 搜索词：`path:<cwd>` 限定工作区；q 为空时列出根下全部
+    const terms = []
+    if (q) terms.push(q)
+    terms.push('path:' + root)
+    // 忽略目录：Everything 语法 `!<name>\` 排除整个目录名（前面无反斜杠）
+    for (const d of IGNORE_DIRS) terms.push('!' + d + '\\')
+    const search = terms.join(' ')
+    // count 取 max 的 3 倍余量，过滤忽略目录后仍够用
+    const count = Math.min(Math.max(cfg.max * 3, 50), 200)
+    const href = base + '/?search=' + encodeURIComponent(search) + '&count=' + count + '&j=1&path_column=1&sort=path&ascending=1'
+    let data
+    try {
+      data = await httpGetJson(href)
+    } catch (e) {
+      log('Everything 请求失败，回退递归扫描:', String((e && e.message) || e))
+      return null
+    }
+    const results = Array.isArray(data && data.results) ? data.results : []
+    const out = []
+    for (const r of results) {
+      if (!r || typeof r.path !== 'string' || typeof r.name !== 'string') continue
+      // path 是绝对目录，拼接文件名后转相对路径
+      const abs = join(r.path, r.name)
+      const rel = relative(root, abs).split(sep).join('/')
+      // 过滤掉工作区外的结果（path: 是子串匹配，可能带出邻近路径）
+      if (rel.startsWith('..')) continue
+      const first = rel.split('/')[0]
+      if (first && IGNORE_DIRS.has(first)) continue
+      out.push({ path: rel, name: r.name, isDir: r.type === 'folder' })
+      if (out.length >= cfg.max) break
+    }
+    return out
+  }
+
   const sendJson = (res, obj, status = 200) => {
     res.writeHead(status, {
       'content-type': 'application/json; charset=utf-8',
@@ -122,11 +194,15 @@ export async function apply(ctx) {
             sendJson(res, { files: [] })
             return
           }
-          let files = await collectFiles(cwd)
-          if (q) {
-            files = files.filter(
-              (f) => f.path.toLowerCase().includes(q) || f.name.toLowerCase().includes(q),
-            )
+          // 配置了 Everything 时优先用它搜索；失败或未配置回退递归扫描
+          let files = await collectViaEverything(cwd, q)
+          if (!files) {
+            files = await collectFiles(cwd)
+            if (q) {
+              files = files.filter(
+                (f) => f.path.toLowerCase().includes(q) || f.name.toLowerCase().includes(q),
+              )
+            }
           }
           sendJson(res, { files: files.slice(0, readConfig().max) })
           return
@@ -153,6 +229,19 @@ export async function apply(ctx) {
               return
             }
             patch.max = m
+          }
+          if (a.everythingUrl !== undefined) {
+            const u = String(a.everythingUrl).trim()
+            if (u) {
+              try {
+                const parsed = new URL(u)
+                if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw new Error('bad protocol')
+              } catch {
+                sendJson(res, { ok: false, error: 'everythingUrl 需为 http(s)://host[:port] 形式，留空则用递归扫描' }, 400)
+                return
+              }
+            }
+            patch.everythingUrl = u
           }
           try {
             if (scope) await scope.update(patch)
