@@ -96,16 +96,10 @@ dsh plugin --profile web remove dsh-oc-usage   # 单个卸载
   - 需要 JS 判断主题时：`ctx.theme.getTheme().active.colorScheme`（`'light'|'dark'`），
     或订阅 `theme/change` 事件。
 - **插件设置（settings.plugin.item）规范**：见 **`Docs/Settings.md`**（插件配置持久化
-  读写指南），要点：
-  - 设置卡片统一进官方「插件」设置页的 `settings.plugin.item` 插槽（list、additive），
-    **不要自建 settings.section 标签页**；卡片外壳对齐官方 PluginCard（`.pc-card` +
-    可折叠头部 + `pc-body`），默认闭合；无设置项的插件不加卡片。
-  - **持久化不要用 Client 的 `settingsScope`**：官方 api-proxy 的
-    `WEB_SETTINGS_NAMESPACES` 白名单不含第三方命名空间，settingsScope 永远
-    unavailable（官方 deferred work，无配置可开）。正确姿势：Host 侧用官方
-    `ctx.settings.register` + `scope.update()` 落盘 `~/.dsh/settings.yaml`，
-    Client 侧走插件自己的 webServer 路由转发读写（详见 `Docs/Settings.md` 的
-    架构图与 Host/Client 代码示例）。
+  读写指南）——设置卡片插槽注册、PluginCard 外壳、默认闭合，以及持久化姿势
+  （不用 Client 的 `settingsScope`；Host 用官方 `ctx.settings.register` +
+  `scope.update()` 落盘 `~/.dsh/settings.yaml`，Client 走插件自己的 webServer 路由
+  转发读写）。
 
 ## 分发方式
 

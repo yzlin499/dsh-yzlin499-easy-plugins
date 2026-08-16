@@ -148,6 +148,21 @@ function SettingsCard() {
 - 卡片照旧注册进官方 `settings.plugin.item` 插槽（该插槽本身是开放的，只有数据
   通道被白名单限制），外壳对齐官方 PluginCard。
 
+### 设置卡片 UI 规范（settings.plugin.item）
+
+插件设置统一进官方「插件」设置页的 `settings.plugin.item` 插槽（list、additive），
+**不要自建 settings.section 标签页**。
+
+- **注册**：`ctx.slots.inject("settings.plugin.item", () => ctx.slots.register({
+  name: "settings.plugin.item", id: "<唯一id>", order, label }, Component))`；
+  卡片组件自包含、自行拉取/保存配置，**不依赖其它插件（包括管理器）**。
+- **卡片外壳对齐官方 PluginCard**：
+  - `.pc-card{border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-3);border-radius:12px;overflow:hidden}`
+  - 可折叠头部（名称 + 描述 + CSS 边框下箭头 `rotate(45deg)`，展开翻转 225deg），
+    **默认闭合**
+  - 展开区 `.pc-body{border-top:1px solid var(--dsw-alias-border-l2);padding:14px 16px}`
+- **无设置项的插件不加卡片**（避免空卡）。
+
 ## 4. 现状落盘验证
 
 ```powershell
@@ -159,7 +174,6 @@ Get-Content ~/.dsh/settings.yaml
 ```
 
 ## 5. 特殊红线（Cookie 等敏感配置）
-
 oc-usage 的 Cookie 遵循「只存进程内存、不落盘、不回显」红线，与 settings 无关：
 - `config-get` 只回 `cookieSet: true/false`，不回显值
 - `config-set` 收到新 Cookie 更新 `state.cookie`（进程内），重启即失
