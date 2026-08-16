@@ -23,11 +23,21 @@ export const inject = ['fs', 'sessions', 'webServer', 'loader', 'settings']
 const log = (...a) => console.log('[quick-file]', ...a)
 
 const NS = 'dsh-quick-file'
-const DEFAULTS = { depth: 3, max: 50, everythingUrl: '' }
-const IGNORE_DIRS = new Set([
-  'node_modules', '.git', 'dist', 'build', 'coverage', '.next',
-  '.cache', '__pycache__', '.venv', 'venv', 'target', '.dsh',
-])
+// 忽略目录可配置：逗号分隔字符串，默认值如下；留空 = 不忽略任何目录
+const DEFAULT_IGNORE = 'node_modules,.git,dist,build,coverage,.next,.cache,__pycache__,.venv,venv,target,.dsh'
+const DEFAULTS = { depth: 3, max: 50, everythingUrl: '', ignoreDirs: DEFAULT_IGNORE }
+
+/** 解析 ignoreDirs 配置（逗号分隔，去空白，去空项）为 Set */
+function parseIgnoreDirs(raw) {
+  const set = new Set()
+  if (typeof raw === 'string') {
+    for (const part of raw.split(',')) {
+      const name = part.trim()
+      if (name) set.add(name)
+    }
+  }
+  return set
+}
 
 /** 简易 HTTP GET + JSON 解析（Everything HTTP Server 返回 {totalResults, results}） */
 function httpGetJson(href, timeoutMs = 6000) {
@@ -59,6 +69,7 @@ export async function apply(ctx) {
       depth: z.natural().min(1).max(10),
       max: z.natural().min(10).max(200),
       everythingUrl: z.string().default(''),
+      ignoreDirs: z.string().default(DEFAULT_IGNORE),
     }))
   } catch (e) {
     log('settings 注册失败，回退内存态:', String((e && e.message) || e))
@@ -73,6 +84,7 @@ export async function apply(ctx) {
             depth: Number.isInteger(v.depth) ? v.depth : DEFAULTS.depth,
             max: Number.isInteger(v.max) ? v.max : DEFAULTS.max,
             everythingUrl: typeof v.everythingUrl === 'string' ? v.everythingUrl : DEFAULTS.everythingUrl,
+            ignoreDirs: typeof v.ignoreDirs === 'string' ? v.ignoreDirs : DEFAULTS.ignoreDirs,
           }
         }
       } catch {}
@@ -95,6 +107,7 @@ export async function apply(ctx) {
   /** 从根目录递归收集文件（深度/忽略/数量受限），返回相对路径（`/` 分隔） */
   async function collectFiles(root) {
     const cfg = readConfig()
+    const ignore = parseIgnoreDirs(cfg.ignoreDirs)
     const out = []
     const walk = async (dir, depth) => {
       if (depth > cfg.depth || out.length >= cfg.max) return
@@ -108,7 +121,7 @@ export async function apply(ctx) {
       for (const entry of entries) {
         if (out.length >= cfg.max) return
         const isDir = entry.type === 'directory'
-        if (isDir && IGNORE_DIRS.has(entry.name)) continue
+        if (isDir && ignore.has(entry.name)) continue
         const abs = join(dir, entry.name)
         const rel = relative(root, abs).split(sep).join('/')
         out.push({ path: rel, name: entry.name, isDir })
@@ -125,16 +138,17 @@ export async function apply(ctx) {
    * API（voidtools HTTP Server）：?search=<Everything 语法>&count=N&j=1&path_column=1
    *   → { totalResults, results: [{ type: 'file'|'folder', name, path }] }
    *
-   * 注意：Everything 模式**只排除 .git**，不排除 node_modules 等——Everything
-   * 已索引全盘，用户搜索时就该能找到 node_modules 里的文件；q 为空（浏览模式）
-   * 仍走递归扫描，保持工作区结构干净。
+   * 忽略目录遵循 ignoreDirs 配置（默认含 node_modules/.git 等；用户可改/清空，
+   * 清空 = 不忽略任何目录，Everything 全索引结果都可搜到）。
    */
   async function collectViaEverything(root, q) {
     const cfg = readConfig()
     const base = String(cfg.everythingUrl || '').trim().replace(/\/+$/, '')
     if (!base || !q) return null
-    // 构造 Everything 搜索词：`path:<cwd>` 限定工作区 + 排除 .git
-    const terms = [q, 'path:' + root, '!.git\\']
+    const ignore = parseIgnoreDirs(cfg.ignoreDirs)
+    // 构造 Everything 搜索词：`path:<cwd>` 限定工作区 + `!<dir>\` 排除忽略目录
+    const terms = [q, 'path:' + root]
+    for (const d of ignore) terms.push('!' + d + '\\')
     const search = terms.join(' ')
     // count 取 max 的 3 倍余量，过滤后仍够用
     const count = Math.min(Math.max(cfg.max * 3, 50), 200)
@@ -155,9 +169,9 @@ export async function apply(ctx) {
       const rel = relative(root, abs).split(sep).join('/')
       // 过滤掉工作区外的结果（path: 是子串匹配，可能带出邻近路径）
       if (rel.startsWith('..')) continue
-      // 只拦截工作区根下的 .git（Everything 语法已排除，这里双保险）
+      // 双保险：忽略目录（Everything 语法已排除，这里再兜底）
       const first = rel.split('/')[0]
-      if (first === '.git') continue
+      if (first && ignore.has(first)) continue
       out.push({ path: rel, name: r.name, isDir: r.type === 'folder' })
       if (out.length >= cfg.max) break
     }
@@ -243,6 +257,15 @@ export async function apply(ctx) {
               }
             }
             patch.everythingUrl = u
+          }
+          if (a.ignoreDirs !== undefined) {
+            // 逗号分隔目录名；允许留空（不忽略任何目录）
+            const list = String(a.ignoreDirs).split(',').map((s) => s.trim()).filter(Boolean)
+            if (list.some((name) => !/^[A-Za-z0-9._-]+$/.test(name))) {
+              sendJson(res, { ok: false, error: 'ignoreDirs 需为逗号分隔的目录名（字母/数字/._-），留空 = 不忽略' }, 400)
+              return
+            }
+            patch.ignoreDirs = list.join(',')
           }
           try {
             if (scope) await scope.update(patch)

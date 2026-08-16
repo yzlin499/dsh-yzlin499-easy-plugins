@@ -31,14 +31,18 @@ click → the `@query` token is replaced by the file path.
 | Item | Description |
 |---|---|
 | Everything HTTP | **Leave empty = recursive scan** of the workspace; fill in e.g. `http://127.0.0.1:8074` to search via the **Everything HTTP Server** instead (Everything already indexes the whole disk — faster than per-directory traversal) |
+| Ignore dirs | Comma-separated directory names skipped by both search modes. Defaults to `node_modules,.git,dist,build,coverage,.next,.cache,__pycache__,.venv,venv,target,.dsh`; **clearing it ignores nothing** (the full Everything index becomes searchable, including `node_modules`) |
 | Max list depth | Max directory depth for the recursive-scan mode (1-10, default 3) |
 | Max file count | Max entries returned (10-200, default 50) |
 
 The Everything mode reuses Everything's index: results are constrained to the
-**current session workspace** (`path:` filter), cover everything already indexed —
-**including files under `node_modules`** (only `.git` is excluded) — fast and
-comprehensive. Everything search is used when you type a keyword; with an empty
-keyword the recursive scan is used instead (clean workspace listing).
+**current session workspace** (`path:` filter), cover everything already indexed,
+and are fast. Which directories are ignored is controlled by the **Ignore dirs**
+setting (by default `node_modules`/`.git` etc. are skipped so results stay
+relevant); to search files under `node_modules`, remove that entry from the
+ignore list or clear the field. Everything search runs when you type a keyword;
+with an empty keyword the recursive scan is used instead (clean workspace
+listing).
 
 ## How it works
 
@@ -51,7 +55,8 @@ keyword the recursive scan is used instead (clean workspace listing).
   - Without Everything configured, or with an empty keyword: recursively lists
     via the `fs` service (depth / ignore / count limited)
   - With Everything HTTP configured and a keyword: queries the
-    `?search=...&j=1&path_column=1` JSON endpoint, falling back to the recursive
+    `?search=...&j=1&path_column=1` JSON endpoint (workspace-scoped via `path:`,
+    ignoring dirs per the `ignoreDirs` setting), falling back to the recursive
     scan on failure
 - Config is persisted to `~/.dsh/settings.yaml` through the official
   `ctx.settings` service (namespace `dsh-quick-file`); the settings card

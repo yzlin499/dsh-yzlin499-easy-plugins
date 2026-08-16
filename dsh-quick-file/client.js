@@ -108,7 +108,7 @@ window.__ModuleLoader__.load({
 			// Host 侧经 ctx.settings 持久化到 ~/.dsh/settings.yaml。
 
 			function SettingsCard() {
-				const [cfg, setCfg] = react.useState({ depth: 3, max: 50, everythingUrl: "", loading: true, status: "" });
+				const [cfg, setCfg] = react.useState({ depth: 3, max: 50, everythingUrl: "", ignoreDirs: "", loading: true, status: "" });
 				const [open, setOpen] = react.useState(false);
 
 				react.useEffect(() => {
@@ -124,6 +124,7 @@ window.__ModuleLoader__.load({
 									depth: d && d.depth != null ? d.depth : s.depth,
 									max: d && d.max != null ? d.max : s.max,
 									everythingUrl: d && typeof d.everythingUrl === "string" ? d.everythingUrl : s.everythingUrl,
+									ignoreDirs: d && typeof d.ignoreDirs === "string" ? d.ignoreDirs : s.ignoreDirs,
 									status: "",
 								}));
 							})
@@ -141,7 +142,7 @@ window.__ModuleLoader__.load({
 					fetch("/quick-file/config", {
 						method: "POST",
 						headers: { "content-type": "application/json" },
-						body: JSON.stringify({ depth: Number(cfg.depth), max: Number(cfg.max), everythingUrl: cfg.everythingUrl }),
+						body: JSON.stringify({ depth: Number(cfg.depth), max: Number(cfg.max), everythingUrl: cfg.everythingUrl, ignoreDirs: cfg.ignoreDirs }),
 					})
 						.then((r) => r.json())
 						.then((d) => {
@@ -151,6 +152,7 @@ window.__ModuleLoader__.load({
 									depth: d.depth != null ? d.depth : s.depth,
 									max: d.max != null ? d.max : s.max,
 									everythingUrl: typeof d.everythingUrl === "string" ? d.everythingUrl : s.everythingUrl,
+									ignoreDirs: typeof d.ignoreDirs === "string" ? d.ignoreDirs : s.ignoreDirs,
 									status: "已保存",
 								}));
 							} else {
@@ -185,6 +187,8 @@ window.__ModuleLoader__.load({
 							react.createElement("div", { className: "qf-card" },
 								row("Everything HTTP", cfg.everythingUrl, (v) => setCfg((s) => ({ ...s, everythingUrl: v })),
 									"留空 = 递归扫描；填 http://127.0.0.1:8074 则用 Everything 搜索", "text", "qf-input-url"),
+								row("忽略目录", cfg.ignoreDirs, (v) => setCfg((s) => ({ ...s, ignoreDirs: v })),
+									"逗号分隔；默认 node_modules,.git 等；清空 = 不忽略任何目录", "text", "qf-input-url"),
 								row("列表深度上限", cfg.depth, (v) => setCfg((s) => ({ ...s, depth: v })), "1-10"),
 								row("文件数量上限", cfg.max, (v) => setCfg((s) => ({ ...s, max: v })), "10-200"),
 								react.createElement("div", { className: "qf-foot" },

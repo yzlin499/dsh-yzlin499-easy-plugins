@@ -29,12 +29,15 @@ dsh plugin --profile web add ./dsh-quick-file
 | 项 | 说明 |
 |---|---|
 | Everything HTTP | **留空 = 递归扫描**工作区；填入 `http://127.0.0.1:8074` 这类地址后改用 **Everything HTTP Server** 搜索（Everything 已索引全盘，比逐目录遍历更快） |
+| 忽略目录 | 逗号分隔的目录名，两种搜索模式都跳过。默认 `node_modules,.git,dist,build,coverage,.next,.cache,__pycache__,.venv,venv,target,.dsh`；**清空 = 不忽略任何目录**（Everything 全索引结果都能搜到，包括 node_modules） |
 | 列表深度上限 | 递归扫描模式的最大目录深度（1-10，默认 3） |
 | 文件数量上限 | 最多返回的条目数（10-200，默认 50） |
 
 Everything 搜索复用 Everything 的索引：在**当前会话工作区**内（`path:` 限定）按文件名匹配，
-速度快且覆盖全盘已索引内容——**包括 `node_modules` 里的文件**（仅排除 `.git`）。
-输入关键词时走 Everything 搜索；关键词留空时仍走递归扫描（干净列出工作区结构）。
+速度快且覆盖全盘已索引内容。忽略哪些目录由「忽略目录」设置控制（默认排除
+node_modules/.git 等，避免搜索结果过杂）；需要搜索 node_modules 里的文件时，
+把对应目录从忽略列表去掉或清空即可。输入关键词时走 Everything 搜索；关键词留空时
+仍走递归扫描（干净列出工作区结构）。
 
 ## 工作原理
 
