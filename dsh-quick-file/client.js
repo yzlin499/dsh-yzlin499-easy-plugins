@@ -52,7 +52,7 @@ window.__ModuleLoader__.load({
 			// 使 label 视觉宽度自动跟随 chip 宽度。因此直接把视觉 chip 改宽会导致光标偏移。
 			// 正确做法：@font-face + unicode-range 只覆盖 U+FFFC，size-adjust 放大其字形，
 			// textarea 与 mirror 同一字体栈 → 占位符、chip、label、光标同步变宽。
-			"@font-face{font-family:\"QF-ChipWide\";src:local(\"Arial\"),local(\"Segoe UI\"),local(\"Tahoma\");unicode-range:U+FFFC;size-adjust:1000%}",
+			"@font-face{font-family:\"QF-ChipWide\";src:local(\"Arial\"),local(\"Segoe UI\"),local(\"Tahoma\");unicode-range:U+FFFC;size-adjust:800%}",
 			".uV2eYG_input,.uV2eYG_mirror,.uV2eYG_backdrop{font-family:\"QF-ChipWide\",\"DshChipCell\",var(--dsw-font-family)!important}",
 			// label 超长时省略（官方无 text-overflow）
 			"[data-decoration=\"chip\"]>span:first-child{text-overflow:ellipsis!important}",
