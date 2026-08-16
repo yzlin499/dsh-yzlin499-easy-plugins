@@ -139,7 +139,6 @@ export async function apply(ctx) {
     lastToastAt[kind] = now
     const t = clip(title, 60)
     const m = clip(body)
-    log(`toast[${kind}]: ${t} — ${m}`)
     try {
       const t64 = Buffer.from(t, 'utf8').toString('base64')
       const m64 = Buffer.from(m, 'utf8').toString('base64')
@@ -266,10 +265,7 @@ export async function apply(ctx) {
         }
         if (p === '/win-notify/visibility' && req.method === 'POST') {
           const a = await readBody(req)
-          if (typeof a.visible === 'boolean') {
-            pageVisible = a.visible
-            log('页面可见性 ->', pageVisible ? '前台' : '后台')
-          }
+          if (typeof a.visible === 'boolean') pageVisible = a.visible
           sendJson(res, { ok: true, pageVisible })
           return
         }
