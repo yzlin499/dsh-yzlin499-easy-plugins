@@ -15,7 +15,7 @@
 //   POST /oc-usage/config-set -> { cookie?, workspaceId? }  部分更新
 // ═══════════════════════════════════════════════════════════════════════════
 export const name = 'oc-usage'
-export const inject = ['webServer']
+export const inject = ['webServer', 'loader', 'settings']
 
 const BASE = 'https://opencode.ai'
 const REF_FALLBACK = 'c7389bd0e731f80f49593e5ee53835475f4e28594dd6bd83eb229bab753498cd'
@@ -56,9 +56,29 @@ function parseUsage(text) {
   return { rolling: win.rolling, weekly: win.weekly, monthly: win.monthly, has }
 }
 
-export function apply(ctx) {
-  // ── 内存态配置（进程生命周期内有效）──
-  let state = { cookie: '', workspaceId: '' }
+export async function apply(ctx) {
+  // ── Cookie 只存进程内存（红线，不落盘、不回显）；workspaceId 走官方 settings 持久化 ──
+  let state = { cookie: '' }
+  let wsScope = null
+  let memWorkspaceId = ''
+  try {
+    const mod = await ctx.loader.import('@deepseek-ai/schemastery')
+    const z = mod && mod.default ? mod.default : mod
+    wsScope = ctx.settings.register('dsh-oc-usage', z.object({
+      workspaceId: z.string(),
+    }))
+  } catch (e) {
+    log('settings 注册失败，workspaceId 回退内存态:', String((e && e.message) || e))
+  }
+  const readWorkspaceId = () => {
+    if (wsScope) {
+      try {
+        const v = wsScope.get()
+        if (v && v.workspaceId != null) return String(v.workspaceId)
+      } catch {}
+    }
+    return memWorkspaceId
+  }
 
   const log = (...args) => console.log('[oc-usage]', ...args)
 
@@ -110,14 +130,14 @@ export function apply(ctx) {
 
   /** 完整查询流程（等价 usage.rs query_opencode_go） */
   async function queryUsage() {
-    log('query start (cookieSet=' + !!state.cookie + ', workspaceId=' + (state.workspaceId || '(auto)') + ')')
+    log('query start (cookieSet=' + !!state.cookie + ', workspaceId=' + (readWorkspaceId() || '(auto)') + ')')
     const cookie = state.cookie.trim().replace(/^Cookie:\s*/i, '')
     if (!cookie || !/auth=/i.test(cookie)) {
       log('rejected: cookie missing auth=')
       return { isValid: false, message: 'Cookie 缺少 auth 字段（请粘贴 opencode.ai 登录后的完整 Cookie 头）' }
     }
 
-    let workspaceId = state.workspaceId.trim()
+    let workspaceId = readWorkspaceId().trim()
     if (!workspaceId) {
       const w = await discoverWorkspace(cookie)
       log('workspace discover ->', w || '(none)')
@@ -186,14 +206,23 @@ export function apply(ctx) {
           return
         }
         if (p === '/oc-usage/config-get' && req.method === 'GET') {
-          sendJson(res, { cookieSet: !!state.cookie, workspaceId: state.workspaceId })
+          sendJson(res, { cookieSet: !!state.cookie, workspaceId: readWorkspaceId() })
           return
         }
         if (p === '/oc-usage/config-set' && req.method === 'POST') {
           const a = await readBody(req)
-          // 部分更新：cookie 留空 = 不修改（不回显 Cookie）
+          // 部分更新：cookie 留空 = 不修改（不回显 Cookie，只存内存）
           if (typeof a.cookie === 'string' && a.cookie.trim()) state.cookie = a.cookie.trim()
-          if (typeof a.workspaceId === 'string') state.workspaceId = a.workspaceId.trim()
+          if (typeof a.workspaceId === 'string') {
+            try {
+              if (wsScope) await wsScope.update({ workspaceId: a.workspaceId.trim() })
+              else memWorkspaceId = a.workspaceId.trim()
+            } catch (e) {
+              log('workspaceId 保存失败:', String((e && e.message) || e))
+              sendJson(res, { ok: false, error: 'workspaceId 保存失败' }, 500)
+              return
+            }
+          }
           sendJson(res, { ok: true })
           return
         }

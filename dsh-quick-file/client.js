@@ -36,8 +36,8 @@ window.__ModuleLoader__.load({
 			".pc-head-text{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}",
 			".pc-name{color:var(--dsw-alias-label-primary);font-size:15px;font-weight:600;line-height:1.4}",
 			".pc-desc{color:var(--dsw-alias-label-tertiary);font-size:13px;line-height:1.5}",
-			".pc-chevron{width:10px;height:10px;flex:none;color:var(--dsw-alias-label-tertiary);border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg);transition:transform .16s}",
-			".pc-open{transform:rotate(225deg)}",
+			".pc-chevron{color:var(--dsw-alias-label-tertiary);flex:none;transition:transform .16s}",
+			".pc-open{transform:rotate(180deg)}",
 			".pc-body{border-top:1px solid var(--dsw-alias-border-l2);padding:14px 16px}",
 		].join("");
 		const tagId = "dsh-quick-file/style";
@@ -50,64 +50,17 @@ window.__ModuleLoader__.load({
 		}
 		//#endregion
 
-		const inject = ["inputTriggers", "slots"];
+		const inject = ["inputTriggers", "slots", "settingsScope"];
 
-		function SettingsCard() {
-			const [cfg, setCfg] = react.useState({ depth: 3, max: 50, loading: true, status: "" });
-			const [open, setOpen] = react.useState(false);
-
-			react.useEffect(() => {
-				fetch("/quick-file/config")
-					.then((r) => r.json())
-					.then((d) => setCfg((s) => ({ ...s, depth: d.depth, max: d.max, loading: false })))
-					.catch(() => setCfg((s) => ({ ...s, loading: false, status: "加载配置失败" })));
-			}, []);
-
-			const save = () => {
-				setCfg((s) => ({ ...s, status: "保存中…" }));
-				fetch("/quick-file/config", {
-					method: "POST",
-					headers: { "content-type": "application/json" },
-					body: JSON.stringify({ depth: Number(cfg.depth), max: Number(cfg.max) }),
-				})
-					.then((r) => r.json())
-					.then((d) => setCfg((s) => ({ ...s, status: d.ok ? "已保存（内存态，重启恢复默认）" : (d.error || "保存失败") })))
-					.catch(() => setCfg((s) => ({ ...s, status: "保存失败" })));
-			};
-
-			const row = (label, value, onChange, hint) =>
-				react.createElement("label", { className: "qf-row" },
-					react.createElement("span", { className: "qf-label" }, label),
-					react.createElement("input", {
-						className: "qf-input",
-						type: "number",
-						value: value,
-						onChange: (e) => onChange(e.target.value),
-					}),
-					hint ? react.createElement("span", { className: "qf-hint" }, hint) : null,
-				);
-
-			return react.createElement("div", { className: "pc-card" },
-				react.createElement("button", { className: "pc-head", onClick: () => setOpen((v) => !v) },
-					react.createElement("span", { className: "pc-head-text" },
-						react.createElement("span", { className: "pc-name" }, "快速输入文件"),
-						react.createElement("span", { className: "pc-desc" }, "@ 文件列表参数"),
-					),
-					react.createElement("span", { className: "pc-chevron" + (open ? " pc-open" : "") }),
-				),
-				open
-					? react.createElement("div", { className: "pc-body" },
-						react.createElement("div", { className: "qf-card" },
-							row("列表深度上限", cfg.depth, (v) => setCfg((s) => ({ ...s, depth: v })), "1-10"),
-							row("文件数量上限", cfg.max, (v) => setCfg((s) => ({ ...s, max: v })), "10-200"),
-							react.createElement("div", { className: "qf-foot" },
-								react.createElement("button", { className: "qf-btn", onClick: save, disabled: cfg.loading }, "保存"),
-								cfg.status ? react.createElement("span", { className: "qf-status" }, cfg.status) : null,
-							),
-						),
-					)
-					: null,
-			);
+		// 官方 IconChevronDownOutline14 同款 SVG 箭头
+		function ChevronIcon({ className }) {
+			return react.createElement("svg", {
+				width: 14, height: 14, viewBox: "0 0 14 14", fill: "none",
+				xmlns: "http://www.w3.org/2000/svg", className,
+			}, react.createElement("path", {
+				d: "M11.8486 5.5L11.4238 5.92383L8.69727 8.65137C8.44157 8.90706 8.21562 9.13382 8.01172 9.29785C7.79912 9.46883 7.55595 9.61756 7.25 9.66602C7.08435 9.69222 6.91565 9.69222 6.75 9.66602C6.44405 9.61756 6.20088 9.46883 5.98828 9.29785C5.78438 9.13382 5.55843 8.90706 5.30273 8.65137L2.57617 5.92383L2.15137 5.5L3 4.65137L3.42383 5.07617L6.15137 7.80273C6.42595 8.07732 6.59876 8.24849 6.74023 8.3623C6.87291 8.46904 6.92272 8.47813 6.9375 8.48047C6.97895 8.48703 7.02105 8.48703 7.0625 8.48047C7.07728 8.47813 7.12709 8.46904 7.25977 8.3623C7.40124 8.24849 7.57405 8.07732 7.84863 7.80273L10.5762 5.07617L11 4.65137L11.8486 5.5Z",
+				fill: "currentColor",
+			}));
 		}
 
 		function apply(ctx) {
@@ -145,7 +98,74 @@ window.__ModuleLoader__.load({
 
 			ctx.effect(() => ctx.inputTriggers.registerSource(source));
 
-			// 设置卡片：官方「插件」设置页（settings.plugin.item）
+			// 设置卡片：官方「插件」设置页（settings.plugin.item），配置经 settings 持久化
+			const scope = ctx.settingsScope.bind({ namespace: "dsh-quick-file" });
+
+			function SettingsCard() {
+				const [cfg, setCfg] = react.useState({ depth: 3, max: 50, loading: true, status: "" });
+				const [open, setOpen] = react.useState(false);
+
+				react.useEffect(() => {
+					const sync = () => {
+						const snap = scope.getSnapshot();
+						const v = snap.value;
+						setCfg((s) => ({
+							...s,
+							loading: snap.status === "loading",
+							depth: v && v.depth != null ? v.depth : s.depth,
+							max: v && v.max != null ? v.max : s.max,
+							status: snap.status === "unavailable" ? "设置不可用（内存模式）" : "",
+						}));
+					};
+					sync();
+					return scope.subscribe(sync);
+				}, []);
+
+				const save = () => {
+					setCfg((s) => ({ ...s, status: "保存中…" }));
+					Promise.all([
+						scope.set("depth", Number(cfg.depth)),
+						scope.set("max", Number(cfg.max)),
+					])
+						.then(() => setCfg((s) => ({ ...s, status: "已保存" })))
+						.catch((e) => setCfg((s) => ({ ...s, status: String((e && e.message) || "保存失败") })));
+				};
+
+				const row = (label, value, onChange, hint) =>
+					react.createElement("label", { className: "qf-row" },
+						react.createElement("span", { className: "qf-label" }, label),
+						react.createElement("input", {
+							className: "qf-input",
+							type: "number",
+							value: value,
+							onChange: (e) => onChange(e.target.value),
+						}),
+						hint ? react.createElement("span", { className: "qf-hint" }, hint) : null,
+					);
+
+				return react.createElement("div", { className: "pc-card" },
+					react.createElement("button", { className: "pc-head", onClick: () => setOpen((v) => !v) },
+						react.createElement("span", { className: "pc-head-text" },
+							react.createElement("span", { className: "pc-name" }, "快速输入文件"),
+							react.createElement("span", { className: "pc-desc" }, "@ 文件列表参数"),
+						),
+						react.createElement(ChevronIcon, { className: "pc-chevron" + (open ? " pc-open" : "") }),
+					),
+					open
+						? react.createElement("div", { className: "pc-body" },
+							react.createElement("div", { className: "qf-card" },
+								row("列表深度上限", cfg.depth, (v) => setCfg((s) => ({ ...s, depth: v })), "1-10"),
+								row("文件数量上限", cfg.max, (v) => setCfg((s) => ({ ...s, max: v })), "10-200"),
+								react.createElement("div", { className: "qf-foot" },
+									react.createElement("button", { className: "qf-btn", onClick: save, disabled: cfg.loading }, "保存"),
+									cfg.status ? react.createElement("span", { className: "qf-status" }, cfg.status) : null,
+								),
+							),
+						)
+						: null,
+				);
+			}
+
 			ctx.slots.inject("settings.plugin.item", () => ctx.slots.register({
 				name: "settings.plugin.item",
 				id: "quick-file-settings",

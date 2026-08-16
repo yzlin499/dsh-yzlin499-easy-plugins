@@ -25,7 +25,7 @@ import { fileURLToPath } from 'node:url'
 import { marked } from './vendor/marked.esm.js'
 
 export const name = 'plugins-manager'
-export const inject = ['subprocess', 'webServer']
+export const inject = ['subprocess', 'webServer', 'loader', 'settings']
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = dirname(HERE) // 集合根目录 = 管理器的父文件夹
@@ -61,11 +61,30 @@ function renderReadme(text) {
   }
 }
 
-// 内存态：目标 profile（默认 web，面板可改）
-let profile = 'web'
 let dshBin = null
 
-export function apply(ctx) {
+export async function apply(ctx) {
+  // ── 持久化 profile（官方 settings；不可用回退内存态 'web'）──
+  let profileScope = null
+  let memProfile = 'web'
+  try {
+    const mod = await ctx.loader.import('@deepseek-ai/schemastery')
+    const z = mod && mod.default ? mod.default : mod
+    profileScope = ctx.settings.register('dsh-yzlin499-plugins-manager', z.object({
+      profile: z.string(),
+    }))
+  } catch (e) {
+    log('settings 注册失败，profile 回退内存态:', String((e && e.message) || e))
+  }
+  const readProfile = () => {
+    if (profileScope) {
+      try {
+        const v = profileScope.get()
+        if (v && v.profile) return String(v.profile)
+      } catch {}
+    }
+    return memProfile
+  }
   /** 扫描集合根目录：子文件夹含 cordis.patch.yml 即视为插件 */
   function scanPlugins() {
     const out = []
@@ -99,7 +118,7 @@ export function apply(ctx) {
   /** 已启用集合：读 profile package.json 的 dsh.profile.bundles（真正的挂载清单） */
   function readEnabled() {
     try {
-      const pj = join(DSH_HOME, 'profiles', profile, 'package.json')
+      const pj = join(DSH_HOME, 'profiles', readProfile(), 'package.json')
       if (!existsSync(pj)) return new Set()
       const pkg = JSON.parse(readFileSync(pj, 'utf8'))
       const bundles = (pkg.dsh && pkg.dsh.profile && pkg.dsh.profile.bundles) || []
@@ -178,12 +197,12 @@ export function apply(ctx) {
    * 没进挂载清单，先 remove 再 add，用新仓库路径干净重装。
    */
   async function ensureEnabled(dir, name) {
-    const addArgs = ['plugin', '--profile', profile, 'add', join(ROOT, dir)]
+    const addArgs = ['plugin', '--profile', readProfile(), 'add', join(ROOT, dir)]
     let r = await runDsh(addArgs)
     if (r.exitCode !== 0) return r
     if (!readEnabled().has(name)) {
       log('add 后未进挂载清单（疑似旧链接失效），remove 后重装:', name)
-      const rm = await runDsh(['plugin', '--profile', profile, 'remove', name])
+      const rm = await runDsh(['plugin', '--profile', readProfile(), 'remove', name])
       if (rm.exitCode !== 0) return rm
       r = await runDsh(addArgs)
     }
@@ -192,7 +211,7 @@ export function apply(ctx) {
 
   /** 停用：dsh remove，并校验已从挂载清单移除 */
   async function ensureDisabled(name) {
-    const rm = await runDsh(['plugin', '--profile', profile, 'remove', name])
+    const rm = await runDsh(['plugin', '--profile', readProfile(), 'remove', name])
     if (rm.exitCode !== 0) return rm
     if (readEnabled().has(name)) {
       log('remove 后仍在挂载清单:', name)
@@ -230,7 +249,7 @@ export function apply(ctx) {
           const plugins = scanPlugins().map((pl) => ({
             dir: pl.dir, name: pl.name, enabled: enabled.has(pl.name), isSelf: pl.isSelf,
           }))
-          sendJson(res, { root: ROOT, profile, plugins })
+          sendJson(res, { root: ROOT, profile: readProfile(), plugins })
           return
         }
         if (p === '/plugins-manager/readme' && req.method === 'GET') {
@@ -271,9 +290,15 @@ export function apply(ctx) {
             sendJson(res, { ok: false, error: 'profile 名只能包含字母/数字/_/-' }, 400)
             return
           }
-          profile = next
-          log('目标 profile ->', profile)
-          sendJson(res, { ok: true, profile })
+          try {
+            if (profileScope) await profileScope.update({ profile: next })
+            else memProfile = next
+            log('目标 profile ->', next)
+            sendJson(res, { ok: true, profile: next })
+          } catch (e) {
+            log('profile 保存失败:', String((e && e.message) || e))
+            sendJson(res, { ok: false, error: '保存失败' }, 500)
+          }
           return
         }
         if (p === '/plugins-manager/toggle' && req.method === 'POST') {

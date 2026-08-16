@@ -3,26 +3,55 @@
 //
 // 为 Client 的 `@` 文件输入源提供文件列表：
 //   GET /quick-file/files?session=<sessionId>&q=<query>
-//   -> { files: [{ path, name, isDir }] }
+//   GET/POST /quick-file/config（深度/数量上限）
 //
-// 根目录 = 会话工作区根（SessionHeader.cwd）；用 fs 服务抽象列目录。
-// 深度上限 + 忽略目录 + 数量上限，避免大仓库卡顿；路径统一用 `/` 分隔。
+// 配置经官方 settings 服务持久化（命名空间 dsh-quick-file，schemastery schema
+// 由 ctx.loader.import 从应用侧解析）；settings 不可用时回退内存态。
 // ═══════════════════════════════════════════════════════════════════════════
 import { join, relative, sep } from 'node:path'
 
 export const name = 'quick-file'
-export const inject = ['fs', 'sessions', 'webServer']
+export const inject = ['fs', 'sessions', 'webServer', 'loader', 'settings']
 
 const log = (...a) => console.log('[quick-file]', ...a)
 
-// 内存态配置（设置卡片可改，重启恢复默认）
-let config = { depth: 3, max: 50 }
+const NS = 'dsh-quick-file'
+const DEFAULTS = { depth: 3, max: 50 }
 const IGNORE_DIRS = new Set([
   'node_modules', '.git', 'dist', 'build', 'coverage', '.next',
   '.cache', '__pycache__', '.venv', 'venv', 'target', '.dsh',
 ])
 
-export function apply(ctx) {
+export async function apply(ctx) {
+  // ── 持久化设置：注册命名空间（schemastery schema 经 loader 拉取）──
+  let scope = null
+  let memConfig = { ...DEFAULTS }
+  try {
+    const mod = await ctx.loader.import('@deepseek-ai/schemastery')
+    const z = mod && mod.default ? mod.default : mod
+    scope = ctx.settings.register(NS, z.object({
+      depth: z.number().integer().min(1).max(10),
+      max: z.number().integer().min(10).max(200),
+    }))
+  } catch (e) {
+    log('settings 注册失败，回退内存态:', String((e && e.message) || e))
+  }
+
+  const readConfig = () => {
+    if (scope) {
+      try {
+        const v = scope.get()
+        if (v) {
+          return {
+            depth: Number.isInteger(v.depth) ? v.depth : DEFAULTS.depth,
+            max: Number.isInteger(v.max) ? v.max : DEFAULTS.max,
+          }
+        }
+      } catch {}
+    }
+    return { ...memConfig }
+  }
+
   /** 会话工作区根：SessionHeader.cwd（取不到返回 null） */
   function sessionCwd(sessionId) {
     try {
@@ -37,9 +66,10 @@ export function apply(ctx) {
 
   /** 从根目录递归收集文件（深度/忽略/数量受限），返回相对路径（`/` 分隔） */
   async function collectFiles(root) {
+    const cfg = readConfig()
     const out = []
     const walk = async (dir, depth) => {
-      if (depth > config.depth || out.length >= config.max) return
+      if (depth > cfg.depth || out.length >= cfg.max) return
       let entries
       try {
         const target = await ctx.fs.resolve(dir)
@@ -48,7 +78,7 @@ export function apply(ctx) {
         return
       }
       for (const entry of entries) {
-        if (out.length >= config.max) return
+        if (out.length >= cfg.max) return
         const isDir = entry.type === 'directory'
         if (isDir && IGNORE_DIRS.has(entry.name)) continue
         const abs = join(dir, entry.name)
@@ -98,22 +128,23 @@ export function apply(ctx) {
               (f) => f.path.toLowerCase().includes(q) || f.name.toLowerCase().includes(q),
             )
           }
-          sendJson(res, { files: files.slice(0, config.max) })
+          sendJson(res, { files: files.slice(0, readConfig().max) })
           return
         }
         if (url.pathname === '/quick-file/config' && req.method === 'GET') {
-          sendJson(res, { depth: config.depth, max: config.max })
+          sendJson(res, readConfig())
           return
         }
         if (url.pathname === '/quick-file/config' && req.method === 'POST') {
           const a = await readBody(req)
+          const patch = {}
           if (a.depth != null) {
             const d = Number(a.depth)
             if (!Number.isInteger(d) || d < 1 || d > 10) {
               sendJson(res, { ok: false, error: 'depth 需为 1-10 的整数' }, 400)
               return
             }
-            config.depth = d
+            patch.depth = d
           }
           if (a.max != null) {
             const m = Number(a.max)
@@ -121,10 +152,17 @@ export function apply(ctx) {
               sendJson(res, { ok: false, error: 'max 需为 10-200 的整数' }, 400)
               return
             }
-            config.max = m
+            patch.max = m
           }
-          log('config ->', JSON.stringify(config))
-          sendJson(res, { ok: true, depth: config.depth, max: config.max })
+          try {
+            if (scope) await scope.update(patch)
+            else Object.assign(memConfig, patch)
+            log('config ->', JSON.stringify(readConfig()))
+            sendJson(res, { ok: true, ...readConfig() })
+          } catch (e) {
+            log('config 保存失败:', String((e && e.message) || e))
+            sendJson(res, { ok: false, error: '保存失败: ' + String((e && e.message) || e) }, 500)
+          }
           return
         }
         sendJson(res, { ok: false, error: 'not-found' }, 404)
