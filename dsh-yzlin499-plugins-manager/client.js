@@ -71,8 +71,8 @@ window.__ModuleLoader__.load({
 			".pc-head-text{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}",
 			".pc-name{color:var(--dsw-alias-label-primary);font-size:15px;font-weight:600;line-height:1.4}",
 			".pc-desc{color:var(--dsw-alias-label-tertiary);font-size:13px;line-height:1.5}",
-			".pc-chevron{color:var(--dsw-alias-label-tertiary);font-size:12px;transition:transform .16s}",
-			".pc-open{transform:rotate(180deg)}",
+			".pc-chevron{width:10px;height:10px;flex:none;color:var(--dsw-alias-label-tertiary);border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg);transition:transform .16s}",
+			".pc-open{transform:rotate(225deg)}",
 			".pc-body{border-top:1px solid var(--dsw-alias-border-l2);padding:14px 16px}",
 		].join("");
 		const tagId = "dsh-yzlin499-plugins-manager/style";
@@ -98,7 +98,7 @@ window.__ModuleLoader__.load({
 					profileInput: "", plugins: [], pending: 0, busy: null,
 					rev: 0, detail: null, detailLoading: false,
 				});
-				const [open, setOpen] = react.useState(true);
+				const [open, setOpen] = react.useState(false);
 
 				// 语言切换 → 重取已打开弹窗的 README
 				react.useEffect(() => {
@@ -252,7 +252,7 @@ window.__ModuleLoader__.load({
 							react.createElement("span", { className: "pc-name" }, "插件管理"),
 							react.createElement("span", { className: "pc-desc" }, "管理本集合插件（启用 / 停用 / 详情）"),
 						),
-						react.createElement("span", { className: "pc-chevron" + (open ? " pc-open" : "") }, "▾"),
+						react.createElement("span", { className: "pc-chevron" + (open ? " pc-open" : "") }),
 					),
 					open
 						? react.createElement("div", { className: "pc-body" },
