@@ -24,7 +24,9 @@ Restart DSH Web to activate.
 
 Type `@` in the input box → a menu appears (grouped with other `@` sources) →
 keep typing to filter (fuzzy match on file name / path) → pick with ↑↓/Enter or
-click → the `@query` token is replaced by the file path.
+click → the picked item is inserted as a **chip**: only the file name is shown,
+one Backspace deletes the whole chip, and on send it expands to the full
+relative path for the model.
 
 The candidate menu stretches to the full input-box width; each row shows a
 **type icon + file name + containing directory**: icons are color-coded by

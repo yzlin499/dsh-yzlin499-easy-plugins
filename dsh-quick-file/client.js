@@ -180,8 +180,23 @@ window.__ModuleLoader__.load({
 					}
 				},
 				onPick({ candidate }) {
-					// 管道把 @token 区间替换为这段文本（尾随空格方便继续输入）
-					return { text: (candidate.fullPath || candidate.name) + " " };
+					// 插入「块」（ReferenceInsert）：输入框里显示为 chip（文件名），
+					// 一次删除即整块移除；提交时经 codec.serialize 展开为完整相对路径
+					const rel = candidate.fullPath || candidate.name;
+					return {
+						insert: {
+							source: "文件",
+							ref: rel,
+							label: candidate.name,
+							clipboardText: rel,
+						},
+					};
+				},
+				codec: {
+					// 剪贴板/持久化投影：完整相对路径
+					clipboardText: (ref) => String(ref),
+					// 提交给模型：完整相对路径
+					serialize: (ref) => Promise.resolve(String(ref)),
 				},
 			};
 
