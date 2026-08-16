@@ -35,8 +35,10 @@ click → the `@query` token is replaced by the file path.
 | Max file count | Max entries returned (10-200, default 50) |
 
 The Everything mode reuses Everything's index: results are constrained to the
-**current session workspace** (`path:` filter), auto-skip `node_modules/.git/dist`
-etc., and cover everything already indexed — fast and comprehensive.
+**current session workspace** (`path:` filter), cover everything already indexed —
+**including files under `node_modules`** (only `.git` is excluded) — fast and
+comprehensive. Everything search is used when you type a keyword; with an empty
+keyword the recursive scan is used instead (clean workspace listing).
 
 ## How it works
 
@@ -46,10 +48,11 @@ etc., and cover everything already indexed — fast and comprehensive.
   plugin only provides the file data source.
 - **Host** (`index.js`): `/quick-file/files` route — resolves the workspace root
   (`SessionHeader.cwd`) and returns the file list:
-  - Without Everything configured: recursively lists via the `fs` service
-    (depth / ignore / count limited)
-  - With Everything HTTP configured: queries the `?search=...&j=1&path_column=1`
-    JSON endpoint, falling back to the recursive scan on failure
+  - Without Everything configured, or with an empty keyword: recursively lists
+    via the `fs` service (depth / ignore / count limited)
+  - With Everything HTTP configured and a keyword: queries the
+    `?search=...&j=1&path_column=1` JSON endpoint, falling back to the recursive
+    scan on failure
 - Config is persisted to `~/.dsh/settings.yaml` through the official
   `ctx.settings` service (namespace `dsh-quick-file`); the settings card
   reads/writes via the plugin's own `/quick-file/config` route.

@@ -32,7 +32,9 @@ dsh plugin --profile web add ./dsh-quick-file
 | 列表深度上限 | 递归扫描模式的最大目录深度（1-10，默认 3） |
 | 文件数量上限 | 最多返回的条目数（10-200，默认 50） |
 
-Everything 搜索复用 Everything 的索引：在**当前会话工作区**内（`path:` 限定）按文件名匹配，自动排除 `node_modules/.git/dist` 等目录，速度快且覆盖全盘已索引内容。
+Everything 搜索复用 Everything 的索引：在**当前会话工作区**内（`path:` 限定）按文件名匹配，
+速度快且覆盖全盘已索引内容——**包括 `node_modules` 里的文件**（仅排除 `.git`）。
+输入关键词时走 Everything 搜索；关键词留空时仍走递归扫描（干净列出工作区结构）。
 
 ## 工作原理
 
@@ -41,8 +43,8 @@ Everything 搜索复用 Everything 的索引：在**当前会话工作区**内�
   输入改写全部由管道负责，本插件只提供文件数据源。
 - **Host**（`index.js`）：`/quick-file/files` 路由，按会话工作区根
   （`SessionHeader.cwd`）取文件列表：
-  - 未配置 Everything：用 `fs` 服务递归列目录（深度/忽略/数量受限）
-  - 配置了 Everything HTTP：走 `?search=...&j=1&path_column=1` JSON 接口，
+  - 未配置 Everything 或关键词为空：用 `fs` 服务递归列目录（深度/忽略/数量受限）
+  - 配置了 Everything HTTP 且有关键词：走 `?search=...&j=1&path_column=1` JSON 接口，
     失败自动回退递归扫描
 - 配置经官方 `ctx.settings` 持久化到 `~/.dsh/settings.yaml`（命名空间
   `dsh-quick-file`），设置卡片走插件自身 `/quick-file/config` 路由读写。

@@ -120,23 +120,23 @@ export async function apply(ctx) {
   }
 
   /**
-   * 走 Everything HTTP Server 搜索（配置了 everythingUrl 时优先）。
+   * 走 Everything HTTP Server 搜索（配置了 everythingUrl 且 q 非空时使用）。
    * 返回与 collectFiles 相同形状的列表（相对路径，`/` 分隔），失败回退 null。
    * API（voidtools HTTP Server）：?search=<Everything 语法>&count=N&j=1&path_column=1
    *   → { totalResults, results: [{ type: 'file'|'folder', name, path }] }
+   *
+   * 注意：Everything 模式**只排除 .git**，不排除 node_modules 等——Everything
+   * 已索引全盘，用户搜索时就该能找到 node_modules 里的文件；q 为空（浏览模式）
+   * 仍走递归扫描，保持工作区结构干净。
    */
   async function collectViaEverything(root, q) {
     const cfg = readConfig()
     const base = String(cfg.everythingUrl || '').trim().replace(/\/+$/, '')
-    if (!base) return null
-    // 构造 Everything 搜索词：`path:<cwd>` 限定工作区；q 为空时列出根下全部
-    const terms = []
-    if (q) terms.push(q)
-    terms.push('path:' + root)
-    // 忽略目录：Everything 语法 `!<name>\` 排除整个目录名（前面无反斜杠）
-    for (const d of IGNORE_DIRS) terms.push('!' + d + '\\')
+    if (!base || !q) return null
+    // 构造 Everything 搜索词：`path:<cwd>` 限定工作区 + 排除 .git
+    const terms = [q, 'path:' + root, '!.git\\']
     const search = terms.join(' ')
-    // count 取 max 的 3 倍余量，过滤忽略目录后仍够用
+    // count 取 max 的 3 倍余量，过滤后仍够用
     const count = Math.min(Math.max(cfg.max * 3, 50), 200)
     const href = base + '/?search=' + encodeURIComponent(search) + '&count=' + count + '&j=1&path_column=1&sort=path&ascending=1'
     let data
@@ -155,8 +155,9 @@ export async function apply(ctx) {
       const rel = relative(root, abs).split(sep).join('/')
       // 过滤掉工作区外的结果（path: 是子串匹配，可能带出邻近路径）
       if (rel.startsWith('..')) continue
+      // 只拦截工作区根下的 .git（Everything 语法已排除，这里双保险）
       const first = rel.split('/')[0]
-      if (first && IGNORE_DIRS.has(first)) continue
+      if (first === '.git') continue
       out.push({ path: rel, name: r.name, isDir: r.type === 'folder' })
       if (out.length >= cfg.max) break
     }
