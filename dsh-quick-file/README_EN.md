@@ -26,6 +26,13 @@ Type `@` in the input box → a menu appears (grouped with other `@` sources) �
 keep typing to filter (fuzzy match on file name / path) → pick with ↑↓/Enter or
 click → the `@query` token is replaced by the file path.
 
+The candidate menu stretches to the full input-box width; each row shows a
+**type icon + file name + containing directory**: icons are color-coded by
+extension (e.g. blue for ts, yellow for js, yellow-blue for py, light blue for
+go, orange for rs, purple for images, orange for archives), and overly deep
+directory paths are truncated on the left, keeping only the tail closest to the
+file name.
+
 ## Configuration (Settings → Plugins → Quick File Input)
 
 | Item | Description |

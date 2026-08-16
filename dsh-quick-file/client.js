@@ -20,7 +20,7 @@ window.__ModuleLoader__.load({
 		Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
 		let react = require("react");
 
-		//#region styles（设置卡片）
+		//#region styles（设置卡片 + @ 候选菜单宽度覆盖）
 		const css = [
 			".qf-card{display:flex;flex-direction:column;gap:8px}",
 			".qf-row{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--dsw-alias-label-secondary)}",
@@ -43,6 +43,9 @@ window.__ModuleLoader__.load({
 			".pc-chevron{color:var(--dsw-alias-label-tertiary);flex:none;transition:transform .16s}",
 			".pc-open{transform:rotate(180deg)}",
 			".pc-body{border-top:1px solid var(--dsw-alias-border-l2);padding:14px 16px}",
+			// 覆盖官方 @ 候选菜单：撑满输入框宽度（官方 max-width 537px 偏窄）
+			"div[role=\"listbox\"]{max-width:none!important;width:100%!important}",
+			"div[role=\"listbox\"] [role=\"option\"]>span:nth-child(2){flex:none;max-width:45%!important}",
 		].join("");
 		const tagId = "dsh-quick-file/style";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId) + "]") === null) {
@@ -55,6 +58,78 @@ window.__ModuleLoader__.load({
 		//#endregion
 
 		const inject = ["inputTriggers", "slots"];
+
+		// ── 文件图标：按扩展名染色的 SVG（语言/类型刻板印象配色）──
+		const EXT_COLORS = {
+			ts: "#3178c6", tsx: "#3178c6", mts: "#3178c6", cts: "#3178c6",
+			js: "#f7df1e", jsx: "#f7df1e", mjs: "#f7df1e", cjs: "#f7df1e",
+			c: "#659ad2", h: "#659ad2",
+			cpp: "#659ad2", cc: "#659ad2", cxx: "#659ad2", hpp: "#659ad2",
+			cs: "#512bd4",
+			java: "#e76f00",
+			py: "#3776ab", pyw: "#3776ab",
+			go: "#00add8",
+			rs: "#dea584",
+			rb: "#cc342d",
+			php: "#777bb4",
+			html: "#e34f26", htm: "#e34f26",
+			css: "#1572b6",
+			scss: "#c6538c", sass: "#c6538c", less: "#1d365d",
+			json: "#4caf50", jsonc: "#4caf50",
+			yaml: "#cb171e", yml: "#cb171e",
+			md: "#6b7280", markdown: "#6b7280",
+			sh: "#4eaa25", bash: "#4eaa25", zsh: "#4eaa25",
+			ps1: "#2674ec", bat: "#607d8b", cmd: "#607d8b",
+			png: "#a855f7", jpg: "#a855f7", jpeg: "#a855f7", gif: "#a855f7",
+			webp: "#a855f7", svg: "#a855f7", ico: "#a855f7",
+			zip: "#f59e0b", rar: "#f59e0b", "7z": "#f59e0b", tar: "#f59e0b",
+			gz: "#f59e0b", bz2: "#f59e0b", xz: "#f59e0b",
+			exe: "#64748b", dll: "#64748b", msi: "#64748b",
+			pdf: "#dc2626",
+			doc: "#2b579a", docx: "#2b579a",
+			xls: "#217346", xlsx: "#217346", csv: "#217346",
+			ppt: "#d04526", pptx: "#d04526",
+		};
+		const FOLDER_COLOR = "#fbbf24";
+		const DEFAULT_FILE_COLOR = "#94a3b8";
+
+		/** 按文件名后缀取配色；目录固定文件夹黄 */
+		function iconColor(name, isDir) {
+			if (isDir) return FOLDER_COLOR;
+			const dot = name.lastIndexOf(".");
+			const ext = dot >= 0 ? name.slice(dot + 1).toLowerCase() : "";
+			return EXT_COLORS[ext] || DEFAULT_FILE_COLOR;
+		}
+
+		/** 文件/文件夹 SVG 图标（16×16，填充色按类型染色） */
+		function fileGlyph(color, isDir) {
+			return react.createElement("svg", {
+				width: 16, height: 16, viewBox: "0 0 16 16", fill: "none",
+				"aria-hidden": true,
+			}, isDir
+				? react.createElement("path", {
+					d: "M2 3.5a1 1 0 0 1 1-1h3l1.5 2H13a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z",
+					fill: color,
+				})
+				: react.createElement(react.Fragment, null,
+					react.createElement("path", {
+						d: "M3 1.5h6.5L13 5v9.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z",
+						fill: color,
+					}),
+					react.createElement("path", {
+						d: "M9.5 1.5V5H13",
+						fill: color,
+						opacity: 0.45,
+					}),
+				));
+		}
+
+		/** 路径紧凑显示：保留尾部若干段，省略左边（聚焦文件名/附近目录） */
+		function compactPath(p) {
+			const parts = String(p).split("/");
+			if (parts.length <= 4) return p;
+			return "…/" + parts.slice(-3).join("/");
+		}
 
 		// 官方 IconChevronDownOutline14 同款 SVG 箭头
 		function ChevronIcon({ className }) {
@@ -83,11 +158,21 @@ window.__ModuleLoader__.load({
 						if (!resp.ok) return [];
 						const data = await resp.json();
 						const files = Array.isArray(data && data.files) ? data.files : [];
-						return files.map((f) => ({
-							name: f.path,
-							description: f.isDir ? "目录" : "文件",
-							icon: f.isDir ? "📁" : "📄",
-						}));
+						return files.map((f) => {
+							// 拆出文件名（主显示）与所在目录（路径，紧凑省略左边）
+							const rel = String(f.path || f.name || "");
+							const slash = rel.lastIndexOf("/");
+							const base = slash >= 0 ? rel.slice(slash + 1) : rel;
+							const dir = slash >= 0 ? rel.slice(0, slash) : "";
+							return {
+								name: base,
+								description: dir ? compactPath(dir) : "",
+								icon: fileGlyph(iconColor(base, f.isDir), f.isDir),
+								// 完整相对路径供 onPick 插入
+								fullPath: rel,
+								isDir: !!f.isDir,
+							};
+						});
 					} catch (e) {
 						if (e && e.name === "AbortError") return [];
 						console.error("[quick-file] candidates 失败:", e);
@@ -96,7 +181,7 @@ window.__ModuleLoader__.load({
 				},
 				onPick({ candidate }) {
 					// 管道把 @token 区间替换为这段文本（尾随空格方便继续输入）
-					return { text: candidate.name + " " };
+					return { text: (candidate.fullPath || candidate.name) + " " };
 				},
 			};
 
