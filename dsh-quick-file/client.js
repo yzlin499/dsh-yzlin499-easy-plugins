@@ -46,6 +46,16 @@ window.__ModuleLoader__.load({
 			// 覆盖官方 @ 候选菜单：撑满输入框宽度（官方 max-width 537px 偏窄）
 			"div[role=\"listbox\"]{max-width:none!important;width:100%!important}",
 			"div[role=\"listbox\"] [role=\"option\"]>span:nth-child(2){flex:none;max-width:45%!important}",
+			// 覆盖官方引用块（chip）：
+			// 官方 chip 宽度 = draft 中 U+FFFC 占位符的字符宽度（DshChipCell 字体，约 1 字符），
+			// 光标按 textarea 字符布局定位；label 的 width:calc(138.889% - 10px)+scale(.72)
+			// 使 label 视觉宽度自动跟随 chip 宽度。因此直接把视觉 chip 改宽会导致光标偏移。
+			// 正确做法：@font-face + unicode-range 只覆盖 U+FFFC，size-adjust 放大其字形，
+			// textarea 与 mirror 同一字体栈 → 占位符、chip、label、光标同步变宽。
+			"@font-face{font-family:\"QF-ChipWide\";src:local(\"Arial\"),local(\"Segoe UI\"),local(\"Tahoma\");unicode-range:U+FFFC;size-adjust:1000%}",
+			".uV2eYG_input,.uV2eYG_mirror,.uV2eYG_backdrop{font-family:\"QF-ChipWide\",\"DshChipCell\",var(--dsw-font-family)!important}",
+			// label 超长时省略（官方无 text-overflow）
+			"[data-decoration=\"chip\"]>span:first-child{text-overflow:ellipsis!important}",
 		].join("");
 		const tagId = "dsh-quick-file/style";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId) + "]") === null) {
