@@ -30,8 +30,8 @@ export async function apply(ctx) {
     const mod = await ctx.loader.import('@deepseek-ai/schemastery')
     const z = mod && mod.default ? mod.default : mod
     scope = ctx.settings.register(NS, z.object({
-      depth: z.number().integer().min(1).max(10),
-      max: z.number().integer().min(10).max(200),
+      depth: z.natural().min(1).max(10),
+      max: z.natural().min(10).max(200),
     }))
   } catch (e) {
     log('settings 注册失败，回退内存态:', String((e && e.message) || e))
