@@ -1,0 +1,25 @@
+{
+  "name": "dsh-win-notify",
+  "version": "0.1.0",
+  "description": "DSH Windows toast notifications: native toast popups when an approval is requested, a question is asked, or a session run finishes/stops — with a settings card and background-only mode.",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "inject": [
+        "slots",
+        "locale"
+      ],
+      "platform": "web"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "license": "MIT"
+}

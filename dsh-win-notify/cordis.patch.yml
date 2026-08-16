@@ -1,0 +1,8 @@
+# dsh bundle layer: mount the Windows toast notification plugin.
+# - id: win-notify —— the row key in the composed tree
+#   name: dsh-win-notify —— the package whose `main` (index.js) is the host half
+# `dsh plugin --profile web add ./dsh-win-notify` installs it and auto-registers
+# this patch as a bundle layer (dsh.bundle.patch), so DSH mounts it on boot.
+- insert:
+    - id: win-notify
+      name: dsh-win-notify

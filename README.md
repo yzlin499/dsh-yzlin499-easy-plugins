@@ -26,6 +26,7 @@ Issue——我帮你想想。
 | [dsh-quick-file](dsh-quick-file/README.md) | <img src="dsh-quick-file/screenshot.png" width="150" alt="dsh-quick-file 截图"> | @ 快速输入文件：输入框打 `@` 弹出工作区文件列表，回车/点击即把文件路径插入输入框（复用内置输入触发管道）；支持配置 Everything HTTP Server 搜索（比递归扫描更快），忽略目录可自定义 | `dsh plugin --profile web add ./dsh-quick-file` | |
 | [dsh-yzlin499-plugins-manager](dsh-yzlin499-plugins-manager/README.md) | <img src="dsh-yzlin499-plugins-manager/screenshot.png" width="150" alt="插件管理器截图"> | 插件管理：设置页列出本集合全部插件，一键启用/停用（走 dsh CLI，批量开关后重启生效）；只管理本项目插件 | `dsh plugin --profile web add ./dsh-yzlin499-plugins-manager` | |
 | [dsh-workspace-openmenu](dsh-workspace-openmenu/README.md) | <img src="dsh-workspace-openmenu/screenshot.png" width="150" alt="工作区快捷打开截图"> | 工作区快捷打开：会话头部右上角（session log 左侧）「打开为」按钮，二级菜单在工作区位置打开 pwsh / cmd / 资源管理器 / vscode | `dsh plugin --profile web add ./dsh-workspace-openmenu` | |
+| [dsh-win-notify](dsh-win-notify/README.md) | — | Windows 原生吐司通知：权限申请 / 发起提问 / 运行停止时弹右下角通知，网页挂后台也能第一时间知道；支持仅后台通知模式 | `dsh plugin --profile web add ./dsh-win-notify` | |
 
 > 点插件名可查看该插件的详细文档（README）。profile 名按你的 DSH 实例调整（例如 `web`），
 > 安装/卸载详见 [Docs/Install.md](Docs/Install.md)。
