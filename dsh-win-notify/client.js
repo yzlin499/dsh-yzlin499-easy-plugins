@@ -1,12 +1,12 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // dsh-win-notify — Client 半侧（__ModuleLoader__ 静态格式，由 dsh-client-modules 提供）
 //
-// 1) 设置卡片：注册进官方「插件」设置页（settings.plugin.item）：
+// 1) 设置卡片：注册进官方「插件」设置页（settings.plugin.item，keyed 插槽，
+//    以本插件 Host 侧注册的 settings 命名空间 dsh-win-notify 为键）：
 //    · 总开关 + 三类时机开关（权限申请 / 提问 / 运行停止）
 //    · 通知时机：总是通知 / 仅页面在后台时
 //    · 实时显示当前页面状态（前台/后台）——仅后台模式依赖它
-//    配置经本插件自己的 /win-notify/config 路由读写（官方 api-proxy 的
-//    WEB_SETTINGS_NAMESPACES 白名单不含第三方命名空间，settingsScope 不可用）。
+//    配置经本插件自己的 /win-notify/config 路由读写（Host 侧 ctx.settings 落盘）。
 // 2) 页面可见性上报：浏览器 document.visibilityState 自动给出「标签页隐藏 /
 //    窗口最小化 / 被遮挡」状态（无需鼠标检测），变化时 POST 给 Host。
 // ═══════════════════════════════════════════════════════════════════════════
@@ -215,9 +215,11 @@ window.__ModuleLoader__.load({
 				);
 			}
 
-			// 注册为官方「插件」设置页的一张卡片
+			// 注册为官方「插件」设置页的一张卡片（settings.plugin.item 为 keyed 插槽，
+			// key = Host 侧注册的 settings 命名空间，配对后由「插件配置」标签页渲染）
 			ctx.slots.inject("settings.plugin.item", () => ctx.slots.register({
 				name: "settings.plugin.item",
+				key: "dsh-win-notify",
 				id: "win-notify-settings",
 				order: 40,
 				label: "Windows 通知",

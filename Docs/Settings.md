@@ -1,8 +1,10 @@
 # DSH 插件配置持久化（settings）读写指南
 
-> 结论先行：**前端不要用 `settingsScope` 直连官方 settings**（第三方命名空间会被官方
-> api-proxy 白名单拦截，永远不可用）。正确姿势是 **Host 侧用官方 `ctx.settings` 注册并读写
-> `~/.dsh/settings.yaml`，Client 侧走插件自己的 HTTP 路由，由 Host 转发读写**。
+> 结论先行：**Host 侧用官方 `ctx.settings` 注册命名空间并读写 `~/.dsh/settings.yaml`，
+> Client 侧设置卡片注册进官方 `settings.plugin.item`（keyed 插槽，以该命名空间为键）**。
+> 卡片的数据读写可走插件自己的 HTTP 路由（由 Host 转发读写），也可直接使用
+> `settingsScope`——从 0.1.0-rc.7 起官方已移除 WEB_SETTINGS_NAMESPACES 白名单，
+> 第三方命名空间对 Web 侧同样可用（见第 2 节）。
 
 ## 1. 官方 settings 是什么
 
@@ -17,14 +19,14 @@ DSH 的配置持久化走 `ctx.settings` 服务（官方 `dsh-settings-file`，`
 
 官方文档：<https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/master/docs/subsystems/settings.zh.md>
 
-## 2. 关键坑：前端 settingsScope 对第三方插件不可用
+## 2. 关键坑（历史）：前端 settingsScope 曾对第三方插件不可用
 
 `ctx.settings.register()` 是 Host 侧进程内注册，**任何插件都能成功注册**。
-但 Client 侧的 `ctx.settingsScope`（浏览器 → `/api/settings.*` RPC）受官方
-`dsh-host-apiproxy` 的**硬编码白名单**控制：
+旧版（< 0.1.0-rc.7）的 Client 侧 `ctx.settingsScope`（浏览器 → `/api/settings.*` RPC）
+曾受官方 `dsh-host-apiproxy` 的**硬编码白名单**控制：
 
 ```js
-// node_modules/@deepseek-ai/dsh-host-apiproxy/lib/types/api-proxy.js
+// 旧版 node_modules/@deepseek-ai/dsh-host-apiproxy/lib/types/api-proxy.js
 const WEB_SETTINGS_NAMESPACES = [
     'agent-loop', 'shell', 'locale', 'permission', 'ui-conversation', 'ui-theme', 'web-search-deepseek',
 ];
@@ -33,10 +35,8 @@ const WEB_SETTINGS_NAMESPACES = [
 - 不在白名单内的命名空间：`settings.describe` 查不到 → Client 的
   `snap.status === "unavailable"`（显示「设置不可用（内存模式）」）；
   `set()` 静默成功但不落盘。
-- 官方注释明确：*"a namespace absent here answers `settings-not-exposed` even when
-  its owner registered it… Moving that declaration to `settings.register()`…
-  is deferred work."* —— **让插件自己暴露命名空间，官方还没实现**，也没有任何
-  配置项能开白名单（api-proxy 的 Config 只有 `nativeOpen` 等三项）。
+- **该白名单从 0.1.0-rc.7 起已被删除**：`settings.describe` 现在返回**所有**已注册命名空间，
+  第三方命名空间对 Web 侧照常可用，`settingsScope.bind({ namespace })` 可直接读写。
 
 ### 排查方法（复现 unavailable 时）
 
@@ -48,7 +48,7 @@ settings.describe().map(d => d.ns)          // 有 dsh-quick-file → Host 侧 O
 const conn = ctx.get('connection')
 conn.isLoopback                              // true = loopback，官方 settings 才可用
 const scope = ctx.settingsScope.bind({ namespace: 'dsh-quick-file' })
-scope.getSnapshot()                          // mode: 'host'，load 后 unavailable → 白名单拦截
+scope.getSnapshot()                          // load 后正常拿到 value/user/revision
 ```
 
 ## 3. 推荐架构：Client 走插件路由，Host 用官方 settings
@@ -145,17 +145,20 @@ function SettingsCard() {
 ```
 
 - `package.json` 的 `dsh.client.inject` 里**不要**再写 `settingsScope`。
-- 卡片照旧注册进官方 `settings.plugin.item` 插槽（该插槽本身是开放的，只有数据
-  通道被白名单限制），外壳对齐官方 PluginCard。
+- 卡片照旧注册进官方 `settings.plugin.item` 插槽（keyed，见下节「设置卡片 UI 规范」）。
 
 ### 设置卡片 UI 规范（settings.plugin.item）
 
-插件设置统一进官方「插件」设置页的 `settings.plugin.item` 插槽（list、additive），
-**不要自建 settings.section 标签页**。
+插件设置统一进官方「插件」设置页（「插件配置」标签页）的 `settings.plugin.item` 插槽
+（**keyed**：以卡片所编辑的 settings 命名空间为键），**不要自建 settings.section 标签页**。
 
+- **配对机制**：Host 侧注册命名空间（`ctx.settings.register(ns, schema)`，或官方
+  `installSettingsSection`）→ `settings.describe` 返回该命名空间 → 标签页把它与
+  注册时 `key` 相同的卡片配对渲染。Host 未注册该命名空间的卡片不会被渲染。
 - **注册**：`ctx.slots.inject("settings.plugin.item", () => ctx.slots.register({
-  name: "settings.plugin.item", id: "<唯一id>", order, label }, Component))`；
+  name: "settings.plugin.item", key: "<Host 已注册的命名空间>", id, label }, Component))`；
   卡片组件自包含、自行拉取/保存配置，**不依赖其它插件（包括管理器）**。
+  keyed entry 不按 `order` 排序（按注册顺序渲染），`id`/`label` 仅作标识。
 - **卡片外壳对齐官方 PluginCard**：
   - `.pc-card{border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-3);border-radius:12px;overflow:hidden}`
   - 可折叠头部（名称 + 描述 + CSS 边框下箭头 `rotate(45deg)`，展开翻转 225deg），
@@ -178,7 +181,10 @@ oc-usage 的 Cookie 遵循「只存进程内存、不落盘、不回显」红线
 - `config-get` 只回 `cookieSet: true/false`，不回显值
 - `config-set` 收到新 Cookie 更新 `state.cookie`（进程内），重启即失
 
-## 6. 未来展望
+## 6. 现状与展望
 
-官方把「插件自暴露 settings 命名空间」从 deferred work 转正后，Client 可改回
-`ctx.settingsScope.bind({ namespace })` 直连，Host 侧代码无需任何改动。
+- **0.1.0-rc.7 起**：官方已移除 WEB_SETTINGS_NAMESPACES 白名单，`settings.describe`
+  返回所有已注册命名空间，`settingsScope` 对第三方命名空间可用。
+- 本仓库插件保持「Client 走自身路由、Host 用 ctx.settings」的架构（历史惯性，
+  功能上完全等价）；新插件的设置卡片可直接用 `settingsScope` 直连，更省事。
+- 无论哪种方式，**卡片注册都必须带 `key: <命名空间>`**（keyed 插槽契约）。

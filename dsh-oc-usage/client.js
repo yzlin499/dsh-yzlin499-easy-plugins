@@ -308,8 +308,8 @@ window.__ModuleLoader__.load({
 
 			// 设置卡片：Cookie 只存 Host 内存（红线）；workspaceId 经自身
 			// /oc-usage/config-set 路由保存（Host 侧经 ctx.settings 持久化到
-			// ~/.dsh/settings.yaml）。不走 settingsScope：官方 api-proxy 的
-			// WEB_SETTINGS_NAMESPACES 白名单不含第三方命名空间，settingsScope 永远不可用。
+			// ~/.dsh/settings.yaml）。卡片注册进 settings.plugin.item（keyed 插槽，
+			// key = Host 侧注册的命名空间 dsh-oc-usage，配对后由「插件配置」标签页渲染）。
 
 			function SettingsCard() {
 				const [state, setState] = react.useState({ cookie: "", workspaceId: "", cookieSet: false, saving: false, status: "" });
@@ -391,6 +391,7 @@ window.__ModuleLoader__.load({
 
 			ctx.slots.inject("settings.plugin.item", () => ctx.slots.register({
 				name: "settings.plugin.item",
+				key: "dsh-oc-usage",
 				id: "oc-usage-settings",
 				order: 20,
 				label: "OpenCode 用量"

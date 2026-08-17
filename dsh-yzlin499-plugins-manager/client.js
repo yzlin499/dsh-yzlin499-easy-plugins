@@ -1,7 +1,8 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // dsh-yzlin499-plugins-manager — Client 半侧（__ModuleLoader__ 静态格式）
 //
-// 注册为官方「插件」设置页的一张卡片（settings.plugin.item，list、additive）：
+// 注册为官方「插件」设置页的一张卡片（settings.plugin.item 为 keyed 插槽，
+// 以本插件 Host 侧注册的 settings 命名空间 dsh-yzlin499-plugins-manager 为键）：
 //   · 列出默认集合及用户添加目录中的所有插件 + 启用状态（dsh.profile.bundles）
 //   · 设置区可添加/移除自定义集合根目录，配置持久化到 ~/.dsh/settings.yaml
 //   · 每行：名称 + 状态徽标 + [详情] [启用/停用]
@@ -9,8 +10,7 @@
 //     （缺失回退 README.md，都没有才回退 package.json description）；跟随 DSH 语言实时切换
 //   · 批量开关后显示"需要重启 DSH Web 生效"横幅（不自动重启）
 //   · 顶部可改目标 profile（默认 web；经 /plugins-manager/profile 路由持久化到
-//     ~/.dsh/settings.yaml。注：官方 api-proxy 的 WEB_SETTINGS_NAMESPACES 白名单
-//     不含第三方命名空间，settingsScope 永远 unavailable，故不走 settingsScope）
+//     ~/.dsh/settings.yaml）
 // ═══════════════════════════════════════════════════════════════════════════
 window.__ModuleLoader__.load({
 	id: "dsh-yzlin499-plugins-manager",
@@ -361,9 +361,11 @@ window.__ModuleLoader__.load({
 				);
 			}
 
-			// 注册为官方「插件」设置页的一张卡片（settings.plugin.item，替代独立标签页）
+			// 注册为官方「插件」设置页的一张卡片（settings.plugin.item 为 keyed 插槽，
+			// key = Host 侧注册的 settings 命名空间，配对后由「插件配置」标签页渲染）
 			ctx.slots.inject("settings.plugin.item", () => ctx.slots.register({
 				name: "settings.plugin.item",
+				key: "dsh-yzlin499-plugins-manager",
 				id: "yzlin499-plugins-manager",
 				order: 30,
 				label: "插件管理",

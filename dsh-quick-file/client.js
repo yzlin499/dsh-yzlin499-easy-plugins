@@ -6,11 +6,11 @@
 //      · 输入框打 `@` → 管道自动弹出候选菜单（文件源与其它 @ 源分组并列）
 //      · 继续打字 → 管道带 query 调 candidates() → Host /quick-file/files 过滤
 //      · 回车/点击选中 → 管道把 `@查询词` 替换为文件路径文本（onPick 返回 { text }）
-// 2) 设置卡片：注册进官方「插件」设置页（settings.plugin.item），
-//    配置文件列表的深度/数量上限。注意：官方 api-proxy 目前只对白名单内的
-//    settings 命名空间开放 Web 读写（WEB_SETTINGS_NAMESPACES），第三方插件的
-//    settingsScope 永远 unavailable；因此这里改走本插件自己的
-//    /quick-file/config 路由，Host 侧经 ctx.settings 持久化到 ~/.dsh/settings.yaml。
+// 2) 设置卡片：注册进官方「插件」设置页（settings.plugin.item）。该插槽现为
+//    keyed 插槽，以卡片所编辑的 settings 命名空间为键（register 必须带
+//    key: <命名空间>，Host 侧已注册同名命名空间才会被「插件配置」标签页配对渲染）。
+//    配置读写改走本插件自己的 /quick-file/config 路由，Host 侧经 ctx.settings
+//    持久化到 ~/.dsh/settings.yaml。
 // ═══════════════════════════════════════════════════════════════════════════
 window.__ModuleLoader__.load({
 	id: "dsh-quick-file",
@@ -212,9 +212,9 @@ window.__ModuleLoader__.load({
 
 			ctx.effect(() => ctx.inputTriggers.registerSource(source));
 
-			// 设置卡片：官方「插件」设置页（settings.plugin.item）。
-			// 官方 api-proxy 的 WEB_SETTINGS_NAMESPACES 白名单不包含第三方命名空间，
-			// settingsScope 会永远 unavailable，因此改走自身 /quick-file/config 路由；
+			// 设置卡片：官方「插件」设置页（settings.plugin.item，keyed 插槽）。
+			// key 用本插件在 Host 侧注册的 settings 命名空间（dsh-quick-file），
+			// 配对后由「插件配置」标签页渲染；配置读写走自身 /quick-file/config 路由，
 			// Host 侧经 ctx.settings 持久化到 ~/.dsh/settings.yaml。
 
 			function SettingsCard() {
@@ -313,6 +313,7 @@ window.__ModuleLoader__.load({
 
 			ctx.slots.inject("settings.plugin.item", () => ctx.slots.register({
 				name: "settings.plugin.item",
+				key: "dsh-quick-file",
 				id: "quick-file-settings",
 				order: 10,
 				label: "快速输入文件",
