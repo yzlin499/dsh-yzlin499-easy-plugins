@@ -16,13 +16,13 @@
 // 变更时自动重扫：配置文件 fs.watch + 新会话事件（session/created）触发。
 // ═══════════════════════════════════════════════════════════════════════════
 import { existsSync, readFileSync, watch } from 'node:fs'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { homedir } from 'node:os'
 
 export const name = 'mcp-compat'
 // loader：经 loader 自己的解析拿 dsh-mcp-client（bundle 源目录在项目里，
 // 顶层裸 import '@deepseek-ai/dsh-mcp-client' 会按源目录解析失败）
-export const inject = ['workspaceRegistry', 'loader']
+export const inject = ['workspaceRegistry', 'loader', 'tools', 'agents']
 
 const log = (...a) => console.log('[mcp-compat]', ...a)
 
@@ -46,7 +46,13 @@ function parseMcpJson(text, source) {
   const servers = (obj && obj.mcpServers) || {}
   for (const [name, cfg] of Object.entries(servers)) {
     if (!cfg || typeof cfg !== 'object') continue
-    const type = String(cfg.type || '')
+    const type = String(cfg.type || '').toLowerCase()
+    // The official dsh-mcp-client supports stdio and Streamable HTTP only.
+    // Do not let an older SSE entry shadow a later supported config with the same name.
+    if (type === 'sse') {
+      log('跳过不支持的 SSE 服务器（可改用 Streamable HTTP 配置）:', name, '—', source)
+      continue
+    }
     if (cfg.url || type === 'http' || type === 'streamable-http' || type === 'remote') {
       out.push({
         name,
@@ -186,19 +192,25 @@ function collectServers(workspacePaths) {
     byName.set(server.name, server)
     found.push(server)
   }
-  const readAll = (root, list) => {
+  const readAll = (root, list, workspaceRoot) => {
     for (const { file, parse } of list) {
       const p = join(root, file)
       if (!existsSync(p)) continue
       try {
-        for (const s of parse(readFileSync(p, 'utf8'), p)) add(s)
+        for (const s of parse(readFileSync(p, 'utf8'), p)) {
+          add({
+            ...s,
+            ...(s.transport === 'stdio' ? { cwd: root } : {}),
+            ...(workspaceRoot === undefined ? {} : { workspaceRoot }),
+          })
+        }
       } catch (e) {
         log('解析失败:', p, String((e && e.message) || e))
       }
     }
   }
-  for (const root of workspacePaths) readAll(root, PROJECT_FILES)
-  readAll(homedir(), GLOBAL_FILES)
+  for (const root of workspacePaths) readAll(root, PROJECT_FILES, root)
+  readAll(homedir(), GLOBAL_FILES, undefined)
   return found
 }
 
@@ -208,13 +220,56 @@ export function apply(ctx) {
     if (mcpClientPlugin) return mcpClientPlugin
     const mod = await ctx.loader.import('@deepseek-ai/dsh-mcp-client')
     const p = mod && mod.default ? mod.default : mod
-    mcpClientPlugin = { name: p.name, inject: p.inject, apply: p.apply }
+    mcpClientPlugin = { name: p.name, inject: p.inject, Config: p.Config, apply: p.apply }
     return mcpClientPlugin
   }
   let fibers = []
   let watchers = []
+  let restrictions = []
+  let projectTools = []
   let generation = 0
   let timer = null
+
+  const pathKey = (value) => {
+    const normalized = resolve(String(value || ''))
+    return process.platform === 'win32' ? normalized.toLowerCase() : normalized
+  }
+  const clearRestrictions = () => {
+    const list = restrictions
+    restrictions = []
+    for (const dispose of list) {
+      try { dispose() } catch {}
+    }
+  }
+  const restrictAgent = (agent) => {
+    if (!projectTools.length) return
+    const cwd = agent && agent.session && agent.session.header && agent.session.header.cwd
+    const current = cwd ? pathKey(cwd) : ''
+    const deny = projectTools
+      .filter((tool) => pathKey(tool.workspaceRoot) !== current)
+      .map((tool) => tool.name)
+    if (!deny.length) return
+    try {
+      restrictions.push(agent.ctx.tools.restrict({ deny }))
+    } catch (e) {
+      log('项目 MCP 工具作用域限制失败:', String((e && e.message) || e))
+    }
+  }
+  const refreshRestrictions = (servers) => {
+    clearRestrictions()
+    const schemas = ctx.tools.schemas()
+    projectTools = []
+    for (const server of servers) {
+      if (!server.workspaceRoot) continue
+      const prefix = `mcp__${server.name}__`
+      for (const schema of schemas) {
+        if (schema.name.startsWith(prefix)) {
+          projectTools.push({ name: schema.name, workspaceRoot: server.workspaceRoot })
+        }
+      }
+    }
+    for (const agent of ctx.agents.list()) restrictAgent(agent)
+  }
 
   const disposeAll = async () => {
     const list = fibers
@@ -234,6 +289,8 @@ export function apply(ctx) {
 
   const sync = async () => {
     const gen = ++generation
+    clearRestrictions()
+    projectTools = []
     await disposeAll()
     closeWatchers()
 
@@ -258,7 +315,7 @@ export function apply(ctx) {
       if (gen !== generation) return
       const cfg = s.transport === 'streamable-http'
         ? { serverName: s.name, transport: s.transport, url: s.url, headers: s.headers }
-        : { serverName: s.name, transport: s.transport, command: s.command, args: s.args, env: s.env }
+        : { serverName: s.name, transport: s.transport, command: s.command, args: s.args, env: s.env, cwd: s.cwd }
       try {
         const f = ctx.plugin(client, cfg)
         fibers.push(f)
@@ -267,6 +324,11 @@ export function apply(ctx) {
         log('挂载失败:', s.name, String((e && e.message) || e))
       }
     }
+
+    // Wait for initial tool synchronization before deriving per-agent visibility.
+    await Promise.allSettled(fibers.map((fiber) => Promise.resolve(fiber)))
+    if (gen !== generation) return
+    refreshRestrictions(servers)
 
     // 监听已存在的候选配置文件（编辑后自动重扫）
     const candidateFiles = [
@@ -297,9 +359,13 @@ export function apply(ctx) {
 
   ctx.effect(() => {
     void sync()
-    const off = ctx.on('session/created', () => scheduleSync())
+    const offSession = ctx.on('session/created', () => scheduleSync(), { global: true })
+    const offAgent = ctx.on('agent/created', ({ agent }) => restrictAgent(agent), { global: true })
     return () => {
-      off()
+      offSession()
+      offAgent()
+      clearRestrictions()
+      projectTools = []
       closeWatchers()
       if (timer) clearTimeout(timer)
       void disposeAll()

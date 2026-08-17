@@ -16,7 +16,7 @@ Restart DSH Web to activate.
 
 ## Supported config sources (priority order, first match wins; project + user level)
 
-- `.mcp.json` — Claude Code / Codex / Cursor convention (`mcpServers`)
+- `.mcp.json` — Claude Code / Codex / Cursor convention (`mcpServers`; stdio / Streamable HTTP)
 - `opencode.json` / `opencode.jsonc` — opencode convention (`mcp` key, command array / url / enabled)
 - `.cursor/mcp.json` — Cursor convention (same `mcpServers`)
 - `.codex/config.toml` — Codex convention (`[mcp_servers.<name>]`)
@@ -25,8 +25,15 @@ Restart DSH Web to activate.
 ## Usage
 
 Drop any of the config files above into a workspace root (or the user home) and
-it takes effect automatically — no DSH configuration needed. Config file changes
-(`fs.watch`) or new sessions (`session/created`) trigger a rescan.
+it takes effect automatically — no DSH configuration needed. Project-level MCP
+tools are visible only to agents whose `cwd` belongs to that workspace, while
+user-level MCP tools remain shared globally. Project stdio servers start with the
+workspace root as their working directory. Config file changes (`fs.watch`) or
+new sessions (`session/created`) trigger a rescan.
+
+> The official `@deepseek-ai/dsh-mcp-client` currently supports stdio and
+> Streamable HTTP, not legacy SSE. Explicit `type: "sse"` entries are skipped so
+> a later supported configuration with the same name can take over.
 
 ## License
 
