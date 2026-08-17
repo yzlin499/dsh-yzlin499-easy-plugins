@@ -1,23 +1,24 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // dsh-yzlin499-plugins-manager — Host 半侧（ESM 模块，由 cordis loader 挂载）
 //
-// 插件管理器：扫描本插件所在的集合文件夹（父目录）下所有含 cordis.patch.yml
-// 的文件夹 → 这些就是"本集合"的插件；面板列出它们并显示已安装状态，
-// 开关通过 `dsh plugin --profile <p> add|remove` 子进程执行。
+// 插件管理器：扫描本插件所在的集合文件夹（父目录）以及用户配置的额外集合目录，
+// 列出其中含 cordis.patch.yml 的插件，并通过 `dsh plugin --profile <p> add|remove`
+// 子进程执行开关。
 //
 // 边界（有意为之）：
-//   · 只管理扫描到的本集合插件，绝不触碰 profile 里其它位置的插件
+//   · 只管理默认集合及设置中明确添加的集合目录，不触碰其它位置的插件
 //   · 管理器自身不可被关闭（防止把自己锁死）
-//   · profile 名默认 web、面板可改（内存态）；白名单字符校验防路径注入
-//   · 开关操作会对目录做白名单校验，只允许扫描结果内的目录
+//   · profile 名默认 web、面板可改并持久化；白名单字符校验防路径注入
+//   · 开关及 README 操作只接受当前扫描结果生成的插件 ID
 //
 // 路由：
-//   GET  /plugins-manager/list    -> { root, profile, plugins: [{dir,name,description,installed,isSelf}] }
-//   POST /plugins-manager/profile -> { profile } 更新内存态
-//   POST /plugins-manager/toggle  -> { dir, enable } 执行 dsh add/remove
+//   GET  /plugins-manager/list    -> { roots, profile, plugins }
+//   POST /plugins-manager/profile -> { profile } 持久化目标 profile
+//   POST /plugins-manager/roots   -> { action, path } 添加或移除集合目录
+//   POST /plugins-manager/toggle  -> { id, enable } 执行 dsh add/remove
 // ═══════════════════════════════════════════════════════════════════════════
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
-import { join, dirname } from 'node:path'
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs'
+import { join, dirname, isAbsolute, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 // 三方库 vendored（相对路径引入，规避 bundle 源目录裸 import 解析失败的坑）：
@@ -28,12 +29,26 @@ export const name = 'plugins-manager'
 export const inject = ['subprocess', 'webServer', 'loader', 'settings']
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-const ROOT = dirname(HERE) // 集合根目录 = 管理器的父文件夹
+const ROOT = dirname(HERE) // 默认集合根目录 = 管理器的父文件夹
 const DSH_HOME = process.env.DSH_HOME || join(homedir(), '.dsh')
 const PROFILE_RE = /^[A-Za-z0-9_-]+$/
-const SELF_DIR = 'dsh-yzlin499-plugins-manager'
+const MAX_CUSTOM_ROOTS = 20
 
 const log = (...a) => console.log('[plugins-manager]', ...a)
+const pathKey = (p) => process.platform === 'win32' ? p.toLowerCase() : p
+const samePath = (a, b) => pathKey(resolve(a)) === pathKey(resolve(b))
+const pluginId = (pluginPath) => Buffer.from(pluginPath, 'utf8').toString('base64url')
+
+/** 校验并规范化用户添加的集合目录 */
+function normalizeRoot(input) {
+  const raw = String(input || '').trim()
+  if (!raw) throw new Error('路径不能为空')
+  if (!isAbsolute(raw)) throw new Error('请输入绝对路径')
+  const absolute = resolve(raw)
+  if (!existsSync(absolute)) throw new Error('目录不存在')
+  if (!statSync(absolute).isDirectory()) throw new Error('路径不是目录')
+  return realpathSync(absolute)
+}
 
 /** HTML 转义（纯文本回退用） */
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => (
@@ -51,10 +66,35 @@ function sanitizeHtml(html) {
     .replace(/javascript:/gi, '')
 }
 
-/** README markdown → 消毒后的 HTML（渲染失败则转义纯文本） */
+/** 只允许常见安全链接协议；相对链接与页内锚点继续交给浏览器解析 */
+function safeHref(href) {
+  const value = String(href || '').trim()
+  const compact = value.replace(/[\u0000-\u0020\u007f]+/g, '')
+  const scheme = compact.match(/^([A-Za-z][A-Za-z0-9+.-]*):/)
+  if (scheme && !/^(https?|mailto)$/i.test(scheme[1])) return null
+  return value
+}
+
+/** README markdown → 消毒后的 HTML；原始 HTML 转义，链接协议走 allowlist */
 function renderReadme(text) {
   try {
-    return sanitizeHtml(marked.parse(text, { gfm: true, breaks: true }))
+    const renderer = new marked.Renderer()
+    renderer.html = ({ text: raw }) => escapeHtml(raw)
+    renderer.link = function ({ href, title, tokens }) {
+      const label = this.parser.parseInline(tokens)
+      const safe = safeHref(href)
+      if (safe === null) return label
+      const titleAttr = title ? ` title="${escapeHtml(title)}"` : ''
+      return `<a href="${escapeHtml(safe)}"${titleAttr} rel="noopener noreferrer">${label}</a>`
+    }
+    renderer.image = function ({ href, title, text: alt, tokens }) {
+      const label = tokens ? this.parser.parseInline(tokens, this.parser.textRenderer) : alt
+      const safe = safeHref(href)
+      if (safe === null) return escapeHtml(label)
+      const titleAttr = title ? ` title="${escapeHtml(title)}"` : ''
+      return `<img src="${escapeHtml(safe)}" alt="${escapeHtml(label)}"${titleAttr}>`
+    }
+    return sanitizeHtml(marked.parse(text, { gfm: true, breaks: true, renderer }))
   } catch (e) {
     log('markdown 渲染失败，回退纯文本:', String((e && e.message) || e))
     return escapeHtml(text)
@@ -64,54 +104,93 @@ function renderReadme(text) {
 let dshBin = null
 
 export async function apply(ctx) {
-  // ── 持久化 profile（官方 settings；不可用回退内存态 'web'）──
-  let profileScope = null
-  let memProfile = 'web'
+  // ── 持久化 profile 与自定义集合目录（官方 settings；失败时回退内存态）──
+  let settingsScope = null
+  let memSettings = { profile: 'web', customRoots: [] }
   try {
     const mod = await ctx.loader.import('@deepseek-ai/schemastery')
     const z = mod && mod.default ? mod.default : mod
-    profileScope = ctx.settings.register('dsh-yzlin499-plugins-manager', z.object({
-      profile: z.string(),
+    settingsScope = ctx.settings.register('dsh-yzlin499-plugins-manager', z.object({
+      profile: z.string().default('web'),
+      customRoots: z.array(z.string()).default([]),
     }))
   } catch (e) {
-    log('settings 注册失败，profile 回退内存态:', String((e && e.message) || e))
+    log('settings 注册失败，回退内存态:', String((e && e.message) || e))
   }
-  const readProfile = () => {
-    if (profileScope) {
+
+  const readSettings = () => {
+    if (settingsScope) {
       try {
-        const v = profileScope.get()
-        if (v && v.profile) return String(v.profile)
+        const v = settingsScope.get()
+        const profile = v && PROFILE_RE.test(String(v.profile || '')) ? String(v.profile) : 'web'
+        const customRoots = v && Array.isArray(v.customRoots)
+          ? v.customRoots.map(String).filter((path) => isAbsolute(path)).slice(0, MAX_CUSTOM_ROOTS)
+          : []
+        return { profile, customRoots }
       } catch {}
     }
-    return memProfile
+    return { profile: memSettings.profile, customRoots: [...memSettings.customRoots] }
   }
-  /** 扫描集合根目录：子文件夹含 cordis.patch.yml 即视为插件 */
+  const updateSettings = async (patch) => {
+    if (settingsScope) await settingsScope.update(patch)
+    else memSettings = { ...memSettings, ...patch }
+  }
+  const readProfile = () => readSettings().profile
+
+  /** 默认根目录加用户目录；按规范化路径去重，失效的已保存目录仍返回给面板展示 */
+  function listRoots() {
+    const roots = [{ path: ROOT, isDefault: true, available: true }]
+    const seen = new Set([pathKey(resolve(ROOT))])
+    for (const stored of readSettings().customRoots) {
+      const path = String(stored || '').trim()
+      if (!path) continue
+      const key = pathKey(resolve(path))
+      if (seen.has(key)) continue
+      seen.add(key)
+      let available = false
+      try { available = statSync(path).isDirectory() } catch {}
+      roots.push({ path, isDefault: false, available })
+    }
+    return roots
+  }
+
+  /** 扫描所有可用集合根目录：直接子文件夹含 cordis.patch.yml 即视为插件 */
   function scanPlugins() {
     const out = []
-    let dirs = []
-    try {
-      dirs = readdirSync(ROOT, { withFileTypes: true })
-    } catch (e) {
-      log('扫描失败:', String((e && e.message) || e))
-      return out
-    }
-    for (const d of dirs) {
-      if (!d.isDirectory()) continue
-      const dir = d.name
-      if (!existsSync(join(ROOT, dir, 'cordis.patch.yml'))) continue
-      let pkg = { name: dir, description: '' }
+    for (const root of listRoots()) {
+      if (!root.available) continue
+      let dirs = []
       try {
-        const pj = join(ROOT, dir, 'package.json')
-        if (existsSync(pj)) pkg = { ...pkg, ...JSON.parse(readFileSync(pj, 'utf8')) }
-      } catch {}
-      out.push({
-        dir,
-        name: pkg.name || dir,
-        description: pkg.description || '',
-        isSelf: dir === SELF_DIR,
-      })
+        dirs = readdirSync(root.path, { withFileTypes: true })
+      } catch (e) {
+        log('扫描失败:', root.path, String((e && e.message) || e))
+        continue
+      }
+      for (const d of dirs) {
+        if (!d.isDirectory()) continue
+        const dir = d.name
+        const path = join(root.path, dir)
+        if (!existsSync(join(path, 'cordis.patch.yml'))) continue
+        let pkg = { name: dir, description: '' }
+        try {
+          const pj = join(path, 'package.json')
+          if (existsSync(pj)) pkg = { ...pkg, ...JSON.parse(readFileSync(pj, 'utf8')) }
+        } catch {}
+        out.push({
+          id: pluginId(path),
+          dir,
+          root: root.path,
+          path,
+          name: pkg.name || dir,
+          description: pkg.description || '',
+          isSelf: samePath(path, HERE),
+        })
+      }
     }
-    out.sort((a, b) => a.dir.localeCompare(b.dir))
+    const counts = new Map()
+    for (const plugin of out) counts.set(plugin.name, (counts.get(plugin.name) || 0) + 1)
+    for (const plugin of out) plugin.nameConflict = counts.get(plugin.name) > 1
+    out.sort((a, b) => a.root.localeCompare(b.root) || a.dir.localeCompare(b.dir))
     return out
   }
 
@@ -196,8 +275,8 @@ export async function apply(ctx) {
    * 启用：dsh add；若该包已是依赖但链接失效（reconcile 判定非 bundle）导致
    * 没进挂载清单，先 remove 再 add，用新仓库路径干净重装。
    */
-  async function ensureEnabled(dir, name) {
-    const addArgs = ['plugin', '--profile', readProfile(), 'add', join(ROOT, dir)]
+  async function ensureEnabled(path, name) {
+    const addArgs = ['plugin', '--profile', readProfile(), 'add', path]
     let r = await runDsh(addArgs)
     if (r.exitCode !== 0) return r
     if (!readEnabled().has(name)) {
@@ -247,22 +326,28 @@ export async function apply(ctx) {
         if (p === '/plugins-manager/list' && req.method === 'GET') {
           const enabled = readEnabled()
           const plugins = scanPlugins().map((pl) => ({
-            dir: pl.dir, name: pl.name, enabled: enabled.has(pl.name), isSelf: pl.isSelf,
+            id: pl.id,
+            dir: pl.dir,
+            root: pl.root,
+            name: pl.name,
+            enabled: !pl.nameConflict && enabled.has(pl.name),
+            nameConflict: pl.nameConflict,
+            isSelf: pl.isSelf,
           }))
-          sendJson(res, { root: ROOT, profile: readProfile(), plugins })
+          sendJson(res, { roots: listRoots(), profile: readProfile(), plugins })
           return
         }
         if (p === '/plugins-manager/readme' && req.method === 'GET') {
-          const dir = String(url.searchParams.get('dir') || '')
+          const id = String(url.searchParams.get('id') || '')
           const lang = String(url.searchParams.get('lang') || 'zh') === 'en' ? 'en' : 'zh'
-          const match = scanPlugins().find((pl) => pl.dir === dir)
+          const match = scanPlugins().find((pl) => pl.id === id)
           if (!match) {
-            sendJson(res, { ok: false, error: '未知插件目录: ' + dir }, 400)
+            sendJson(res, { ok: false, error: '未知插件' }, 400)
             return
           }
           // 规范：中文默认读 README.md；英文界面优先 README_EN.md（缺失回退 README.md）；
           // 两者都没有才回退 package.json 的 description
-          const base = join(ROOT, dir)
+          const base = match.path
           const order = lang === 'en' ? ['README_EN.md', 'README.md'] : ['README.md', 'README_EN.md']
           let text = null
           let source = null
@@ -280,7 +365,7 @@ export async function apply(ctx) {
             text = match.description || '(该插件没有 README 或描述)'
             source = 'package.json'
           }
-          sendJson(res, { ok: true, dir, lang, source, text, html: renderReadme(text) })
+          sendJson(res, { ok: true, id, lang, source, text, html: renderReadme(text) })
           return
         }
         if (p === '/plugins-manager/profile' && req.method === 'POST') {
@@ -291,8 +376,7 @@ export async function apply(ctx) {
             return
           }
           try {
-            if (profileScope) await profileScope.update({ profile: next })
-            else memProfile = next
+            await updateSettings({ profile: next })
             log('目标 profile ->', next)
             sendJson(res, { ok: true, profile: next })
           } catch (e) {
@@ -301,13 +385,56 @@ export async function apply(ctx) {
           }
           return
         }
+        if (p === '/plugins-manager/roots' && req.method === 'POST') {
+          const a = await readBody(req)
+          const action = String(a.action || '')
+          const current = readSettings().customRoots
+          try {
+            if (action === 'add') {
+              const next = normalizeRoot(a.path)
+              const known = [ROOT, ...current].some((root) => samePath(root, next))
+              if (known) {
+                sendJson(res, { ok: false, error: '该目录已在管理列表中' }, 400)
+                return
+              }
+              if (current.length >= MAX_CUSTOM_ROOTS) {
+                sendJson(res, { ok: false, error: `最多可添加 ${MAX_CUSTOM_ROOTS} 个自定义目录` }, 400)
+                return
+              }
+              await updateSettings({ customRoots: [...current, next] })
+              log('添加集合目录 ->', next)
+            } else if (action === 'remove') {
+              const target = String(a.path || '').trim()
+              const next = current.filter((root) => !samePath(root, target))
+              if (next.length === current.length) {
+                sendJson(res, { ok: false, error: '目录不在管理列表中' }, 400)
+                return
+              }
+              await updateSettings({ customRoots: next })
+              log('移除集合目录 ->', target)
+            } else {
+              sendJson(res, { ok: false, error: '未知操作' }, 400)
+              return
+            }
+            sendJson(res, { ok: true, roots: listRoots() })
+          } catch (e) {
+            const message = String((e && e.message) || e)
+            log('集合目录保存失败:', message)
+            sendJson(res, { ok: false, error: message || '保存失败' }, 400)
+          }
+          return
+        }
         if (p === '/plugins-manager/toggle' && req.method === 'POST') {
           const a = await readBody(req)
-          const dir = String(a.dir || '')
+          const id = String(a.id || '')
           const enable = !!a.enable
-          const match = scanPlugins().find((pl) => pl.dir === dir)
+          const match = scanPlugins().find((pl) => pl.id === id)
           if (!match) {
-            sendJson(res, { ok: false, error: '未知插件目录: ' + dir }, 400)
+            sendJson(res, { ok: false, error: '未知插件' }, 400)
+            return
+          }
+          if (match.nameConflict) {
+            sendJson(res, { ok: false, error: '多个目录中存在同名插件，请先移除冲突目录' }, 409)
             return
           }
           if (match.isSelf) {
@@ -317,7 +444,7 @@ export async function apply(ctx) {
           // 只允许操作扫描结果内的目录，防止任意路径注入
           log('执行:', enable ? '启用' : '停用', match.name)
           const r = enable
-            ? await ensureEnabled(match.dir, match.name)
+            ? await ensureEnabled(match.path, match.name)
             : await ensureDisabled(match.name)
           if (r.exitCode === 0) {
             sendJson(res, { ok: true, exitCode: r.exitCode, output: r.output, restart: true })

@@ -1,7 +1,7 @@
 {
   "name": "dsh-yzlin499-plugins-manager",
-  "version": "0.1.0",
-  "description": "DSH plugin manager: a settings panel that lists every plugin in this collection folder (folders containing cordis.patch.yml) and toggles them via the dsh CLI — install/uninstall without touching other plugins",
+  "version": "0.2.0",
+  "description": "DSH plugin manager with persisted custom collection paths, README details, and enable/disable controls powered by the dsh CLI",
   "type": "module",
   "main": "index.js",
   "exports": {
