@@ -9,7 +9,8 @@ Adds an SVN working-copy manager to [DSH-better-sidebar](https://github.com/omds
 - Run `svn revert` after explicit confirmation
 - Commit the working copy with a log message
 - Run `svn update` after explicit confirmation
-- Browse paginated SVN history
+- Browse paginated SVN history and search the loaded entries
+- Collapse the Conflicts, Changes, Unversioned, and History sections independently
 - Open working-copy and revision diffs in dedicated sidebar tabs
 - Open changed files in the better-sidebar editor
 
@@ -41,6 +42,7 @@ Restart DSH Web after installing or updating the Host half, then refresh the bro
 4. Use the `+` action to schedule an unversioned path for addition.
 5. Enter a log message and commit all scheduled and modified content under the current session cwd.
 6. Revert and update operations show a confirmation dialog before changing files.
+7. Each session refreshes automatically on first open only; later session switches reuse cached data until manual refresh or a mutation.
 
 Authentication uses the existing SVN auth cache, certificate configuration, and OS credentials. The plugin never stores usernames, passwords, or certificate trust. Network commands use `--non-interactive`; complete initial authentication or certificate acceptance in a terminal first.
 
@@ -60,6 +62,8 @@ The Client half injects `betterSidebar` and registers:
 
 - `dsh-svn-manager`: the single-instance SVN manager tab
 - `dsh-svn-manager:diff`: a hidden diff tab opened from changes and history
+- Client state and recent history are cached by sessionId, avoiding repeat automatic refreshes when switching sessions
+- History search covers the currently loaded batches; Load more expands the search range
 
 Cordis owns all tab registrations and injected styles, so plugin disable and HMR clean them up.
 

@@ -9,7 +9,8 @@
 - 二次确认后执行 `svn revert`
 - 输入日志并执行 `svn commit`
 - 二次确认后执行 `svn update`
-- 分页查看 SVN 提交历史
+- 分页查看并搜索已加载的 SVN 提交历史
+- 冲突、变更、未纳管和提交记录分区可分别折叠
 - 在独立的侧边栏 Tab 中查看工作区 diff 和 revision diff
 - 从变更列表直接用 better-sidebar 编辑器打开文件
 
@@ -41,6 +42,7 @@ dsh plugin --profile web add ./dsh-svn-manager
 4. 未纳管文件可点击 `+` 纳入版本控制。
 5. 输入提交说明后点击“提交”，提交当前会话 cwd 子树中所有已调度和已修改内容。
 6. “还原”和“更新”会修改磁盘内容，执行前会显示确认对话框。
+7. 每个会话首次打开自动刷新一次；之后切换会话复用缓存，点击顶部刷新按钮或执行写操作才重新请求。
 
 认证完全使用本机 SVN 已有的 auth cache、证书配置和系统凭据。本插件不保存用户名、密码或证书信任信息。网络操作使用 `--non-interactive`，需要先在终端完成首次认证或证书确认。
 
@@ -60,6 +62,8 @@ Client 半侧注入 `betterSidebar`，注册：
 
 - `dsh-svn-manager`：主 SVN 页面，单实例
 - `dsh-svn-manager:diff`：隐藏的 SVN Diff 页面，由变更和历史记录定向打开
+- Client 按 sessionId 缓存状态与最近日志，切换会话不会重复自动刷新
+- 日志搜索作用于当前已加载的批次；继续“加载更多”会扩大搜索范围
 
 Tab 注册和 CSS 都由 Cordis fiber 持有，插件停用或 HMR 时会自动清理。
 

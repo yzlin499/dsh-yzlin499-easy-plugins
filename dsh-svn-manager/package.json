@@ -1,6 +1,6 @@
 {
   "name": "dsh-svn-manager",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "DSH better-sidebar plugin for SVN working-copy status, add, revert, commit, update, history, and unified diff",
   "type": "module",
   "main": "index.js",

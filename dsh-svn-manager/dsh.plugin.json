@@ -1,6 +1,6 @@
 {
   "id": "dsh-external/dsh-svn-manager",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "main": "./index.js",
   "description": "在 DSH-better-sidebar 中管理 SVN 工作副本：状态、纳管、还原、提交、更新、历史与差异",
   "engines": {

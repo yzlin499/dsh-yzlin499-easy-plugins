@@ -12,7 +12,8 @@ window.__ModuleLoader__.load({
       notWorkingCopy: '当前会话工作区不是 SVN 工作副本。', unavailable: '无法连接 SVN 管理服务。',
       conflicts: '冲突', changes: '待提交变更', unversioned: '未纳管文件', history: '提交记录',
       empty: '没有变更', add: '纳入版本控制', revert: '还原', openFile: '打开文件',
-      commitPlaceholder: '提交说明', commit: '提交', loadMore: '加载更多', noHistory: '没有提交记录',
+      commitPlaceholder: '提交说明', commit: '提交更改', loadMore: '加载更多', noHistory: '没有提交记录',
+      searchHistory: '搜索已加载日志', noSearchResults: '没有匹配的日志',
       repository: '仓库', revision: '工作副本版本', confirm: '确认', cancel: '取消',
       revertTitle: '还原本地变更？', revertDesc: '这会丢弃“{path}”的本地修改，无法从 SVN 工作副本恢复。',
       updateTitle: '更新工作副本？', updateDesc: 'SVN 将从仓库合并最新内容，本地修改可能产生冲突。',
@@ -27,7 +28,8 @@ window.__ModuleLoader__.load({
       notWorkingCopy: 'The current session workspace is not an SVN working copy.', unavailable: 'Cannot reach the SVN manager service.',
       conflicts: 'Conflicts', changes: 'Changes to commit', unversioned: 'Unversioned', history: 'History',
       empty: 'No changes', add: 'Add', revert: 'Revert', openFile: 'Open file',
-      commitPlaceholder: 'Commit message', commit: 'Commit', loadMore: 'Load more', noHistory: 'No history',
+      commitPlaceholder: 'Commit message', commit: 'Commit changes', loadMore: 'Load more', noHistory: 'No history',
+      searchHistory: 'Search loaded history', noSearchResults: 'No matching history',
       repository: 'Repository', revision: 'Working revision', confirm: 'Confirm', cancel: 'Cancel',
       revertTitle: 'Revert local changes?', revertDesc: 'This discards local changes to “{path}” and cannot be recovered from the working copy.',
       updateTitle: 'Update working copy?', updateDesc: 'SVN will merge repository changes and local modifications may conflict.',
@@ -77,14 +79,25 @@ window.__ModuleLoader__.load({
       return parsed.value
     }
 
-    function icon(kind, size = 16) {
-      const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true }
+    const sessionCache = new Map()
+    const SESSION_CACHE_LIMIT = 50
+    function cacheSession(sessionId, value) {
+      sessionCache.delete(sessionId)
+      sessionCache.set(sessionId, value)
+      while (sessionCache.size > SESSION_CACHE_LIMIT) {
+        sessionCache.delete(sessionCache.keys().next().value)
+      }
+    }
+
+    function icon(kind, size = 16, className) {
+      const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round', className, 'aria-hidden': true }
       const paths = {
         refresh: [h('path', { key: 1, d: 'M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5' }), h('path', { key: 2, d: 'M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5' })],
         update: [h('path', { key: 1, d: 'M12 3v13' }), h('path', { key: 2, d: 'm7 11 5 5 5-5' }), h('path', { key: 3, d: 'M5 21h14' })],
         file: [h('path', { key: 1, d: 'M14 2H6a2 2 0 0 0-2 2v16h16V8z' }), h('path', { key: 2, d: 'M14 2v6h6' })],
         plus: [h('path', { key: 1, d: 'M12 5v14M5 12h14' })],
         undo: [h('path', { key: 1, d: 'm9 14-4-4 4-4' }), h('path', { key: 2, d: 'M5 10h8a6 6 0 0 1 6 6v2' })],
+        chevron: [h('path', { key: 1, d: 'm9 18 6-6-6-6' })],
         branch: [h('circle', { key: 1, cx: 6, cy: 5, r: 2 }), h('circle', { key: 2, cx: 18, cy: 6, r: 2 }), h('circle', { key: 3, cx: 6, cy: 19, r: 2 }), h('path', { key: 4, d: 'M6 7v10M8 10c5 0 8-1 8-4' })],
       }
       return h('svg', common, ...(paths[kind] ?? paths.branch))
@@ -126,11 +139,17 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function ChangeSection({ title, entries, kind, labels, busy, onDiff, onOpen, onAction }) {
-      return h('section', { className: 'svnm-section' },
-        h('div', { className: 'svnm-section-head' }, h('span', null, `${title} (${entries.length})`)),
-        entries.length === 0 ? h('div', { className: 'svnm-empty' }, labels.empty) : null,
-        entries.map((entry) => h('div', { className: `svnm-change svnm-${kind}`, key: `${kind}:${entry.path}` },
+    function ChangeSection({ title, entries, kind, labels, busy, collapsed, onToggle, onDiff, onOpen, onAction }) {
+      return h('section', { className: `svnm-section svnm-section-${kind}` },
+        h('button', {
+          type: 'button', className: 'svnm-section-toggle', 'aria-expanded': !collapsed,
+          onClick: onToggle,
+        },
+          icon('chevron', 14, `svnm-chevron${collapsed ? '' : ' svnm-chevron-open'}`),
+          h('span', null, `${title} (${entries.length})`),
+        ),
+        collapsed ? null : entries.length === 0 ? h('div', { className: 'svnm-empty' }, labels.empty) : null,
+        collapsed ? null : entries.map((entry) => h('div', { className: `svnm-change svnm-${kind} svnm-status-${entry.item}`, key: `${kind}:${entry.path}` },
           h('button', {
             type: 'button', className: 'svnm-change-main', title: entry.path,
             onClick: () => kind === 'unversioned' ? onOpen(entry.path) : onDiff(entry.path),
@@ -156,51 +175,78 @@ window.__ModuleLoader__.load({
       const labels = useLocale(props.ctx)
       const scope = props.scope
       const service = props.ctx.betterSidebar
-      const [snapshot, setSnapshot] = React.useState(null)
-      const [history, setHistory] = React.useState([])
-      const [historyEnded, setHistoryEnded] = React.useState(false)
-      const [loading, setLoading] = React.useState(true)
+      const initialCache = sessionCache.get(scope.sessionId)
+      const [snapshot, setSnapshot] = React.useState(initialCache?.snapshot ?? null)
+      const [history, setHistory] = React.useState(initialCache?.history ?? [])
+      const [historyEnded, setHistoryEnded] = React.useState(initialCache?.historyEnded ?? false)
+      const [loading, setLoading] = React.useState(initialCache === undefined)
       const [busy, setBusy] = React.useState(false)
-      const [error, setError] = React.useState(null)
+      const [error, setError] = React.useState(initialCache?.error ?? null)
       const [notice, setNotice] = React.useState(null)
       const [message, setMessage] = React.useState('')
       const [confirmState, setConfirmState] = React.useState(null)
+      const [collapsed, setCollapsed] = React.useState({ conflicts: false, changes: false, unversioned: false, history: false })
+      const [historyQuery, setHistoryQuery] = React.useState('')
+      const loadedSession = React.useRef(initialCache === undefined ? null : scope.sessionId)
 
       const payload = React.useCallback((extra = {}) => ({ sessionId: scope.sessionId, ...extra }), [scope.sessionId])
       const refresh = React.useCallback(async (signal) => {
+        const sessionId = scope.sessionId
         setLoading(true)
         setError(null)
         try {
           const next = await api('status', payload(), signal)
-          setSnapshot(next)
+          let rows = []
+          let ended = true
+          let loadError = null
           if (next.info?.isWorkingCopy) {
             try {
-              const rows = await api('log', payload({ limit: 20 }), signal)
-              setHistory(rows)
-              setHistoryEnded(rows.length < 20)
+              rows = await api('log', payload({ limit: 20 }), signal)
+              ended = rows.length < 20
             } catch (caught) {
               if (caught?.name === 'AbortError') throw caught
-              setHistory([])
-              setHistoryEnded(true)
-              setError(caught instanceof Error ? caught.message : String(caught))
+              loadError = caught instanceof Error ? caught.message : String(caught)
             }
-          } else {
-            setHistory([])
-            setHistoryEnded(true)
           }
+          setSnapshot(next)
+          setHistory(rows)
+          setHistoryEnded(ended)
+          setError(loadError)
+          cacheSession(sessionId, { snapshot: next, history: rows, historyEnded: ended, error: loadError })
         } catch (caught) {
-          if (caught?.name !== 'AbortError') setError(caught instanceof Error ? caught.message : String(caught))
+          if (caught?.name !== 'AbortError') {
+            const message = caught instanceof Error ? caught.message : String(caught)
+            const previous = sessionCache.get(sessionId) ?? { snapshot: null, history: [], historyEnded: true }
+            setError(message)
+            cacheSession(sessionId, { ...previous, error: message })
+          }
         } finally {
           if (!signal?.aborted) setLoading(false)
         }
-      }, [payload])
+      }, [payload, scope.sessionId])
 
       React.useEffect(() => {
-        if (!props.visible) return undefined
+        const cached = sessionCache.get(scope.sessionId)
+        loadedSession.current = cached === undefined ? null : scope.sessionId
+        setSnapshot(cached?.snapshot ?? null)
+        setHistory(cached?.history ?? [])
+        setHistoryEnded(cached?.historyEnded ?? false)
+        setError(cached?.error ?? null)
+        setLoading(cached === undefined)
+        setHistoryQuery('')
+      }, [scope.sessionId])
+
+      React.useEffect(() => {
+        if (!props.visible || loadedSession.current === scope.sessionId) return undefined
+        const sessionId = scope.sessionId
+        loadedSession.current = sessionId
         const controller = new AbortController()
         void refresh(controller.signal)
-        return () => controller.abort()
-      }, [props.visible, refresh])
+        return () => {
+          controller.abort()
+          if (!sessionCache.has(sessionId)) loadedSession.current = null
+        }
+      }, [props.visible, refresh, scope.sessionId])
 
       const run = async (method, extra, success, after) => {
         setBusy(true); setError(null); setNotice(null)
@@ -248,8 +294,11 @@ window.__ModuleLoader__.load({
         setBusy(true)
         try {
           const rows = await api('log', payload({ limit: 20, startRevision: start }))
-          setHistory((current) => [...current, ...rows])
-          if (rows.length < 20) setHistoryEnded(true)
+          const nextHistory = [...history, ...rows]
+          const nextEnded = rows.length < 20
+          setHistory(nextHistory)
+          setHistoryEnded(nextEnded)
+          cacheSession(scope.sessionId, { snapshot, history: nextHistory, historyEnded: nextEnded, error: null })
         } catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)) }
         finally { setBusy(false) }
       }
@@ -264,6 +313,11 @@ window.__ModuleLoader__.load({
         : snapshot?.truncated
           ? labels.statusTruncated.replace('{shown}', String(snapshot.shownEntries ?? snapshot.entries?.length ?? 0))
           : null
+      const toggleSection = (key) => setCollapsed((current) => ({ ...current, [key]: !current[key] }))
+      const normalizedQuery = historyQuery.trim().toLocaleLowerCase()
+      const filteredHistory = normalizedQuery === '' ? history : history.filter((entry) => (
+        `${entry.revision} ${entry.author} ${entry.message} ${entry.date}`.toLocaleLowerCase().includes(normalizedQuery)
+      ))
 
       return h('div', { className: 'svnm-root' },
         h('header', { className: 'svnm-header' },
@@ -278,23 +332,36 @@ window.__ModuleLoader__.load({
           }, icon('update', 14), h('span', null, busy ? labels.updating : labels.update)),
         ),
         statusWarning ? h('div', { className: 'svnm-warning' }, statusWarning) : null,
-        h(ChangeSection, { title: labels.conflicts, entries: groups.conflicts, kind: 'conflict', labels, busy, onDiff: openDiff, onOpen: openFile, onAction: action }),
-        h(ChangeSection, { title: labels.changes, entries: groups.changes, kind: 'change', labels, busy, onDiff: openDiff, onOpen: openFile, onAction: action }),
-        h(ChangeSection, { title: labels.unversioned, entries: groups.unversioned, kind: 'unversioned', labels, busy, onDiff: openDiff, onOpen: openFile, onAction: action }),
+        h(ChangeSection, { title: labels.conflicts, entries: groups.conflicts, kind: 'conflict', labels, busy, collapsed: collapsed.conflicts, onToggle: () => toggleSection('conflicts'), onDiff: openDiff, onOpen: openFile, onAction: action }),
+        h(ChangeSection, { title: labels.changes, entries: groups.changes, kind: 'change', labels, busy, collapsed: collapsed.changes, onToggle: () => toggleSection('changes'), onDiff: openDiff, onOpen: openFile, onAction: action }),
+        h(ChangeSection, { title: labels.unversioned, entries: groups.unversioned, kind: 'unversioned', labels, busy, collapsed: collapsed.unversioned, onToggle: () => toggleSection('unversioned'), onDiff: openDiff, onOpen: openFile, onAction: action }),
         h('div', { className: 'svnm-commit' },
           h('textarea', { className: 'svnm-message', rows: 2, value: message, maxLength: 10000, placeholder: labels.commitPlaceholder, disabled: busy, onChange: (event) => setMessage(event.target.value) }),
-          h('button', { type: 'button', className: 'svnm-btn svnm-primary', disabled: busy || !hasCommittable || !message.trim(), onClick: () => void run('commit', { message: message.trim(), confirm: true }, labels.commandDone, () => setMessage('')) }, labels.commit),
+          h('button', { type: 'button', className: 'svnm-btn svnm-primary svnm-commit-button', disabled: busy || !hasCommittable || !message.trim(), onClick: () => void run('commit', { message: message.trim(), confirm: true }, labels.commandDone, () => setMessage('')) }, labels.commit),
         ),
         error ? h('div', { className: 'svnm-error' }, error) : null,
         notice ? h('pre', { className: 'svnm-notice' }, notice) : null,
         h('section', { className: 'svnm-section svnm-history' },
-          h('div', { className: 'svnm-section-head' }, h('span', null, labels.history)),
-          history.length === 0 ? h('div', { className: 'svnm-empty' }, labels.noHistory) : null,
-          history.map((entry) => h('button', { type: 'button', className: 'svnm-log-row', key: entry.revision, onClick: () => openRevision(entry), title: entry.message || `r${entry.revision}` },
+          h('button', {
+            type: 'button', className: 'svnm-section-toggle', 'aria-expanded': !collapsed.history,
+            onClick: () => toggleSection('history'),
+          },
+            icon('chevron', 14, `svnm-chevron${collapsed.history ? '' : ' svnm-chevron-open'}`),
+            h('span', null, `${labels.history} (${history.length})`),
+          ),
+          collapsed.history ? null : h('div', { className: 'svnm-history-search' },
+            h('input', {
+              type: 'search', value: historyQuery, placeholder: labels.searchHistory,
+              'aria-label': labels.searchHistory, onChange: (event) => setHistoryQuery(event.target.value),
+            }),
+          ),
+          collapsed.history ? null : history.length === 0 ? h('div', { className: 'svnm-empty' }, labels.noHistory) : null,
+          collapsed.history || history.length === 0 || filteredHistory.length > 0 ? null : h('div', { className: 'svnm-empty' }, labels.noSearchResults),
+          collapsed.history ? null : filteredHistory.map((entry) => h('button', { type: 'button', className: 'svnm-log-row', key: entry.revision, onClick: () => openRevision(entry), title: entry.message || `r${entry.revision}` },
             h('span', { className: 'svnm-log-top' }, h('b', null, `r${entry.revision}`), h('span', null, entry.message || '—')),
             h('span', { className: 'svnm-log-meta' }, `${entry.author || '—'} · ${entry.date ? new Date(entry.date).toLocaleString() : '—'}`),
           )),
-          !historyEnded ? h('button', { type: 'button', className: 'svnm-more', disabled: busy, onClick: () => void loadMore() }, labels.loadMore) : null,
+          !collapsed.history && !historyEnded ? h('button', { type: 'button', className: 'svnm-more', disabled: busy, onClick: () => void loadMore() }, labels.loadMore) : null,
         ),
         h(ConfirmDialog, { state: confirmState, labels, busy, onClose: () => setConfirmState(null) }),
       )
@@ -345,16 +412,16 @@ window.__ModuleLoader__.load({
       '.svnm-repo{flex:1;min-width:0}.svnm-repo-url{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.svnm-revision,.svnm-log-meta{margin-top:2px;color:var(--dsw-alias-label-tertiary);font-size:11px}',
       '.svnm-icon-btn{width:28px;height:28px;flex:none;display:inline-flex;align-items:center;justify-content:center;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer}.svnm-icon-btn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
       '.svnm-action-btn,.svnm-btn{min-height:28px;display:inline-flex;align-items:center;justify-content:center;gap:5px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;padding:4px 9px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;cursor:pointer}.svnm-action-btn:hover:not(:disabled),.svnm-btn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}.svnm-root button:disabled,.svnm-dialog button:disabled{opacity:.45;cursor:default}',
-      '.svnm-section{border-bottom:1px solid var(--dsw-alias-border-l2)}.svnm-section-head{display:flex;align-items:center;min-height:30px;padding:5px 9px;font-weight:600;color:var(--dsw-alias-label-secondary)}.svnm-empty,.svnm-placeholder{padding:16px 10px;color:var(--dsw-alias-label-tertiary);text-align:center}',
+      '.svnm-section{border-bottom:1px solid var(--dsw-alias-border-l2)}.svnm-section-toggle{appearance:none;width:100%;min-height:32px;display:flex;align-items:center;gap:5px;padding:5px 9px;border:0;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-weight:600;text-align:left;cursor:pointer}.svnm-section-toggle:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}.svnm-chevron{flex:none;transition:transform .15s ease}.svnm-chevron-open{transform:rotate(90deg)}.svnm-empty,.svnm-placeholder{padding:16px 10px;color:var(--dsw-alias-label-tertiary);text-align:center}',
       '.svnm-change{display:flex;align-items:center;min-height:30px;padding:0 5px 0 8px}.svnm-change:hover{background:var(--dsw-alias-interactive-bg-hover)}.svnm-change-main{flex:1;min-width:0;display:flex;align-items:center;gap:7px;border:0;background:transparent;color:inherit;text-align:left;cursor:pointer;padding:6px 2px}',
-      '.svnm-badge{width:17px;flex:none;font-weight:700;color:var(--dsw-alias-brand-primary)}.svnm-conflict .svnm-badge{color:var(--dsw-alias-status-error,#d33c48)}.svnm-path{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.svnm-flag{flex:none;color:var(--dsw-alias-label-tertiary);font-size:10px}',
-      '.svnm-commit{display:flex;align-items:stretch;gap:6px;padding:8px;border-bottom:1px solid var(--dsw-alias-border-l2)}.svnm-message{flex:1;min-width:0;resize:vertical;max-height:100px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);font:inherit;padding:7px;outline:none}.svnm-message:focus{border-color:var(--dsw-alias-brand-primary)}',
-      '.svnm-primary{border-color:transparent;background:var(--dsw-alias-brand-primary);color:white}.svnm-primary:hover:not(:disabled){filter:brightness(1.06);background:var(--dsw-alias-brand-primary)}.svnm-danger{background:var(--dsw-alias-status-error,#d33c48)}',
+      '.svnm-badge{width:17px;flex:none;font-weight:800;color:#b76e00}.svnm-status-added .svnm-badge{color:#16845b}.svnm-status-deleted .svnm-badge,.svnm-status-missing .svnm-badge,.svnm-conflict .svnm-badge{color:var(--dsw-alias-status-error,#d33c48)}.svnm-status-replaced .svnm-badge{color:#7a55c5}.svnm-unversioned .svnm-badge{color:var(--dsw-alias-label-tertiary,#737780)}.svnm-path{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.svnm-flag{flex:none;color:var(--dsw-alias-label-tertiary);font-size:10px}',
+      '.svnm-commit{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:stretch;gap:8px;padding:9px 8px;border-bottom:1px solid var(--dsw-alias-border-l2)}.svnm-message{min-width:0;resize:vertical;max-height:100px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);font:inherit;padding:7px;outline:none}.svnm-message:focus{border-color:var(--dsw-alias-brand-primary,#4d6bfe)}.svnm-commit-button{min-width:86px;min-height:42px;padding:7px 13px;font-weight:700;font-size:13px;box-shadow:0 2px 8px rgba(77,107,254,.2)}',
+      '.svnm-primary{border-color:transparent;background:var(--dsw-alias-brand-primary,#4d6bfe);color:white}.svnm-primary:hover:not(:disabled){filter:brightness(1.06);background:var(--dsw-alias-brand-primary,#4d6bfe)}.svnm-danger{background:var(--dsw-alias-status-error,#d33c48)}',
       '.svnm-error{margin:7px 8px;padding:7px 9px;border:1px solid color-mix(in srgb,var(--dsw-alias-status-error,#d33c48) 45%,transparent);border-radius:6px;color:var(--dsw-alias-status-error,#d33c48);white-space:pre-wrap}.svnm-warning{padding:6px 10px;border-bottom:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary);background:rgba(220,150,30,.12)}.svnm-pad{margin:12px}.svnm-notice{margin:7px 8px;padding:7px 9px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;white-space:pre-wrap;font:11px/1.5 var(--dsw-font-family);color:var(--dsw-alias-label-secondary);max-height:100px;overflow:auto}',
-      '.svnm-history{padding-bottom:8px}.svnm-log-row{width:100%;display:flex;flex-direction:column;gap:2px;border:0;background:transparent;color:inherit;text-align:left;padding:7px 10px;cursor:pointer}.svnm-log-row:hover{background:var(--dsw-alias-interactive-bg-hover)}.svnm-log-top{display:flex;gap:7px;min-width:0}.svnm-log-top b{flex:none;color:var(--dsw-alias-brand-primary)}.svnm-log-top span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.svnm-more{margin:7px 10px;border:0;background:transparent;color:var(--dsw-alias-brand-primary);font:inherit;cursor:pointer}',
+      '.svnm-history{padding-bottom:8px}.svnm-history-search{padding:5px 9px 7px}.svnm-history-search input{box-sizing:border-box;width:100%;height:29px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;padding:4px 8px;background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);font:inherit;outline:none}.svnm-history-search input:focus{border-color:var(--dsw-alias-brand-primary,#4d6bfe)}.svnm-log-row{width:100%;display:flex;flex-direction:column;gap:2px;border:0;background:transparent;color:inherit;text-align:left;padding:7px 10px;cursor:pointer}.svnm-log-row:hover{background:var(--dsw-alias-interactive-bg-hover)}.svnm-log-top{display:flex;gap:7px;min-width:0}.svnm-log-top b{flex:none;color:var(--dsw-alias-brand-primary,#4d6bfe)}.svnm-log-top span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.svnm-more{margin:7px 10px;border:0;background:transparent;color:var(--dsw-alias-brand-primary,#4d6bfe);font:inherit;cursor:pointer}',
       '.svnm-mask{position:fixed;inset:0;z-index:2147482000;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(0,0,0,.45)}.svnm-dialog{width:min(390px,100%);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;padding:16px;background:var(--dsw-alias-bg-layer-3);box-shadow:0 18px 50px rgba(0,0,0,.3)}.svnm-dialog-title{font-size:15px;font-weight:600}.svnm-dialog-desc{margin-top:9px;color:var(--dsw-alias-label-secondary);line-height:1.55}.svnm-dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}',
-      '.svnm-diff-head span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}.svnm-diff-code{flex:1;margin:0;padding:8px 0;overflow:auto;background:var(--dsw-alias-bg-layer-3);font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;tab-size:4}.svnm-diff-line{display:block;min-width:max-content;padding:0 10px;white-space:pre}.svnm-diff-add{background:rgba(24,160,88,.14);color:var(--dsw-alias-label-primary)}.svnm-diff-del{background:rgba(220,55,65,.14);color:var(--dsw-alias-label-primary)}.svnm-diff-hunk{background:rgba(61,119,255,.12);color:var(--dsw-alias-brand-primary)}.svnm-diff-head{color:var(--dsw-alias-label-secondary)}',
-      'body[data-ds-dark-theme] .svnm-diff-add{background:rgba(50,190,110,.16)}body[data-ds-dark-theme] .svnm-diff-del{background:rgba(245,85,95,.16)}',
+      '.svnm-diff-head span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}.svnm-diff-code{flex:1;margin:0;padding:8px 0;overflow:auto;background:var(--dsw-alias-bg-layer-3);font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;tab-size:4}.svnm-diff-line{display:block;min-width:max-content;padding:0 10px;white-space:pre}.svnm-diff-add{background:rgba(24,160,88,.14);color:var(--dsw-alias-label-primary)}.svnm-diff-del{background:rgba(220,55,65,.14);color:var(--dsw-alias-label-primary)}.svnm-diff-hunk{background:rgba(61,119,255,.12);color:var(--dsw-alias-brand-primary,#4d6bfe)}.svnm-diff-head{color:var(--dsw-alias-label-secondary)}',
+      'body[data-ds-dark-theme] .svnm-badge{color:#e6a23c}body[data-ds-dark-theme] .svnm-status-added .svnm-badge{color:#45c690}body[data-ds-dark-theme] .svnm-status-replaced .svnm-badge{color:#ad8ce6}body[data-ds-dark-theme] .svnm-diff-add{background:rgba(50,190,110,.16)}body[data-ds-dark-theme] .svnm-diff-del{background:rgba(245,85,95,.16)}',
     ].join('')
 
     const inject = ['betterSidebar', 'locale']
