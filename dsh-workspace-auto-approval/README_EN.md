@@ -2,10 +2,11 @@
 
 DSH plugin: **Workspace Auto Approval**.
 
-It adds an automatic answerer on top of DSH's default `Workspace Write + ask` policy.
-Operations contained in the workspace, read-only access outside it, and network reads can
-be approved automatically. Commands that cannot be classified reliably by simple rules
-are sent to the current session model for one minimal, tool-free review.
+It adds a fourth **Workspace Auto Approval** entry to DSH's permission selector. The new
+mode uses the same `Workspace Write + ask` knobs, with an automatic answerer in front of
+the normal approval chain. Workspace-contained operations, read-only external access, and
+network reads can be approved automatically; inconclusive commands receive one minimal,
+tool-free review from the current session model. Ordinary `Workspace Write` is unchanged.
 
 ## Install
 
@@ -20,8 +21,10 @@ Restart DSH Web to activate it.
 
 ## Usage
 
-No configuration is required. The plugin handles only escalation requests already raised
-by DSH and applies these decisions in order:
+After installation and restart, select **Workspace Auto Approval** in the session permission
+selector. The plugin handles escalations only while that mode is selected; switching back to
+`Workspace Write` restores DSH's ordinary approval behavior. The automatic mode applies these
+decisions in order:
 
 | Case | Result |
 |---|---|
@@ -38,7 +41,11 @@ permission mode.
 
 ## How It Works
 
-- The Host plugin prepends an `approval/request` waterfall listener before the Web answerer.
+- The bundle patch restates the three built-in presets and appends `workspace-auto-approval`.
+  It shares `sandbox: workspace-write` and `approval: ask` with `workspace-write`; DSH's durable
+  `permission/preset` event preserves which shared-knob mode the user selected.
+- The Host plugin prepends an `approval/request` waterfall listener, but intervenes only while
+  `workspace-auto-approval` is current. Every other mode immediately calls `next()`.
 - Approval requests carry a `callId`; the plugin finds the matching `tool/call` event in the
   current Session to recover the original arguments.
 - The workspace root comes from `session.header.cwd`. Existing symlinks/junctions are

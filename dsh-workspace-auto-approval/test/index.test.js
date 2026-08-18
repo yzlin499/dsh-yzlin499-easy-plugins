@@ -15,10 +15,15 @@ class FakeAssembler {
   }
 }
 
-function harness(answer = 'ALLOW', emitFinish = true) {
+function harness(answer = 'ALLOW', emitFinish = true, preset = 'workspace-auto-approval') {
   let listener
   let streamOptions
   const ctx = {
+    permissionPresets: {
+      current() {
+        return preset
+      },
+    },
     loader: {
       async import() {
         return { BlockAssembler: FakeAssembler, createUserMessage: (message) => message }
@@ -56,6 +61,14 @@ function request(toolName, args, workspace = process.cwd()) {
   }
   return { agent: { session, options: {} }, toolName, callId, reason: 'test escalation' }
 }
+
+test('does nothing while the ordinary workspace-write preset is selected', async () => {
+  const mock = harness('ALLOW', true, 'workspace-write')
+  await apply(mock.ctx)
+  const req = request('write', { file_path: `${process.cwd()}/result.txt` })
+  assert.equal(await mock.listener()(req, () => 'downstream'), 'downstream')
+  assert.equal(mock.streamOptions(), undefined)
+})
 
 test('registers first and locally allows an in-workspace file request', async () => {
   const mock = harness()

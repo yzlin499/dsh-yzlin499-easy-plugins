@@ -1,4 +1,24 @@
-# dsh bundle layer: mount the workspace-aware approval answerer on the host.
+# dsh bundle layer: add a fourth permission preset and mount its Host answerer.
+# Config patches replace the target row's whole config, so all built-in presets
+# are restated before the new shared-knob preset is appended.
+- id: permission
+  config:
+    presets:
+      read-only:
+        sandbox: read-only
+        approval: ask
+      workspace-write:
+        sandbox: workspace-write
+        approval: ask
+      workspace-auto-approval:
+        sandbox: workspace-write
+        approval: ask
+        name: 工作区自动审核
+        description: 自动审核工作区操作、外部只读访问和网络读取；不确定时使用 AI 判断。
+      danger-full-access:
+        sandbox: danger-full-access
+        approval: never
+
 - insert:
     - id: workspace-auto-approval
       name: dsh-workspace-auto-approval

@@ -27,7 +27,7 @@ Issue——我帮你想想。
 | [dsh-svn-manager](dsh-svn-manager/README.md) | — | SVN 侧边栏管理：通过 DSH-better-sidebar 查看工作副本状态、纳管/还原、提交、更新、历史和独立差异 Tab；遵循 SVN 原生语义，不伪造 Git staging | `dsh plugin --profile web add ./dsh-svn-manager` | 新增 |
 | [dsh-yzlin499-plugins-manager](dsh-yzlin499-plugins-manager/README.md) | <img src="dsh-yzlin499-plugins-manager/screenshot.png" width="150" alt="插件管理器截图"> | 插件管理：设置页列出本集合全部插件，一键启用/停用（走 dsh CLI，批量开关后重启生效）；只管理本项目插件 | `dsh plugin --profile web add ./dsh-yzlin499-plugins-manager` | |
 | [dsh-workspace-openmenu](dsh-workspace-openmenu/README.md) | <img src="dsh-workspace-openmenu/screenshot.png" width="150" alt="工作区快捷打开截图"> | 工作区快捷打开：会话头部右上角（session log 左侧）「打开为」按钮，二级菜单在工作区位置打开 pwsh / cmd / 资源管理器 / vscode | `dsh plugin --profile web add ./dsh-workspace-openmenu` | |
-| [dsh-workspace-auto-approval](dsh-workspace-auto-approval/README.md) | — | 工作区自动审核：自动放行工作区内操作、工作区外只读访问和网络读取；复杂命令使用当前会话模型进行极简无工具审核，其余回落人工审批 | `dsh plugin --profile web add ./dsh-workspace-auto-approval` | 新增 |
+| [dsh-workspace-auto-approval](dsh-workspace-auto-approval/README.md) | — | 工作区自动审核：新增第四种权限模式，自动放行工作区内操作、工作区外只读访问和网络读取；复杂命令使用当前会话模型进行极简无工具审核，其余回落下游审批链 | `dsh plugin --profile web add ./dsh-workspace-auto-approval` | 新增 |
 | [dsh-win-notify](dsh-win-notify/README.md) | — | Windows 原生吐司通知：权限申请 / 发起提问 / 运行停止时弹右下角通知，网页挂后台也能第一时间知道；支持仅后台通知模式 | `dsh plugin --profile web add ./dsh-win-notify` | |
 
 > 点插件名可查看该插件的详细文档（README）。profile 名按你的 DSH 实例调整（例如 `web`），

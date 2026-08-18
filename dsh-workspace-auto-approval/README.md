@@ -2,9 +2,10 @@
 
 DSH 插件：**工作区自动审核**。
 
-它在 DSH 默认 `Workspace Write + ask` 权限策略之上增加一个自动审批层：工作区内的操作、
-工作区外的只读访问和网络读取可以自动通过，减少频繁点击权限确认；无法由简单规则可靠
-判断的命令，会交给当前会话使用的 AI 做一次极简、无工具审核。
+它向 DSH 权限选择器新增第四种 **“工作区自动审核”** 模式。该模式沿用
+`Workspace Write + ask` 的底层权限边界，但在审批链前增加自动审核：工作区内的操作、
+工作区外的只读访问和网络读取可以自动通过；无法由简单规则可靠判断的命令，会交给
+当前会话使用的 AI 做一次极简、无工具审核。普通 `Workspace Write` 模式保持原行为。
 
 ## 安装
 
@@ -19,7 +20,9 @@ dsh plugin --profile web add ./dsh-workspace-auto-approval
 
 ## 使用
 
-安装后无需配置。插件只处理 DSH 已经发起的权限升级请求，并按以下顺序判断：
+安装并重启后，在会话的权限选择器中选择 **“工作区自动审核”**。只有选中该模式时
+插件才会处理权限升级请求；切回 `Workspace Write` 后，所有请求继续使用 DSH 原审批链。
+自动审核模式按以下顺序判断：
 
 | 情况 | 处理 |
 |---|---|
@@ -35,7 +38,11 @@ dsh plugin --profile web add ./dsh-workspace-auto-approval
 
 ## 工作原理
 
-- Host 插件以 `prepend` 方式监听 `approval/request`，在网页审批器之前执行。
+- Bundle 补丁重述官方三种权限预设，并追加 `workspace-auto-approval`。它与
+  `workspace-write` 共用 `sandbox: workspace-write`、`approval: ask`，DSH 通过持久的
+  `permission/preset` 事件区分用户选中了哪一种。
+- Host 插件以 `prepend` 方式监听 `approval/request`，但仅在当前预设为
+  `workspace-auto-approval` 时介入；其他模式立即调用 `next()`。
 - 审批请求只带 `callId`，插件从当前 Session 的 `tool/call` 事件中按该 ID 取回原始参数。
 - 工作区边界来自 `session.header.cwd`；路径比较会解析已存在的符号链接/目录连接，避免只做
   字符串前缀判断。
