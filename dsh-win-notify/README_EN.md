@@ -10,7 +10,7 @@ This plugin pops native Windows toasts (bottom-right notifications) at three mom
 ## Install
 
 ```powershell
-dsh plugin --profile web add ./dsh-win-notify
+dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-win-notify"
 ```
 
 Restart DSH Web to activate.

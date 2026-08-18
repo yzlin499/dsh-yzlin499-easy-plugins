@@ -8,10 +8,14 @@ DSH 插件：**工作区自动审核**。
 会交给当前会话使用的 AI 做一次带工具定义、但不可调用工具的审核。普通 `Workspace Write`
 模式保持原行为。
 
+## 截图
+
+![截图](screenshot.png)
+
 ## 安装
 
 ```powershell
-dsh plugin --profile web add ./dsh-workspace-auto-approval
+dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-workspace-auto-approval"
 ```
 
 重启 DSH Web 后生效。

@@ -40,7 +40,7 @@ DSH plugin manager: manage plugins from the default collection and custom direct
 ## Install
 
 ```powershell
-dsh plugin --profile web add ./dsh-yzlin499-plugins-manager
+dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-yzlin499-plugins-manager"
 ```
 
 Restart DSH Web, then open Settings → Plugin Manager.

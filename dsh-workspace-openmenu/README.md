@@ -10,7 +10,7 @@ DSH 插件：**工作区快捷打开菜单**。在会话头部右上角（sessio
 ## 安装
 
 ```powershell
-dsh plugin --profile web add ./dsh-workspace-openmenu
+dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-workspace-openmenu"
 ```
 
 重启 DSH Web 后生效。

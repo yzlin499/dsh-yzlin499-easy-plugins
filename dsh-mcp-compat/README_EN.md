@@ -7,7 +7,7 @@ config files of mainstream agents and mounts every MCP server as an
 ## Install
 
 ```powershell
-dsh plugin --profile web add ./dsh-mcp-compat
+dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-mcp-compat"
 ```
 
 Restart DSH Web to activate.

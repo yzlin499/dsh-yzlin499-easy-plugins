@@ -9,10 +9,14 @@ network reads can be approved automatically. Inconclusive commands and MCP calls
 by the current session model with the matching tool definition supplied for context, but with no
 callable tools. Ordinary `Workspace Write` is unchanged.
 
+## Screenshot
+
+![Screenshot](screenshot.png)
+
 ## Install
 
 ```powershell
-dsh plugin --profile web add ./dsh-workspace-auto-approval
+dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-workspace-auto-approval"
 ```
 
 Restart DSH Web to activate it.

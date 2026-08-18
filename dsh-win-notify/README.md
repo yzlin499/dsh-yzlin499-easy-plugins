@@ -9,7 +9,7 @@ DSH 运行在网页里，人不在前台时什么动静都看不到，很痛苦�
 ## 安装
 
 ```powershell
-dsh plugin --profile web add ./dsh-win-notify
+dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-win-notify"
 ```
 
 重启 DSH Web 后生效。

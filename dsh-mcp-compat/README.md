@@ -6,7 +6,7 @@ MCP 服务器挂载为一个 `@deepseek-ai/dsh-mcp-client` 实例，工具以 `m
 ## 安装
 
 ```powershell
-dsh plugin --profile web add ./dsh-mcp-compat
+dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-mcp-compat"
 ```
 
 重启 DSH Web 后生效。

@@ -24,10 +24,10 @@ SVN 没有 Git 的 staging index，因此本插件不会伪造“已暂存/未�
 2. 系统已安装 SVN CLI，终端运行 `svn --version` 可用
 3. DSH 使用 Node.js 20 或更高版本
 
-在本仓库根目录执行：
+无需克隆本仓库，直接执行：
 
 ```powershell
-dsh plugin --profile web add ./dsh-svn-manager
+dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-svn-manager"
 ```
 
 已经安装 **dsh-yzlin499-plugins-manager** 时，也可以进入「设置 → 插件 → 插件管理」，直接启用 `dsh-svn-manager`。

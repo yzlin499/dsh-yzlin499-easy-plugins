@@ -24,10 +24,10 @@ Requirements:
 2. An SVN CLI available through `svn --version`
 3. Node.js 20 or newer for DSH
 
-From this repository root:
+No repository clone needed — run:
 
 ```powershell
-dsh plugin --profile web add ./dsh-svn-manager
+dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-svn-manager"
 ```
 
 If **dsh-yzlin499-plugins-manager** is installed, you can also enable `dsh-svn-manager` from Settings → Plugins → Plugin Manager.

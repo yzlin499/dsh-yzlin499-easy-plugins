@@ -11,7 +11,7 @@ DSH 插件：**OpenCode（opencode.ai Go 订阅）用量悬浮窗**。
 ## 安装
 
 ```powershell
-dsh plugin --profile web add ./dsh-oc-usage
+dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-oc-usage"
 ```
 
 重启 DSH Web 后生效。

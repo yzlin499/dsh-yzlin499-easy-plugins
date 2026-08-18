@@ -12,7 +12,7 @@ DSH 插件：**@ 快速输入文件**。
 ## 安装
 
 ```powershell
-dsh plugin --profile web add ./dsh-quick-file
+dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-quick-file"
 ```
 
 重启 DSH Web 后生效。

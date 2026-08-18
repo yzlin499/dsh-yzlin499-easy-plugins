@@ -12,7 +12,7 @@ percentages plus reset countdown, auto-refreshing every 5 minutes.
 ## Install
 
 ```powershell
-dsh plugin --profile web add ./dsh-oc-usage
+dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-oc-usage"
 ```
 
 Restart DSH Web to activate.

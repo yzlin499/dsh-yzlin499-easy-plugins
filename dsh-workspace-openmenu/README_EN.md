@@ -11,7 +11,7 @@ open the workspace location in: **pwsh / cmd / Explorer / VS Code**.
 ## Install
 
 ```powershell
-dsh plugin --profile web add ./dsh-workspace-openmenu
+dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-workspace-openmenu"
 ```
 
 Restart DSH Web to activate.

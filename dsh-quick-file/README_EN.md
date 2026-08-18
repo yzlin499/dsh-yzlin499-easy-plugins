@@ -13,7 +13,7 @@ trigger pipeline — the input box itself is untouched).
 ## Install
 
 ```powershell
-dsh plugin --profile web add ./dsh-quick-file
+dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-quick-file"
 ```
 
 Restart DSH Web to activate.

@@ -59,9 +59,12 @@
 ## 常用命令
 
 ```powershell
-dsh plugin --profile web add ./dsh-oc-usage    # 单个安装（可换包名）
+dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-oc-usage"   # 单个安装（可换包名/路径）
 dsh plugin --profile web remove dsh-oc-usage   # 单个卸载
 ```
+
+> `github:...#path:/dsh-xxx` 是 pnpm 的 git 依赖子目录语法：无需克隆仓库，直接以
+> GitHub 上的 `dsh-xxx/` 子目录为包安装。
 
 验证流程：安装 → **重启 DSH Web** → 观察插件是否出现/生效。
 `dsh plugin` 底层 = pnpm 装到 `~/.dsh/profiles/<profile>/` + 自动写入挂载清单。
@@ -99,8 +102,11 @@ dsh plugin --profile web remove dsh-oc-usage   # 单个卸载
 
 ## 分发方式
 
-- 只通过 **GitHub** 分发，**不发布 npm**：使用者克隆仓库后用本地路径安装
-  （`dsh plugin --profile web add ./dsh-xxx`）。
+- 只通过 **GitHub** 分发，**不发布 npm**：使用者无需克隆仓库，用 pnpm 的 git 子目录
+  语法 `github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-xxx` 一行直装
+  （`dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-xxx"`）。
+- 新增插件必须保证目录结构即包结构（`package.json` 位于 `dsh-xxx/` 根，且已提交到
+  GitHub `main` 分支），GitHub 直装命令才能开箱即用。
 - 根 `package.json` 是 `"private": true`，禁止 publish。
 
 ## Git 约定
