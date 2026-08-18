@@ -1,0 +1,21 @@
+{
+  "name": "dsh-workspace-auto-approval",
+  "version": "0.1.0",
+  "description": "DSH workspace-aware automatic approval: safely approves workspace-contained escalations and read-only external access, with a minimal no-tool LLM fallback.",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./policy": "./policy.js",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "license": "MIT"
+}

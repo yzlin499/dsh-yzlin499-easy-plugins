@@ -1,0 +1,4 @@
+# dsh bundle layer: mount the workspace-aware approval answerer on the host.
+- insert:
+    - id: workspace-auto-approval
+      name: dsh-workspace-auto-approval
