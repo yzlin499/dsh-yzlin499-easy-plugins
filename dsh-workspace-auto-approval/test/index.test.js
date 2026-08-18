@@ -30,6 +30,18 @@ function harness(answer = 'ALLOW', emitFinish = true, preset = 'workspace-auto-a
       },
     },
     llm: {
+      async resolveModelInfo() {
+        return {
+          reasoning: {
+            defaultEffort: 'off',
+            efforts: [
+              { id: 'off', name: 'Off' },
+              { id: 'low', name: 'Low' },
+              { id: 'high', name: 'High' },
+            ],
+          },
+        }
+      },
       async *stream(options) {
         streamOptions = options
         yield { type: 'text-delta', text: answer }
@@ -49,14 +61,21 @@ function harness(answer = 'ALLOW', emitFinish = true, preset = 'workspace-auto-a
   return { ctx, listener: () => listener, streamOptions: () => streamOptions }
 }
 
-function request(toolName, args, workspace = process.cwd()) {
+function request(toolName, args, workspace = process.cwd(), config = { provider: 'test-provider', model: 'test-model' }) {
   const callId = 'call-1'
   const session = {
     header: { cwd: workspace },
     events: [{ type: 'tool/call', data: { callId, name: toolName, arguments: JSON.stringify(args) } }],
     id: 'session-1',
     requestHeader() {
-      return { config: { provider: 'test-provider', model: 'test-model' } }
+      return {
+        config,
+        tools: [{
+          name: toolName,
+          description: `Definition for ${toolName}`,
+          parameters: { type: 'object', properties: { value: { type: 'string' } } },
+        }],
+      }
     },
   }
   return { agent: { session, options: {} }, toolName, callId, reason: 'test escalation' }
@@ -91,18 +110,49 @@ test('leaves an explicit external write for the original answerer', async () => 
   assert.equal(result, 'human-result')
 })
 
-test('AI fallback sends one tool-free minimal request and accepts exact ALLOW', async () => {
+test('AI fallback sends reason, schema, arguments, and enables reasoning', async () => {
   const mock = harness('ALLOW')
   await apply(mock.ctx)
-  const req = request('pwsh', { command: 'pnpm test', workdir: process.cwd() })
+  const args = { command: 'pnpm test', workdir: process.cwd() }
+  const req = request('pwsh', args)
   assert.equal(await mock.listener()(req, () => 'next'), 'allowed-once')
   const options = mock.streamOptions()
   assert.deepEqual(options.tools, [])
-  assert.equal(options.maxTokens, 8)
+  assert.equal(options.maxTokens, 256)
   assert.equal(options.temperature, 0)
+  assert.equal(options.reasoningEffort, 'low')
   assert.equal(options.messages.length, 1)
   assert.equal(options.provider, 'test-provider')
   assert.equal(options.model, 'test-model')
+  const payload = JSON.parse(options.messages[0].content[0].text)
+  assert.equal(payload.approvalReason, 'test escalation')
+  assert.equal(payload.toolDefinition.name, 'pwsh')
+  assert.equal(payload.toolDefinition.description, 'Definition for pwsh')
+  assert.deepEqual(payload.toolDefinition.parameters, { type: 'object', properties: { value: { type: 'string' } } })
+  assert.deepEqual(payload.arguments, args)
+})
+
+test('AI fallback preserves an enabled session reasoning effort', async () => {
+  const mock = harness('ALLOW')
+  await apply(mock.ctx)
+  const req = request('pwsh', { command: 'pnpm test' }, process.cwd(), {
+    provider: 'test-provider',
+    model: 'test-model',
+    reasoningEffort: 'high',
+  })
+  assert.equal(await mock.listener()(req, () => 'next'), 'allowed-once')
+  assert.equal(mock.streamOptions().reasoningEffort, 'high')
+})
+
+test('unknown MCP tools use the AI path with their schema and arguments', async () => {
+  const mock = harness('ALLOW')
+  await apply(mock.ctx)
+  const args = { value: 'README.md' }
+  const req = request('mcp__docs__read', args)
+  assert.equal(await mock.listener()(req, () => 'next'), 'allowed-once')
+  const payload = JSON.parse(mock.streamOptions().messages[0].content[0].text)
+  assert.equal(payload.toolDefinition.name, 'mcp__docs__read')
+  assert.deepEqual(payload.arguments, args)
 })
 
 test('AI output without an explicit finish marker fails closed', async () => {

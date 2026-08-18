@@ -5,8 +5,9 @@ DSH plugin: **Workspace Auto Approval**.
 It adds a fourth **Workspace Auto Approval** entry to DSH's permission selector. The new
 mode uses the same `Workspace Write + ask` knobs, with an automatic answerer in front of
 the normal approval chain. Workspace-contained operations, read-only external access, and
-network reads can be approved automatically; inconclusive commands receive one minimal,
-tool-free review from the current session model. Ordinary `Workspace Write` is unchanged.
+network reads can be approved automatically. Inconclusive commands and MCP calls are reviewed
+by the current session model with the matching tool definition supplied for context, but with no
+callable tools. Ordinary `Workspace Write` is unchanged.
 
 ## Install
 
@@ -58,10 +59,15 @@ permission mode.
   traversal, dynamic paths, read-only commands, network reads/writes, and common host effects.
   Shell writes are not locally allowed from textual paths alone because variables, globs, and
   mutable symlinks cannot be constrained reliably by string inspection.
-- The AI fallback reuses the provider/model from the latest session request. It sends only the
-  workspace, tool name, command, and working directory in one JSON user message capped at 16 KiB.
-  The short system prompt uses `tools: []`, `maxTokens: 8`, and a 15-second timeout, with no
-  conversation history, tool definitions, approval reason, or other tool arguments.
+- The AI fallback reuses the latest session provider/model and sends the workspace, approval
+  reason, matching tool definition (name, description, parameter schema), and actual arguments,
+  capped at 32 KiB of JSON. This lets opaque MCP tools be judged from their contracts. The request
+  still uses `tools: []`: the reviewer can read schemas but cannot call tools, and receives no
+  conversation history.
+- Review calls enable reasoning when supported. An already-enabled session `reasoningEffort` wins;
+  otherwise the plugin resolves model capabilities and selects the first non-off effort (normally
+  `low` for DeepSeek). Unsupported models omit the field. `maxTokens: 256` leaves room for hidden
+  reasoning, with the same 15-second timeout.
 - Only an exact `ALLOW` grants access. Every other output or exception calls `next()` and falls
   back to DSH's existing approval chain. Under an approval policy of `never`, DSH rejects that
   fallback according to its normal policy.
@@ -73,7 +79,8 @@ sandbox. Rules and AI can judge intent, but cannot prove every runtime effect of
 code as an operating-system sandbox can. Consequently:
 
 - explicit host-configuration changes and network uploads are never auto-approved;
-- dynamic paths, external writes, and complex unresolved commands require AI or human review;
+- MCP schemas, approval reasons, and actual arguments are sent to the current session's model
+  provider; sensitive arguments should be treated as disclosure to that provider;
 - AI is not a security boundary. Keep DSH's sandbox enabled and evaluate this plugin's risk
   before using it in production or unattended environments.
 

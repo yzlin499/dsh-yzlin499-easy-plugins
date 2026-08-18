@@ -196,5 +196,5 @@ export function classifyToolCall({ toolName, args, workspaceRoot }) {
       ? { decision: 'allow', reason: 'file target is inside the workspace' }
       : { decision: 'human', reason: 'file target is outside the workspace' }
   }
-  return { decision: 'human', reason: 'no local matcher for this tool' }
+  return { decision: 'ai', reason: 'no local matcher for this tool' }
 }
