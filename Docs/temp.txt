@@ -1,0 +1,11 @@
+    "@linxin666/dsh-liangshen": "^0.1.18",
+    "dsh-auto-collapse": "github:a179-sanae/dsh-auto-collapse#main",
+    "dsh-better-sidebar": "^0.12.2",
+    "dsh-composer-history": "github:PerryLink/dsh-composer-history#main",
+    "dsh-quick-file": "link:E:/User/WorkPath/dsh-yzlin499-easy-plugins/dsh-quick-file",
+    "dsh-svn-manager": "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-svn-manager",
+    "dsh-vision-router": "github:ysr666/dsh-vision-router",
+    "dsh-win-notify": "link:E:/User/WorkPath/dsh-yzlin499-easy-plugins/dsh-win-notify",
+    "dsh-workspace-auto-approval": "link:E:/User/WorkPath/dsh-yzlin499-easy-plugins/dsh-workspace-auto-approval",
+    "dsh-workspace-openmenu": "link:E:/User/WorkPath/dsh-yzlin499-easy-plugins/dsh-workspace-openmenu",
+    "dsh-yzlin499-plugins-manager": "link:E:/User/WorkPath/dsh-yzlin499-easy-plugins/dsh-yzlin499-plugins-manager"
