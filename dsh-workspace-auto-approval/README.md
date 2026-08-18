@@ -42,17 +42,21 @@ dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/ds
 
 ## 设置
 
-在「设置 → 插件 → 工作区自动审核」展开设置卡片，可以编辑两块内容：
+在「设置 → 插件 → 工作区自动审核」展开设置卡片，可以编辑三块内容：
 
 1. **审核 System Prompt**：AI 审核使用的系统提示词。支持保存和恢复默认，最多 8000
    字符；配置由官方 `ctx.settings` 持久化到 `~/.dsh/settings.yaml` 的
    `dsh-workspace-auto-approval.prompt`。
-2. **自定义放行规则（allowPatterns）**：每行一条正则（不区分大小写），命令文本命中
+2. **自动放行（出沙箱）开关（grantFullAccess）**：默认开启。开启后，只要本地规则或 AI
+   审核判定允许，**该次提权申请直接放行**，命令按它请求的目标档位执行——真实出沙箱场景
+   下通常即 `danger-full-access`，一次生效；关闭后所有提权申请回到 DSH 交互审批
+   （AI 审核也不再触发）。持久化到 `dsh-workspace-auto-approval.grantFullAccess`。
+3. **自定义放行规则（allowPatterns）**：每行一条正则（不区分大小写），命令文本命中
    任一规则即自动放行。**默认已含 `\bgit(?:\.exe)?\s+push\b`**，即 `git push` 不再走
    AI 审核、直接自动放行；可在此增删任意命令（如 `npm publish`）。持久化到
    `dsh-workspace-auto-approval.allowPatterns`，保存时校验正则合法性（非法正则拒绝保存）。
 
-修改后的提示词与规则从下一次申请起生效，不需要重启。高危大规模破坏规则在提示词和
+修改后的提示词、开关与规则从下一次申请起生效，不需要重启。高危大规模破坏规则在提示词和
 自定义规则**之前**确定性执行，用户无法通过修改提示词或放行规则绕过“必须交给用户判断”
 的限制。
 
@@ -61,8 +65,13 @@ dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/ds
 - Bundle 补丁重述官方三种权限预设，并追加 `workspace-auto-approval`。它与
   `workspace-write` 共用 `sandbox: workspace-write`、`approval: ask`，DSH 通过持久的
   `permission/preset` 事件区分用户选中了哪一种。
-- Host 插件以 `prepend` 方式监听 `approval/request`，但仅在当前预设为
-  `workspace-auto-approval` 时介入；其他模式立即调用 `next()`。
+- Host 插件以 `prepend` 方式监听 `approval/request`（DSH 的审批请求只来自**沙箱提权申请**，
+  见 `dsh-sandbox` 的 `approveEscalation`），但仅在当前预设为 `workspace-auto-approval` 时
+  介入；其他模式立即调用 `next()`。
+- **出沙箱机制**：插件判定允许（本地规则 / 自定义白名单 / AI 审核通过）且「自动放行」
+  开关开启时，返回 `allowed-once`——该次提权按模型请求的目标档位执行
+  （`approveEscalation` 返回 requestedMode，`sandboxPolicy.resolve({ mode })` 覆盖会话档位），
+  通常即 `danger-full-access`；一次用完即恢复，插件不修改会话的持久权限档位。
 - Client 半侧为该预设补充与官方一致的 16×16 “盾牌 + A” SVG 图标。官方
   `PresetOption` 没有图标字段，因此 Client 只匹配完整标签“工作区自动审核”，通过 CSS
   SVG mask 装饰当前模式按钮和菜单项；不修改官方包，卸载时自动清理。独立源文件见
@@ -99,6 +108,9 @@ AI 判断命令意图，但无法像操作系统沙箱一样证明任意 shell �
 - 默认情况下主机配置修改和网络上传不会自动通过；若你在「自定义放行规则」里显式配置
   （默认已含 `git push`，意味着推送到**任意**远端都会被自动放行），这些操作会被整条命令
   放行——请自行评估风险，并注意规则匹配的是整条命令文本（组合命令会整条放行）；
+- 「自动放行（出沙箱）」开关只是把「允许」变成「放行」，并不会把某类操作**永久**调出
+  沙箱：放行的是该次提权申请本身，且按请求的目标档位（通常 `danger-full-access`）执行
+  一次后即恢复；关闭开关则所有提权回到人工审批；
 - MCP 工具 schema、审批理由和实际参数会发送给当前会话使用的模型提供商；参数中含有敏感
   信息时，应把这视为一次对该提供商的数据披露；
 - AI 不是安全边界，生产环境或无人值守环境应保留 DSH 沙箱，并按风险决定是否安装本插件。

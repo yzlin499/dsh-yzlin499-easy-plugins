@@ -45,19 +45,24 @@ permission mode.
 
 ## Settings
 
-Open Settings → Plugins → Workspace Auto Approval to edit two things:
+Open Settings → Plugins → Workspace Auto Approval to edit three things:
 
 1. **Review system prompt**: the System Prompt used by the AI reviewer, with Save and
    Restore Default and an 8,000-character limit. Official `ctx.settings` persists it as
    `dsh-workspace-auto-approval.prompt` in `~/.dsh/settings.yaml`.
-2. **Allowlist rules (`allowPatterns`)**: one regular expression per line (case-insensitive);
+2. **Auto-grant (out-of-sandbox) switch (`grantFullAccess`)**: on by default. When on, an
+   escalation whose local rules or AI review allow is **granted immediately**, and the command
+   runs at the mode it requested — normally `danger-full-access`, one time only. When off,
+   every escalation returns to DSH's interactive approval (and AI review is not invoked either).
+   Persisted as `dsh-workspace-auto-approval.grantFullAccess`.
+3. **Allowlist rules (`allowPatterns`)**: one regular expression per line (case-insensitive);
    a command whose text matches any rule is auto-approved. **`\bgit(?:\.exe)?\s+push\b`
    is included by default**, so `git push` no longer goes through AI review and is allowed
    immediately; add or remove any command here (e.g. `npm publish`). Persisted as
    `dsh-workspace-auto-approval.allowPatterns`; the route validates each regex on save
    (invalid expressions are rejected).
 
-Prompt and rule changes apply to the next request without a restart. Deterministic
+Prompt, switch, and rule changes apply to the next request without a restart. Deterministic
 mass-destruction rules run before both the prompt and the custom rules and cannot be bypassed
 by customizing either.
 
@@ -66,8 +71,16 @@ by customizing either.
 - The bundle patch restates the three built-in presets and appends `workspace-auto-approval`.
   It shares `sandbox: workspace-write` and `approval: ask` with `workspace-write`; DSH's durable
   `permission/preset` event preserves which shared-knob mode the user selected.
-- The Host plugin prepends an `approval/request` waterfall listener, but intervenes only while
-  `workspace-auto-approval` is current. Every other mode immediately calls `next()`.
+- The Host plugin prepends an `approval/request` waterfall listener — DSH raises approval
+  requests only for **sandbox escalations** (`approveEscalation` in `dsh-sandbox`) — and
+  intervenes only while `workspace-auto-approval` is current. Every other mode immediately
+  calls `next()`.
+- **Out-of-sandbox mechanics**: when the plugin allows (local rule / allowlist / AI `ALLOW`)
+  and the auto-grant switch is on, it returns `allowed-once` — the escalation runs at the mode
+  the model requested (`approveEscalation` returns `requestedMode` and
+  `sandboxPolicy.resolve({ mode })` overrides the session mode), normally
+  `danger-full-access`, for exactly that one call; the session's persistent permission mode is
+  never changed.
 - The Client half adds a 16×16 shield-and-A SVG glyph matching the official icon style. Since
   `PresetOption` exposes no icon field, the decorator matches only the complete Workspace Auto
   Approval label and applies a CSS SVG mask to its current-mode button and menu row. It does not
@@ -115,6 +128,10 @@ code as an operating-system sandbox can. Consequently:
   explicit entry in the custom allowlist (git push ships as the default entry, so pushes to
   **any** remote are auto-approved) can let them through — the whole command is then allowed,
   so assess the risk yourself and mind compound commands;
+- the auto-grant (out-of-sandbox) switch only turns an "allowed" verdict into a grant; it never
+  moves any class of operation permanently out of the sandbox. What is granted is that single
+  escalation, at the requested mode (normally `danger-full-access`), for one call only; turning
+  the switch off routes every escalation back to interactive approval;
 - MCP schemas, approval reasons, and actual arguments are sent to the current session's model
   provider; sensitive arguments should be treated as disclosure to that provider;
 - AI is not a security boundary. Keep DSH's sandbox enabled and evaluate this plugin's risk

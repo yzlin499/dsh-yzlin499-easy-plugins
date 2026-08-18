@@ -16,20 +16,22 @@ class FakeAssembler {
   }
 }
 
-function harness(answer = 'ALLOW', emitFinish = true, preset = 'workspace-auto-approval', configuredPrompt = 'Configured review prompt') {
+function harness(answer = 'ALLOW', emitFinish = true, preset = 'workspace-auto-approval', configuredPrompt = 'Configured review prompt', initialGrant = true) {
   let listener
   let streamOptions
   let prompt = configuredPrompt
   let allowPatterns
+  let grantFullAccess = initialGrant
   let routeHandler
   const ctx = {
     settings: {
       register() {
         return {
-          get() { return { prompt, allowPatterns } },
+          get() { return { prompt, allowPatterns, grantFullAccess } },
           async update(patch) {
             prompt = patch.prompt
             allowPatterns = patch.allowPatterns
+            grantFullAccess = patch.grantFullAccess
           },
         }
       },
@@ -52,6 +54,7 @@ function harness(answer = 'ALLOW', emitFinish = true, preset = 'workspace-auto-a
             object() { return {} },
             string() { return { default() { return {} } } },
             array() { return { default() { return {} } } },
+            boolean() { return { default() { return {} } } },
           } }
         }
         return { BlockAssembler: FakeAssembler, createUserMessage: (message) => message }
@@ -93,6 +96,7 @@ function harness(answer = 'ALLOW', emitFinish = true, preset = 'workspace-auto-a
     routeHandler: () => routeHandler,
     prompt: () => prompt,
     patterns: () => allowPatterns,
+    grant: () => grantFullAccess,
   }
 }
 
@@ -265,4 +269,41 @@ test('reset restores the default allowlist (including git push)', async () => {
   assert.equal(restored.status, 200)
   assert.deepEqual(restored.body.allowPatterns, ['\\bgit(?:\\.exe)?\\s+push\\b'])
   assert.deepEqual(mock.patterns(), ['\\bgit(?:\\.exe)?\\s+push\\b'])
+})
+
+test('grantFullAccess=false sends auto-allowable escalations to interactive approval', async () => {
+  const mock = harness('ALLOW', true, 'workspace-auto-approval', 'Configured review prompt', false)
+  await apply(mock.ctx)
+  const req = request('pwsh', { command: 'git push origin main', workdir: process.cwd() })
+  let continued = false
+  const result = await mock.listener()(req, () => {
+    continued = true
+    return 'human-result'
+  })
+  assert.equal(continued, true)
+  assert.equal(result, 'human-result')
+  assert.equal(mock.streamOptions(), undefined)
+})
+
+test('grantFullAccess=false skips AI review entirely', async () => {
+  const mock = harness('ALLOW', true, 'workspace-auto-approval', 'Configured review prompt', false)
+  await apply(mock.ctx)
+  const req = request('pwsh', { command: 'pnpm test', workdir: process.cwd() })
+  assert.equal(await mock.listener()(req, () => 'human-result'), 'human-result')
+  assert.equal(mock.streamOptions(), undefined)
+})
+
+test('config route persists grantFullAccess and reset restores it', async () => {
+  const mock = harness()
+  await apply(mock.ctx)
+  const saved = await callConfigRoute(mock.routeHandler(), 'POST', { grantFullAccess: false })
+  assert.equal(saved.status, 200)
+  assert.equal(saved.body.grantFullAccess, false)
+  assert.equal(mock.grant(), false)
+  const restored = await callConfigRoute(mock.routeHandler(), 'POST', { reset: true })
+  assert.equal(restored.status, 200)
+  assert.equal(restored.body.grantFullAccess, true)
+  assert.equal(mock.grant(), true)
+  const bad = await callConfigRoute(mock.routeHandler(), 'POST', { grantFullAccess: 'yes' })
+  assert.equal(bad.status, 400)
 })
