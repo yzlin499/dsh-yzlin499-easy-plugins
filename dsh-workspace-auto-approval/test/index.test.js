@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import test from 'node:test'
-import { apply } from '../index.js'
+import { apply, HUMAN_ASK_MARKER } from '../index.js'
 
 class FakeAssembler {
   constructor() {
@@ -23,6 +23,7 @@ function harness(answer = 'ALLOW', emitFinish = true, preset = 'workspace-auto-a
   let allowPatterns
   let grantFullAccess = initialGrant
   let routeHandler
+  const listeners = {}
   const ctx = {
     settings: {
       register() {
@@ -83,15 +84,15 @@ function harness(answer = 'ALLOW', emitFinish = true, preset = 'workspace-auto-a
       callback()
     },
     on(name, callback, options) {
-      assert.equal(name, 'approval/request')
       assert.equal(options.prepend, true)
-      listener = callback
+      listeners[name] = callback
       return () => true
     },
   }
   return {
     ctx,
-    listener: () => listener,
+    listener: () => listeners['approval/request'],
+    preExecute: () => listeners['tools/pre-execute'],
     streamOptions: () => streamOptions,
     routeHandler: () => routeHandler,
     prompt: () => prompt,
@@ -118,6 +119,26 @@ function request(toolName, args, workspace = process.cwd(), config = { provider:
     },
   }
   return { agent: { session, options: {} }, toolName, callId, reason: 'test escalation' }
+}
+
+function execution(toolName, args, workspace = process.cwd(), config = { provider: 'test-provider', model: 'test-model' }) {
+  const callId = 'call-1'
+  const session = {
+    header: { cwd: workspace },
+    events: [],
+    id: 'session-1',
+    requestHeader() {
+      return {
+        config,
+        tools: [{
+          name: toolName,
+          description: `Definition for ${toolName}`,
+          parameters: { type: 'object', properties: { value: { type: 'string' } } },
+        }],
+      }
+    },
+  }
+  return { name: toolName, arguments: args, agent: { session, options: {} }, callId, signal: new AbortController().signal }
 }
 
 async function callConfigRoute(handler, method, body) {
@@ -306,4 +327,84 @@ test('config route persists grantFullAccess and reset restores it', async () => 
   assert.equal(mock.grant(), true)
   const bad = await callConfigRoute(mock.routeHandler(), 'POST', { grantFullAccess: 'yes' })
   assert.equal(bad.status, 400)
+})
+
+// ---- tools/pre-execute audit gate ----
+
+test('pre-execute auto-allows an allowlisted git push without invoking AI', async () => {
+  const mock = harness()
+  await apply(mock.ctx)
+  const exec = execution('pwsh', { command: 'git push origin main', workdir: process.cwd() })
+  const decision = await mock.preExecute()(exec, () => ({ kind: 'allow' }))
+  assert.deepEqual(decision, { kind: 'allow' })
+  assert.equal(mock.streamOptions(), undefined)
+})
+
+test('pre-execute auto-allows read-only and in-workspace file calls', async () => {
+  const mock = harness()
+  await apply(mock.ctx)
+  const read = await mock.preExecute()(execution('pwsh', { command: 'git status', workdir: process.cwd() }), () => ({ kind: 'allow' }))
+  assert.deepEqual(read, { kind: 'allow' })
+  const written = await mock.preExecute()(execution('write', { file_path: `${process.cwd()}/out.txt` }), () => ({ kind: 'allow' }))
+  assert.deepEqual(written, { kind: 'allow' })
+  assert.equal(mock.streamOptions(), undefined)
+})
+
+test('pre-execute routes mass-destructive commands to interactive approval and the approval listener passes them through', async () => {
+  const mock = harness()
+  await apply(mock.ctx)
+  const exec = execution('pwsh', { command: 'Remove-Item .\\cache -Recurse -Force', workdir: process.cwd() })
+  const decision = await mock.preExecute()(exec, () => ({ kind: 'allow' }))
+  assert.equal(decision.kind, 'ask')
+  assert.equal(decision.reason.startsWith(HUMAN_ASK_MARKER), true)
+  let continued = false
+  const result = await mock.listener()({ ...request('pwsh', { command: 'Remove-Item .\\cache -Recurse -Force' }), reason: decision.reason }, () => {
+    continued = true
+    return 'human-result'
+  })
+  assert.equal(continued, true)
+  assert.equal(result, 'human-result')
+  assert.equal(mock.streamOptions(), undefined)
+})
+
+test('pre-execute AI review auto-allows an ALLOW verdict', async () => {
+  const mock = harness('ALLOW')
+  await apply(mock.ctx)
+  const exec = execution('pwsh', { command: 'pnpm test', workdir: process.cwd() })
+  const decision = await mock.preExecute()(exec, () => ({ kind: 'allow' }))
+  assert.deepEqual(decision, { kind: 'allow' })
+  assert.ok(mock.streamOptions())
+})
+
+test('pre-execute AI review sends an un-ALLOW verdict to interactive approval', async () => {
+  const mock = harness('DENY')
+  await apply(mock.ctx)
+  const exec = execution('pwsh', { command: 'pnpm test', workdir: process.cwd() })
+  const decision = await mock.preExecute()(exec, () => ({ kind: 'allow' }))
+  assert.equal(decision.kind, 'ask')
+  assert.equal(decision.reason.startsWith(HUMAN_ASK_MARKER), true)
+})
+
+test('pre-execute is inert outside the auto-approval preset', async () => {
+  const mock = harness('ALLOW', true, 'workspace-write')
+  await apply(mock.ctx)
+  const exec = execution('pwsh', { command: 'Remove-Item anything -Recurse -Force', workdir: process.cwd() })
+  let continued = false
+  const decision = await mock.preExecute()(exec, () => {
+    continued = true
+    return { kind: 'allow' }
+  })
+  assert.equal(continued, true)
+  assert.deepEqual(decision, { kind: 'allow' })
+  assert.equal(mock.streamOptions(), undefined)
+})
+
+test('pre-execute with auto-grant disabled routes even allowlisted commands to the user', async () => {
+  const mock = harness('ALLOW', true, 'workspace-auto-approval', 'Configured review prompt', false)
+  await apply(mock.ctx)
+  const exec = execution('pwsh', { command: 'git push origin main', workdir: process.cwd() })
+  const decision = await mock.preExecute()(exec, () => ({ kind: 'allow' }))
+  assert.equal(decision.kind, 'ask')
+  assert.equal(decision.reason.startsWith(HUMAN_ASK_MARKER), true)
+  assert.equal(mock.streamOptions(), undefined)
 })

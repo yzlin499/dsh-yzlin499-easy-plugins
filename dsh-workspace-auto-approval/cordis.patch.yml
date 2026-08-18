@@ -1,6 +1,13 @@
 # dsh bundle layer: add a fourth permission preset and mount its Host answerer.
 # Config patches replace the target row's whole config, so all built-in presets
-# are restated before the new shared-knob preset is appended.
+# are restated before the new audited-full-access preset is appended.
+#
+# workspace-auto-approval runs the session at danger-full-access: no OS-level
+# file sandbox, so commands that rely on credentials or subprocess helpers
+# (git push, ssh, package managers) keep working under confinement-free
+# execution. In exchange the Host plugin audits EVERY tool call BEFORE it
+# executes: local rules and the allowlist auto-allow, the session model reviews
+# everything else, and high-risk or undecided calls go to interactive approval.
 - id: permission
   config:
     presets:
@@ -11,10 +18,10 @@
         sandbox: workspace-write
         approval: ask
       workspace-auto-approval:
-        sandbox: workspace-write
+        sandbox: danger-full-access
         approval: ask
         name: 工作区自动审核
-        description: 自动审核工作区操作、外部只读访问和网络读取；不确定时使用 AI 判断。
+        description: 执行前逐个审计工具调用：白名单与只读/工作区内操作自动放行，其余转 AI 审核或人工审批。
       danger-full-access:
         sandbox: danger-full-access
         approval: never
