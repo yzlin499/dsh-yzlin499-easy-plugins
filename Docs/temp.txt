@@ -9,4 +9,3 @@
     "dsh-workspace-auto-approval": "link:E:/User/WorkPath/dsh-yzlin499-easy-plugins/dsh-workspace-auto-approval",
     "dsh-workspace-openmenu": "link:E:/User/WorkPath/dsh-yzlin499-easy-plugins/dsh-workspace-openmenu",
     "dsh-yzlin499-plugins-manager": "link:E:/User/WorkPath/dsh-yzlin499-easy-plugins/dsh-yzlin499-plugins-manager"
-111
