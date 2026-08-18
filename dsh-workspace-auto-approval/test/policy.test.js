@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { classifyCommand, classifyToolCall, isClearlyReadOnlyCommand, isInsideWorkspace } from '../policy.js'
+import { classifyCommand, classifyToolCall, compileAllowPatterns, isClearlyReadOnlyCommand, isInsideWorkspace } from '../policy.js'
 
 const workspace = process.platform === 'win32' ? 'C:\\work\\project' : '/work/project'
 const outside = process.platform === 'win32' ? 'C:\\Users\\someone\\notes.txt' : '/home/someone/notes.txt'
@@ -83,4 +83,31 @@ test('sends ambiguous external and dynamic paths to AI review', () => {
   const parentWrite = process.platform === 'win32' ? 'Set-Content ..\\outside.txt x' : 'printf x > ../outside.txt'
   assert.equal(classifyCommand({ command: parentWrite, workdir: workspace, workspaceRoot: workspace }).decision, 'ai')
   assert.equal(classifyCommand({ command: 'Set-Content $env:USERPROFILE\\x.txt x', workdir: workspace, workspaceRoot: workspace }).decision, 'ai')
+})
+
+test('user allowlist patterns auto-allow matching commands', () => {
+  const gitPush = compileAllowPatterns(['\\bgit(?:\\.exe)?\\s+push\\b'])
+  assert.equal(classifyCommand({ command: 'git push origin main', workdir: workspace, workspaceRoot: workspace, allowPatterns: gitPush }).decision, 'allow')
+  assert.equal(classifyCommand({ command: 'git.exe push --force origin main', workdir: workspace, workspaceRoot: workspace, allowPatterns: gitPush }).decision, 'allow')
+  assert.equal(classifyCommand({ command: 'git push origin main', workdir: workspace, workspaceRoot: workspace }).decision, 'ai')
+  assert.equal(classifyCommand({ command: 'git pull origin main', workdir: workspace, workspaceRoot: workspace, allowPatterns: gitPush }).decision, 'ai')
+  assert.equal(classifyToolCall({ toolName: 'pwsh', args: { command: 'git push origin main', workdir: workspace }, workspaceRoot: workspace, allowPatterns: gitPush }).decision, 'allow')
+})
+
+test('mass-destructive operations beat user allowlist patterns', () => {
+  const destructive = compileAllowPatterns(['rm -rf', 'git push'])
+  assert.equal(classifyCommand({ command: 'rm -rf ./build', workdir: workspace, workspaceRoot: workspace, allowPatterns: destructive }).decision, 'human')
+  assert.equal(classifyCommand({ command: 'git push && rm -rf ./build', workdir: workspace, workspaceRoot: workspace, allowPatterns: destructive }).decision, 'human')
+})
+
+test('user allowlist patterns can match non-shell tools; write/edit stay non-overridable', () => {
+  const mcpRule = compileAllowPatterns(['mcp__docs'])
+  assert.equal(classifyToolCall({ toolName: 'mcp__docs__read', args: { path: outside }, workspaceRoot: workspace, allowPatterns: mcpRule }).decision, 'allow')
+  const writeRule = compileAllowPatterns(['^write'])
+  assert.equal(classifyToolCall({ toolName: 'write', args: { file_path: outside }, workspaceRoot: workspace, allowPatterns: writeRule }).decision, 'human')
+})
+
+test('invalid allowlist patterns are skipped by the lenient compiler', () => {
+  assert.equal(compileAllowPatterns(['[oops', '', 'git push', 42]).length, 1)
+  assert.equal(compileAllowPatterns(['git push'])[0] instanceof RegExp, true)
 })

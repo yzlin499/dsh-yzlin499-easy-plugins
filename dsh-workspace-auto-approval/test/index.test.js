@@ -20,13 +20,17 @@ function harness(answer = 'ALLOW', emitFinish = true, preset = 'workspace-auto-a
   let listener
   let streamOptions
   let prompt = configuredPrompt
+  let allowPatterns
   let routeHandler
   const ctx = {
     settings: {
       register() {
         return {
-          get() { return { prompt } },
-          async update(patch) { prompt = patch.prompt },
+          get() { return { prompt, allowPatterns } },
+          async update(patch) {
+            prompt = patch.prompt
+            allowPatterns = patch.allowPatterns
+          },
         }
       },
     },
@@ -47,6 +51,7 @@ function harness(answer = 'ALLOW', emitFinish = true, preset = 'workspace-auto-a
           return { default: {
             object() { return {} },
             string() { return { default() { return {} } } },
+            array() { return { default() { return {} } } },
           } }
         }
         return { BlockAssembler: FakeAssembler, createUserMessage: (message) => message }
@@ -87,6 +92,7 @@ function harness(answer = 'ALLOW', emitFinish = true, preset = 'workspace-auto-a
     streamOptions: () => streamOptions,
     routeHandler: () => routeHandler,
     prompt: () => prompt,
+    patterns: () => allowPatterns,
   }
 }
 
@@ -228,4 +234,35 @@ test('AI fallback fails closed to the original answerer', async () => {
   await apply(mock.ctx)
   const req = request('pwsh', { command: 'pnpm test', workdir: process.cwd() })
   assert.equal(await mock.listener()(req, () => 'human-result'), 'human-result')
+})
+
+test('default allowlist auto-allows git push without invoking AI', async () => {
+  const mock = harness()
+  await apply(mock.ctx)
+  const req = request('pwsh', { command: 'git push origin main', workdir: process.cwd() })
+  assert.equal(await mock.listener()(req, () => 'next'), 'allowed-once')
+  assert.equal(mock.streamOptions(), undefined)
+})
+
+test('config route persists custom allowlist patterns and rejects invalid regexes', async () => {
+  const mock = harness()
+  await apply(mock.ctx)
+  const saved = await callConfigRoute(mock.routeHandler(), 'POST', { allowPatterns: ['\\bgit\\s+push\\b', 'npm publish'] })
+  assert.equal(saved.status, 200)
+  assert.deepEqual(saved.body.allowPatterns, ['\\bgit\\s+push\\b', 'npm publish'])
+  assert.deepEqual(mock.patterns(), ['\\bgit\\s+push\\b', 'npm publish'])
+  const req = request('pwsh', { command: 'npm publish', workdir: process.cwd() })
+  assert.equal(await mock.listener()(req, () => 'next'), 'allowed-once')
+  const bad = await callConfigRoute(mock.routeHandler(), 'POST', { allowPatterns: ['[oops'] })
+  assert.equal(bad.status, 400)
+})
+
+test('reset restores the default allowlist (including git push)', async () => {
+  const mock = harness()
+  await apply(mock.ctx)
+  await callConfigRoute(mock.routeHandler(), 'POST', { allowPatterns: ['npm publish'] })
+  const restored = await callConfigRoute(mock.routeHandler(), 'POST', { reset: true })
+  assert.equal(restored.status, 200)
+  assert.deepEqual(restored.body.allowPatterns, ['\\bgit(?:\\.exe)?\\s+push\\b'])
+  assert.deepEqual(mock.patterns(), ['\\bgit(?:\\.exe)?\\s+push\\b'])
 })

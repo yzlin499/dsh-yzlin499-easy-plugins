@@ -34,6 +34,7 @@ decisions in order:
 | A `pwsh` / `bash` command is clearly read-only | Allow once, including reads outside the workspace |
 | `curl` uses the small positive option allowlist for a clear network GET/HEAD | Allow once automatically |
 | A workspace shell write or any command not proven by the read-only rules | Ask the current session model; only exact `ALLOW` is accepted |
+| A command matches any regex in the custom allowlist (git push is included by default) | Allow once automatically; mass-destructive operations are unaffected and still go to a human |
 | Recursive/wildcard bulk deletion, `git clean -fd`, database/table destruction, or destructive MCP calls | Skip AI and continue downstream; the user must decide |
 | A host service, registry, user-management, shutdown, or network-upload rule matches | Continue to DSH's downstream approval chain |
 | Local rules are inconclusive | Ask the current session model; only exact `ALLOW` is accepted |
@@ -44,12 +45,21 @@ permission mode.
 
 ## Settings
 
-Open Settings → Plugins → Workspace Auto Approval to edit the System Prompt used by the AI
-reviewer. The card supports Save and Restore Default with an 8,000-character limit. Official
-`ctx.settings` persists it as `dsh-workspace-auto-approval.prompt` in `~/.dsh/settings.yaml`.
+Open Settings → Plugins → Workspace Auto Approval to edit two things:
 
-Prompt edits apply to the next AI review without a restart. Deterministic mass-destruction rules
-run before the prompt and cannot be bypassed by customizing it.
+1. **Review system prompt**: the System Prompt used by the AI reviewer, with Save and
+   Restore Default and an 8,000-character limit. Official `ctx.settings` persists it as
+   `dsh-workspace-auto-approval.prompt` in `~/.dsh/settings.yaml`.
+2. **Allowlist rules (`allowPatterns`)**: one regular expression per line (case-insensitive);
+   a command whose text matches any rule is auto-approved. **`\bgit(?:\.exe)?\s+push\b`
+   is included by default**, so `git push` no longer goes through AI review and is allowed
+   immediately; add or remove any command here (e.g. `npm publish`). Persisted as
+   `dsh-workspace-auto-approval.allowPatterns`; the route validates each regex on save
+   (invalid expressions are rejected).
+
+Prompt and rule changes apply to the next request without a restart. Deterministic
+mass-destruction rules run before both the prompt and the custom rules and cannot be bypassed
+by customizing either.
 
 ## How It Works
 
@@ -73,6 +83,12 @@ run before the prompt and cannot be bypassed by customizing it.
   traversal, dynamic paths, read-only commands, network reads/writes, and common host effects.
   Shell writes are not locally allowed from textual paths alone because variables, globs, and
   mutable symlinks cannot be constrained reliably by string inspection.
+- The custom allowlist runs right after the mass-destruction check and before every other local
+  rule: a hit allows the request (including network writes or host-level changes that would
+  otherwise go to a human), but mass-destructive operations always win and can never be
+  overridden. Patterns match the **whole command text** (including compound commands — write
+  them carefully); non-shell tools match against "tool name + arguments JSON", and `write`/`edit`
+  targets outside the workspace are never allowed by patterns.
 - The AI fallback reuses the latest session provider/model and sends the workspace, approval
   reason, matching tool definition (name, description, parameter schema), and actual arguments,
   capped at 32 KiB of JSON. This lets opaque MCP tools be judged from their contracts. The request
@@ -92,9 +108,13 @@ After a `danger-full-access` command is approved, the executor no longer enforce
 sandbox. Rules and AI can judge intent, but cannot prove every runtime effect of arbitrary shell
 code as an operating-system sandbox can. Consequently:
 
-- Mass-destruction rules run before AI: bulk file deletion, recursive forced deletion, and database/
-  table destruction cannot be auto-authorized by a custom prompt or model output;
-- explicit host-configuration changes and network uploads are also never auto-approved;
+- Mass-destruction rules run before both AI and the custom allowlist: bulk file deletion,
+  recursive forced deletion, and database/table destruction cannot be auto-authorized by a
+  custom prompt, allowlist pattern, or model output;
+- host-configuration changes and network uploads are by default never auto-approved; only an
+  explicit entry in the custom allowlist (git push ships as the default entry, so pushes to
+  **any** remote are auto-approved) can let them through — the whole command is then allowed,
+  so assess the risk yourself and mind compound commands;
 - MCP schemas, approval reasons, and actual arguments are sent to the current session's model
   provider; sensitive arguments should be treated as disclosure to that provider;
 - AI is not a security boundary. Keep DSH's sandbox enabled and evaluate this plugin's risk

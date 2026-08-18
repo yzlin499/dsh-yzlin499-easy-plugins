@@ -188,11 +188,45 @@ export function isMassDestructiveRequest({ toolName, toolDescription, approvalRe
   return isMassDestructiveText([toolName, toolDescription, approvalReason, argumentsText].filter(Boolean).join('\n'))
 }
 
-export function classifyCommand({ command, workdir, workspaceRoot }) {
+/**
+ * Compile user-supplied allowlist patterns (lenient: skip non-strings,
+ * empty strings and invalid regexes). Matching is case-insensitive.
+ */
+export function compileAllowPatterns(patterns) {
+  const compiled = []
+  for (const raw of patterns || []) {
+    if (typeof raw !== 'string') continue
+    const source = raw.trim()
+    if (!source) continue
+    try {
+      compiled.push(new RegExp(source, 'i'))
+    } catch {
+      // invalid regex is skipped; validation is stricter in the settings route
+    }
+  }
+  return compiled
+}
+
+export function matchesAllowPatterns(allowPatterns, text) {
+  if (!allowPatterns || allowPatterns.length === 0 || typeof text !== 'string') return false
+  const haystack = text.toLowerCase()
+  for (const pattern of allowPatterns) {
+    if (!(pattern instanceof RegExp)) continue
+    let regex = pattern
+    if (!pattern.flags.includes('i')) {
+      try { regex = new RegExp(pattern.source, pattern.flags + 'i') } catch { continue }
+    }
+    if (regex.test(haystack)) return true
+  }
+  return false
+}
+
+export function classifyCommand({ command, workdir, workspaceRoot, allowPatterns }) {
   if (typeof command !== 'string' || command.trim() === '') return { decision: 'human', reason: 'missing command text' }
   const cwd = resolve(workspaceRoot, workdir || '.')
 
   if (isMassDestructiveText(command)) return { decision: 'human', reason: 'matched a mass-destructive operation' }
+  if (matchesAllowPatterns(allowPatterns, command)) return { decision: 'allow', reason: 'matched a user allowlist pattern' }
   if (hasGlobalEffect(command)) return { decision: 'human', reason: 'matched a host-level mutation' }
   if (hasNetworkWrite(command)) return { decision: 'human', reason: 'matched a network write or upload' }
   if (NESTED_EXECUTION_PATTERN.test(command)) return { decision: 'ai', reason: 'contains nested command execution' }
@@ -206,13 +240,13 @@ export function classifyCommand({ command, workdir, workspaceRoot }) {
   return { decision: 'ai', reason: 'no conclusive local command rule' }
 }
 
-export function classifyToolCall({ toolName, args, workspaceRoot, toolDescription, approvalReason }) {
+export function classifyToolCall({ toolName, args, workspaceRoot, toolDescription, approvalReason, allowPatterns }) {
   if (isMassDestructiveRequest({ toolName, toolDescription, approvalReason, args })) {
     return { decision: 'human', reason: 'matched a mass-destructive operation' }
   }
   if (!args || typeof args !== 'object' || Array.isArray(args)) return { decision: 'ai', reason: 'arguments are not an object' }
   if (toolName === 'pwsh' || toolName === 'bash') {
-    return classifyCommand({ command: args.command, workdir: args.workdir || workspaceRoot, workspaceRoot })
+    return classifyCommand({ command: args.command, workdir: args.workdir || workspaceRoot, workspaceRoot, allowPatterns })
   }
   if (toolName === 'write' || toolName === 'edit') {
     const target = typeof args.file_path === 'string' ? resolve(workspaceRoot, args.file_path) : ''
@@ -220,5 +254,8 @@ export function classifyToolCall({ toolName, args, workspaceRoot, toolDescriptio
       ? { decision: 'allow', reason: 'file target is inside the workspace' }
       : { decision: 'human', reason: 'file target is outside the workspace' }
   }
+  let haystack = toolName
+  try { haystack = `${toolName} ${JSON.stringify(args)}` } catch {}
+  if (matchesAllowPatterns(allowPatterns, haystack)) return { decision: 'allow', reason: 'matched a user allowlist pattern' }
   return { decision: 'ai', reason: 'no local matcher for this tool' }
 }

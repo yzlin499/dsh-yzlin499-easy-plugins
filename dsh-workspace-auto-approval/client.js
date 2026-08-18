@@ -52,6 +52,7 @@ window.__ModuleLoader__.load({
           ".waa-textarea{box-sizing:border-box;width:100%;min-height:180px;resize:vertical;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-primary);font:12px/1.55 var(--dsw-font-family);padding:10px 12px;letter-spacing:0}",
           ".waa-textarea:focus{outline:none;border-color:var(--dsw-alias-brand-primary)}",
           ".waa-textarea:disabled{opacity:.55;cursor:default}",
+          ".waa-textarea-sm{min-height:90px}",
           ".waa-meta{display:flex;justify-content:space-between;gap:12px;color:var(--dsw-alias-label-tertiary);font-size:11px}",
           ".waa-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}",
           ".waa-btn{height:30px;border:1px solid var(--dsw-alias-border-l2);border-radius:7px;background:transparent;color:var(--dsw-alias-label-secondary);font-size:12px;padding:0 12px;cursor:pointer}",
@@ -83,13 +84,16 @@ window.__ModuleLoader__.load({
 
       function SettingsCard() {
         const [open, setOpen] = react.useState(false);
-        const [state, setState] = react.useState({ prompt: "", defaultPrompt: "", loading: true, saving: false, status: "", revision: 0 });
+        const [state, setState] = react.useState({ prompt: "", defaultPrompt: "", patterns: "", loading: true, saving: false, status: "", revision: 0 });
         const lang = activeLang();
         const T = lang === "en" ? {
           name: "Workspace Auto Approval",
-          desc: "Edit the system prompt used for AI permission review",
+          desc: "Edit the AI permission-review prompt and allowlist rules",
           label: "Review system prompt",
           help: "The reviewer also receives the workspace, approval reason, matching tool schema, and actual arguments. Tools remain disabled.",
+          patternLabel: "Allowlist rules (one regex per line)",
+          patternHelp: "A command matching any rule is auto-approved (case-insensitive). git push is included by default. Mass-destructive operations (e.g. rm -rf) have higher priority and can never be allowed by these rules; patterns match the whole command text, so mind compound commands.",
+          patternPlaceholder: "e.g. \\bgit(?:\\.exe)?\\s+push\\b",
           save: "Save",
           reset: "Restore default",
           saving: "Saving…",
@@ -100,9 +104,12 @@ window.__ModuleLoader__.load({
           chars: "characters",
         } : {
           name: "工作区自动审核",
-          desc: "编辑 AI 权限审核使用的系统提示词",
+          desc: "编辑 AI 审核提示词与自定义放行规则",
           label: "审核 System Prompt",
           help: "审核模型还会收到工作区、审批理由、匹配工具 schema 和实际参数；模型不能调用工具。",
+          patternLabel: "自定义放行规则（正则，每行一条）",
+          patternHelp: "命令文本命中任一规则即自动放行（不区分大小写）。默认已含 git push。批量破坏类操作（如 rm -rf）优先级更高，永远无法被这些规则放行；规则匹配整条命令文本，注意组合命令。",
+          patternPlaceholder: "例：\\bgit(?:\\.exe)?\\s+push\\b",
           save: "保存",
           reset: "恢复默认",
           saving: "保存中…",
@@ -120,6 +127,7 @@ window.__ModuleLoader__.load({
           status,
           prompt: data && typeof data.prompt === "string" ? data.prompt : current.prompt,
           defaultPrompt: data && typeof data.defaultPrompt === "string" ? data.defaultPrompt : current.defaultPrompt,
+          patterns: data && Array.isArray(data.allowPatterns) ? data.allowPatterns.join("\n") : current.patterns,
         }));
 
         react.useEffect(() => {
@@ -167,8 +175,18 @@ window.__ModuleLoader__.load({
               react.createElement("span", null, state.prompt.length + " / " + MAX_PROMPT_LENGTH + " " + T.chars),
               state.status ? react.createElement("span", { className: "waa-status" }, state.status) : null),
             react.createElement("div", { className: "waa-actions" },
-              react.createElement("button", { type: "button", className: "waa-btn", disabled: busy || !valid, onClick: () => submit({ prompt: state.prompt }, T.saved) }, T.save),
-              react.createElement("button", { type: "button", className: "waa-btn", disabled: busy, onClick: () => submit({ reset: true }, T.restored) }, T.reset))) : null);
+              react.createElement("button", { type: "button", className: "waa-btn", disabled: busy || !valid, onClick: () => submit({ prompt: state.prompt, allowPatterns: state.patterns.split("\n").map((line) => line.trim()).filter(Boolean) }, T.saved) }, T.save),
+              react.createElement("button", { type: "button", className: "waa-btn", disabled: busy, onClick: () => submit({ reset: true }, T.restored) }, T.reset)),
+            react.createElement("div", { className: "waa-label" }, T.patternLabel),
+            react.createElement("div", { className: "waa-help" }, T.patternHelp),
+            react.createElement("textarea", {
+              className: "waa-textarea waa-textarea-sm",
+              value: state.patterns,
+              disabled: busy,
+              spellCheck: false,
+              placeholder: T.patternPlaceholder,
+              onChange: (event) => setState((current) => ({ ...current, patterns: event.target.value, status: "" })),
+            })) : null);
       }
 
       ctx.slots.inject("settings.plugin.item", () => ctx.slots.register({
