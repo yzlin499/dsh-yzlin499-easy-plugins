@@ -16,7 +16,7 @@
 // 变更时自动重扫：配置文件 fs.watch + 新会话事件（session/created）触发。
 // ═══════════════════════════════════════════════════════════════════════════
 import { existsSync, readFileSync, watch } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { isAbsolute, join, resolve } from 'node:path'
 import { homedir } from 'node:os'
 
 export const name = 'mcp-compat'
@@ -25,6 +25,7 @@ export const name = 'mcp-compat'
 export const inject = ['workspaceRegistry', 'loader', 'tools', 'agents']
 
 const log = (...a) => console.log('[mcp-compat]', ...a)
+const reportedInvalidCommands = new Set()
 
 // ── JSON/JSONC 解析 ──
 function stripJsonc(text) {
@@ -133,29 +134,54 @@ function parseCodexToml(text, source) {
   const out = []
   let current = null
   let kv = null
+  let section = null
   const flush = () => {
     if (!current || !kv) return
     if (kv.url) out.push({ name: current, transport: 'streamable-http', url: kv.url, source })
     else if (kv.command) out.push({ name: current, transport: 'stdio', command: kv.command, args: kv.args || [], env: kv.env, source })
+    current = null
+    kv = null
+    section = null
   }
   for (const rawLine of text.split('\n')) {
     const line = rawLine.trim()
-    if (!line) continue
+    if (!line || line.startsWith('#')) continue
     const header = /^\[([^\]]+)\]$/.exec(line)
     if (header) {
-      flush()
       const name = header[1].trim()
-      current = name.startsWith('mcp_servers.') ? unquote(name.slice('mcp_servers.'.length)) : null
-      kv = {}
+      if (!name.startsWith('mcp_servers.')) {
+        flush()
+        continue
+      }
+      const rest = name.slice('mcp_servers.'.length)
+      if (rest.endsWith('.env')) {
+        const serverName = unquote(rest.slice(0, -'.env'.length))
+        if (current !== serverName) {
+          flush()
+          current = serverName
+          kv = {}
+        }
+        kv.env ||= {}
+        section = 'env'
+      } else if (rest.includes('.tools.')) {
+        flush()
+      } else {
+        flush()
+        current = unquote(rest)
+        kv = {}
+        section = 'server'
+      }
       continue
     }
-    if (current === null || !kv) continue
+    if (current === null || !kv || section === null) continue
     const eq = line.indexOf('=')
     if (eq < 0) continue
-    const k = line.slice(0, eq).trim()
+    const k = unquote(line.slice(0, eq))
     const v = line.slice(eq + 1).trim()
     if (!v) continue
-    if (k === 'command') kv.command = unquote(v)
+    if (section === 'env') {
+      if (k) kv.env[k] = unquote(v)
+    } else if (k === 'command') kv.command = unquote(v)
     else if (k === 'args') kv.args = parseTomlArray(v)
     else if (k === 'env') kv.env = parseTomlInlineTable(v)
     else if (k === 'url') kv.url = unquote(v)
@@ -185,6 +211,14 @@ function collectServers(workspacePaths) {
   const byName = new Map()
   const found = []
   const add = (server) => {
+    if (server.transport === 'stdio' && isAbsolute(server.command) && !existsSync(server.command)) {
+      const key = `${server.name}\0${server.command}\0${server.source}`
+      if (!reportedInvalidCommands.has(key)) {
+        reportedInvalidCommands.add(key)
+        log('跳过命令路径不存在的服务器:', server.name, '—', server.command, '<-', server.source)
+      }
+      return
+    }
     if (byName.has(server.name)) {
       log('忽略重复服务器名（保留先出现的）:', server.name, '—', byName.get(server.name).source, '已占用', server.source, '被跳过')
       return

@@ -1,6 +1,6 @@
 {
   "name": "dsh-mcp-compat",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "DSH plugin: auto-load MCP servers from standard agent configs (.mcp.json / opencode.json / .cursor/mcp.json / .codex/config.toml), keeping project tools scoped to their workspace",
   "type": "module",
   "main": "index.js",

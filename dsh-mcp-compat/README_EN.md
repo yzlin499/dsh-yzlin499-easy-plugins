@@ -29,7 +29,9 @@ it takes effect automatically — no DSH configuration needed. Project-level MCP
 tools are visible only to agents whose `cwd` belongs to that workspace, while
 user-level MCP tools remain shared globally. Project stdio servers start with the
 workspace root as their working directory. Config file changes (`fs.watch`) or
-new sessions (`session/created`) trigger a rescan.
+new sessions (`session/created`) trigger a rescan. If a stdio server declares an
+absolute command path that does not exist, the plugin logs one clear diagnostic
+and skips it instead of handing it to the MCP client's reconnect loop.
 
 > The official `@deepseek-ai/dsh-mcp-client` currently supports stdio and
 > Streamable HTTP, not legacy SSE. Explicit `type: "sse"` entries are skipped so
