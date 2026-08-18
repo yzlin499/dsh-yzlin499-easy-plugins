@@ -43,6 +43,10 @@ dsh plugin --profile web add ./dsh-workspace-auto-approval
   `permission/preset` 事件区分用户选中了哪一种。
 - Host 插件以 `prepend` 方式监听 `approval/request`，但仅在当前预设为
   `workspace-auto-approval` 时介入；其他模式立即调用 `next()`。
+- Client 半侧为该预设补充与官方一致的 16×16 “盾牌 + A” SVG 图标。官方
+  `PresetOption` 没有图标字段，因此 Client 只匹配完整标签“工作区自动审核”，通过 CSS
+  SVG mask 装饰当前模式按钮和菜单项；不修改官方包，卸载时自动清理。独立源文件见
+  `icon.svg`。
 - 审批请求只带 `callId`，插件从当前 Session 的 `tool/call` 事件中按该 ID 取回原始参数。
 - 工作区边界来自 `session.header.cwd`；路径比较会解析已存在的符号链接/目录连接，避免只做
   字符串前缀判断。

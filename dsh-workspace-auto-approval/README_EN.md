@@ -46,6 +46,10 @@ permission mode.
   `permission/preset` event preserves which shared-knob mode the user selected.
 - The Host plugin prepends an `approval/request` waterfall listener, but intervenes only while
   `workspace-auto-approval` is current. Every other mode immediately calls `next()`.
+- The Client half adds a 16×16 shield-and-A SVG glyph matching the official icon style. Since
+  `PresetOption` exposes no icon field, the decorator matches only the complete Workspace Auto
+  Approval label and applies a CSS SVG mask to its current-mode button and menu row. It does not
+  modify the official package and cleans up on unload. The standalone source is `icon.svg`.
 - Approval requests carry a `callId`; the plugin finds the matching `tool/call` event in the
   current Session to recover the original arguments.
 - The workspace root comes from `session.header.cwd`. Existing symlinks/junctions are
