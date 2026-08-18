@@ -17,8 +17,6 @@ dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/ds
 
 重启 DSH Web 后生效。
 
-> 或者：直接通过 **dsh-yzlin499-plugins-manager** 的「插件管理」卡片（设置 → 插件）快速启用。
-
 ## 使用
 
 输入框打 `@` → 弹出文件列表（与其它 `@` 源分组并列）→ 继续打字过滤

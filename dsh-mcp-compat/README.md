@@ -11,8 +11,6 @@ dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/ds
 
 重启 DSH Web 后生效。
 
-> 或者：直接通过 **dsh-yzlin499-plugins-manager** 的「插件管理」卡片（设置 → 插件）快速启用。
-
 ## 支持的配置来源（按优先级，先出现者胜；项目级 + 用户级）
 
 - `.mcp.json` —— Claude Code / Codex / Cursor 约定（`mcpServers`；支持 stdio / Streamable HTTP）

@@ -15,8 +15,6 @@ dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/ds
 
 Restart DSH Web to activate.
 
-> Or enable it from the **dsh-yzlin499-plugins-manager** "Plugin Manager" card (Settings → Plugins).
-
 ## Usage
 
 Out of the box it notifies **always** on the three moments:

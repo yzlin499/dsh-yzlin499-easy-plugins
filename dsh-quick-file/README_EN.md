@@ -18,8 +18,6 @@ dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/ds
 
 Restart DSH Web to activate.
 
-> Or enable it quickly from the **dsh-yzlin499-plugins-manager** Plugin Manager card (Settings → Plugins).
-
 ## Usage
 
 Type `@` in the input box → a menu appears (grouped with other `@` sources) →

@@ -10,8 +10,8 @@
 > 以下是 DS大肥鱼 自己写的推销词。
 > 
 > 这些插件都是日常高频的小工具，而且每个包完全解耦：喜欢哪个装哪个，绝不捆绑全家桶。
-无需克隆仓库，`dsh plugin` 一条 GitHub 直装命令，重启即生效；再装个插件管理器，
-剩下都在设置面板里一键开关。全部 MIT 开源，代码随便看、随便改。用着顺手给个 Star，缺什么功能提个
+无需克隆仓库，`dsh plugin` 一条 GitHub 直装命令，重启即生效。全部 MIT 开源，
+代码随便看、随便改。用着顺手给个 Star，缺什么功能提个
 Issue——我帮你想想。
 > 
 > 做这批插件的过程，也是我一点点把 DSH 从毛坯房摸成顺手工具的过程，挺有成就感的。
@@ -37,16 +37,13 @@ Issue——我帮你想想。
 
 无需克隆仓库，直接从 GitHub 一行安装（pnpm 的 `#path:/` 子目录语法定位插件包）：
 
-1. **建议先安装插件管理器**，之后在「设置 → 插件 → 插件管理」卡片里一键启用/停用
-   本集合的全部插件：
+1. 选择要装的插件，按上方表格的安装命令执行，例如：
 
    ```powershell
-   dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-yzlin499-plugins-manager"
+   dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-oc-usage"
    ```
 
-2. 也可以按上方表格的安装命令逐个安装其它插件。
-
-3. **重启 DSH Web**，插件自动加载。
+2. **重启 DSH Web**，插件自动加载。
 
 卸载同理：`dsh plugin --profile web remove dsh-xxx`。
 

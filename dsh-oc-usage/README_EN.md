@@ -17,8 +17,6 @@ dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/ds
 
 Restart DSH Web to activate.
 
-> Or enable it quickly from the **dsh-yzlin499-plugins-manager** Plugin Manager card (Settings → Plugins).
-
 ## Usage
 
 1. Click ⚙ on the floating window and paste the full Cookie from opencode.ai

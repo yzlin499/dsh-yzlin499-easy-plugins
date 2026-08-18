@@ -23,14 +23,7 @@
 > 命令中的 `web` 是你的 DSH 实例名，按实际情况调整；若 `dsh` 不在 PATH 中，
 > 在命令前加 `npx @deepseek-ai/dsh` 前缀。
 
-**建议先装插件管理器**，之后所有插件都可以在「设置 → 插件 → 插件管理」卡片里
-一键启用/停用：
-
-```powershell
-dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-yzlin499-plugins-manager"
-```
-
-逐个安装其它插件（命令即上表；例如）：
+选择要装的插件，按上表的安装命令执行（一次一个，命令即上表；例如）：
 
 ```powershell
 dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-oc-usage"

@@ -21,9 +21,6 @@ dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/ds
 
 Restart DSH Web to activate it.
 
-> If **dsh-yzlin499-plugins-manager** is installed, you can also enable this plugin from
-> Settings → Plugins → Plugin Manager.
-
 ## Usage
 
 After installation and restart, select **Workspace Auto Approval** in the session permission

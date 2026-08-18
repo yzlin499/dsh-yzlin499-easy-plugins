@@ -20,9 +20,6 @@ dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/ds
 
 重启 DSH Web 后生效。
 
-> 已安装 **dsh-yzlin499-plugins-manager** 时，也可以直接在
-> 「设置 → 插件 → 插件管理」卡片一键启用。
-
 ## 使用
 
 安装并重启后，在会话的权限选择器中选择 **“工作区自动审核”**。只有选中该模式时

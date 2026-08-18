@@ -15,8 +15,6 @@ dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/ds
 
 重启 DSH Web 后生效。
 
-> 或者：直接通过 **dsh-yzlin499-plugins-manager** 的「插件管理」卡片（设置 → 插件）快速启用。
-
 ## 使用
 
 打开任意工作区会话 → 右上角（session log 左侧）出现「打开为」按钮 →

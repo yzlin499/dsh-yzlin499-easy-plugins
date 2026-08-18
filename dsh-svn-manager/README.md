@@ -30,8 +30,6 @@ SVN 没有 Git 的 staging index，因此本插件不会伪造“已暂存/未�
 dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-svn-manager"
 ```
 
-已经安装 **dsh-yzlin499-plugins-manager** 时，也可以进入「设置 → 插件 → 插件管理」，直接启用 `dsh-svn-manager`。
-
 安装或更新 Host 代码后需要重启 DSH Web，再刷新浏览器。
 
 ## 使用

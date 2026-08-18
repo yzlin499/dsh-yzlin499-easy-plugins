@@ -30,8 +30,6 @@ No repository clone needed — run:
 dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-svn-manager"
 ```
 
-If **dsh-yzlin499-plugins-manager** is installed, you can also enable `dsh-svn-manager` from Settings → Plugins → Plugin Manager.
-
 Restart DSH Web after installing or updating the Host half, then refresh the browser.
 
 ## Usage
