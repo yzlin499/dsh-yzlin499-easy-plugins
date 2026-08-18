@@ -1,0 +1,4 @@
+# Mount the SVN manager Host API and its better-sidebar client tabs.
+- insert:
+    - id: svn-manager
+      name: dsh-svn-manager

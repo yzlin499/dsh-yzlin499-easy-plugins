@@ -1,0 +1,42 @@
+{
+  "name": "dsh-svn-manager",
+  "version": "0.1.0",
+  "description": "DSH better-sidebar plugin for SVN working-copy status, add, revert, commit, update, history, and unified diff",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "slots",
+        "locale"
+      ],
+      "platform": "web"
+    }
+  },
+  "peerDependencies": {
+    "dsh-better-sidebar": ">=0.12.1"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "dsh-plugin",
+    "dsh-better-sidebar",
+    "svn",
+    "subversion"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}
