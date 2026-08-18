@@ -33,12 +33,22 @@ decisions in order:
 | A `pwsh` / `bash` command is clearly read-only | Allow once, including reads outside the workspace |
 | `curl` uses the small positive option allowlist for a clear network GET/HEAD | Allow once automatically |
 | A workspace shell write or any command not proven by the read-only rules | Ask the current session model; only exact `ALLOW` is accepted |
+| Recursive/wildcard bulk deletion, `git clean -fd`, database/table destruction, or destructive MCP calls | Skip AI and continue downstream; the user must decide |
 | A host service, registry, user-management, shutdown, or network-upload rule matches | Continue to DSH's downstream approval chain |
 | Local rules are inconclusive | Ask the current session model; only exact `ALLOW` is accepted |
 | AI fails, times out, is unavailable, or does not clearly allow | Continue to DSH's downstream approval chain |
 
 Every automatic grant is `allowed-once`; the plugin never changes the session's persistent
 permission mode.
+
+## Settings
+
+Open Settings → Plugins → Workspace Auto Approval to edit the System Prompt used by the AI
+reviewer. The card supports Save and Restore Default with an 8,000-character limit. Official
+`ctx.settings` persists it as `dsh-workspace-auto-approval.prompt` in `~/.dsh/settings.yaml`.
+
+Prompt edits apply to the next AI review without a restart. Deterministic mass-destruction rules
+run before the prompt and cannot be bypassed by customizing it.
 
 ## How It Works
 
@@ -55,6 +65,9 @@ permission mode.
   current Session to recover the original arguments.
 - The workspace root comes from `session.header.cwd`. Existing symlinks/junctions are
   canonicalized before containment checks, rather than relying on string prefixes.
+- The Host registers the `dsh-workspace-auto-approval` namespace through official `ctx.settings`.
+  The settings card reads/writes the prompt through `/workspace-auto-approval/config`, and every AI
+  review reads the latest value.
 - Local rules classify structured file targets, command working directories, absolute paths,
   traversal, dynamic paths, read-only commands, network reads/writes, and common host effects.
   Shell writes are not locally allowed from textual paths alone because variables, globs, and
@@ -78,7 +91,9 @@ After a `danger-full-access` command is approved, the executor no longer enforce
 sandbox. Rules and AI can judge intent, but cannot prove every runtime effect of arbitrary shell
 code as an operating-system sandbox can. Consequently:
 
-- explicit host-configuration changes and network uploads are never auto-approved;
+- Mass-destruction rules run before AI: bulk file deletion, recursive forced deletion, and database/
+  table destruction cannot be auto-authorized by a custom prompt or model output;
+- explicit host-configuration changes and network uploads are also never auto-approved;
 - MCP schemas, approval reasons, and actual arguments are sent to the current session's model
   provider; sensitive arguments should be treated as disclosure to that provider;
 - AI is not a security boundary. Keep DSH's sandbox enabled and evaluate this plugin's risk

@@ -22,6 +22,16 @@ const HOST_EFFECT_COMMANDS = new Set([
 const HOST_PROVIDER_PATTERN = /(?:\b(?:HKLM|HKCU|HKCR|HKU|HKCC):|\b(?:Registry|Cert|WSMan):{1,2})/i
 const DYNAMIC_PATH_PATTERN = /(?:\$env:|\$\{?env\b|%[A-Za-z_][A-Za-z0-9_]*%|(?:^|[\s="'])~[\\/])/i
 const NESTED_EXECUTION_PATTERN = /(?:\$\(|`|<\(|[(){}]|(?:^|[^&])&(?!&))/
+const MASS_DESTRUCTIVE_PATTERNS = [
+  /\brm\b[^\r\n]*(?:--recursive\b|-[a-z]*r[a-z]*\b)/i,
+  /\bremove-item\b[^\r\n]*(?:--recursive\b|-recurse\b)/i,
+  /\b(?:del|erase|rd|rmdir)\b[^\r\n]*\/s\b/i,
+  /\b(?:rm|remove-item|del|erase|rd|rmdir)\b[^\r\n]*(?:\*|--all\b)/i,
+  /\bgit\s+clean\b[^\r\n]*-[a-z]*f[a-z]*d|\bgit\s+clean\b[^\r\n]*-[a-z]*d[a-z]*f/i,
+  /\b(?:drop\s+(?:database|schema|table|collection)|truncate\s+(?:database|schema|table)|delete\s+from)\b/i,
+  /\b(?:dropDatabase|dropCollection|deleteMany|removeMany|purgeDatabase|wipeDatabase)\b/i,
+  /(?:^|[_-])(?:delete|drop|truncate|clear|purge|wipe)[_-](?:all|many|bulk|database|schema|table|collection|files|directories)(?=$|[^A-Za-z0-9])/i,
+]
 
 function pathKey(value) {
   const normalized = resolve(String(value))
@@ -168,10 +178,21 @@ function hasGlobalEffect(command) {
   })
 }
 
+function isMassDestructiveText(text) {
+  return MASS_DESTRUCTIVE_PATTERNS.some((pattern) => pattern.test(String(text || '')))
+}
+
+export function isMassDestructiveRequest({ toolName, toolDescription, approvalReason, args }) {
+  let argumentsText = ''
+  try { argumentsText = JSON.stringify(args) } catch {}
+  return isMassDestructiveText([toolName, toolDescription, approvalReason, argumentsText].filter(Boolean).join('\n'))
+}
+
 export function classifyCommand({ command, workdir, workspaceRoot }) {
   if (typeof command !== 'string' || command.trim() === '') return { decision: 'human', reason: 'missing command text' }
   const cwd = resolve(workspaceRoot, workdir || '.')
 
+  if (isMassDestructiveText(command)) return { decision: 'human', reason: 'matched a mass-destructive operation' }
   if (hasGlobalEffect(command)) return { decision: 'human', reason: 'matched a host-level mutation' }
   if (hasNetworkWrite(command)) return { decision: 'human', reason: 'matched a network write or upload' }
   if (NESTED_EXECUTION_PATTERN.test(command)) return { decision: 'ai', reason: 'contains nested command execution' }
@@ -185,7 +206,10 @@ export function classifyCommand({ command, workdir, workspaceRoot }) {
   return { decision: 'ai', reason: 'no conclusive local command rule' }
 }
 
-export function classifyToolCall({ toolName, args, workspaceRoot }) {
+export function classifyToolCall({ toolName, args, workspaceRoot, toolDescription, approvalReason }) {
+  if (isMassDestructiveRequest({ toolName, toolDescription, approvalReason, args })) {
+    return { decision: 'human', reason: 'matched a mass-destructive operation' }
+  }
   if (!args || typeof args !== 'object' || Array.isArray(args)) return { decision: 'ai', reason: 'arguments are not an object' }
   if (toolName === 'pwsh' || toolName === 'bash') {
     return classifyCommand({ command: args.command, workdir: args.workdir || workspaceRoot, workspaceRoot })

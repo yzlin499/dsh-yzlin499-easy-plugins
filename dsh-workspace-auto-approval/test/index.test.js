@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { EventEmitter } from 'node:events'
 import test from 'node:test'
 import { apply } from '../index.js'
 
@@ -15,17 +16,39 @@ class FakeAssembler {
   }
 }
 
-function harness(answer = 'ALLOW', emitFinish = true, preset = 'workspace-auto-approval') {
+function harness(answer = 'ALLOW', emitFinish = true, preset = 'workspace-auto-approval', configuredPrompt = 'Configured review prompt') {
   let listener
   let streamOptions
+  let prompt = configuredPrompt
+  let routeHandler
   const ctx = {
+    settings: {
+      register() {
+        return {
+          get() { return { prompt } },
+          async update(patch) { prompt = patch.prompt },
+        }
+      },
+    },
+    webServer: {
+      register(options) {
+        routeHandler = options.handler
+        return () => true
+      },
+    },
     permissionPresets: {
       current() {
         return preset
       },
     },
     loader: {
-      async import() {
+      async import(name) {
+        if (name === '@deepseek-ai/schemastery') {
+          return { default: {
+            object() { return {} },
+            string() { return { default() { return {} } } },
+          } }
+        }
         return { BlockAssembler: FakeAssembler, createUserMessage: (message) => message }
       },
     },
@@ -58,7 +81,13 @@ function harness(answer = 'ALLOW', emitFinish = true, preset = 'workspace-auto-a
       return () => true
     },
   }
-  return { ctx, listener: () => listener, streamOptions: () => streamOptions }
+  return {
+    ctx,
+    listener: () => listener,
+    streamOptions: () => streamOptions,
+    routeHandler: () => routeHandler,
+    prompt: () => prompt,
+  }
 }
 
 function request(toolName, args, workspace = process.cwd(), config = { provider: 'test-provider', model: 'test-model' }) {
@@ -80,6 +109,37 @@ function request(toolName, args, workspace = process.cwd(), config = { provider:
   }
   return { agent: { session, options: {} }, toolName, callId, reason: 'test escalation' }
 }
+
+async function callConfigRoute(handler, method, body) {
+  const req = new EventEmitter()
+  req.method = method
+  req.url = '/workspace-auto-approval/config'
+  req.destroy = () => req.emit('error', new Error('too large'))
+  let status
+  let text = ''
+  const res = {
+    writeHead(value) { status = value },
+    end(value) { text = value || '' },
+  }
+  const pending = handler(req, res)
+  if (body !== undefined) req.emit('data', JSON.stringify(body))
+  req.emit('end')
+  await pending
+  return { status, body: JSON.parse(text) }
+}
+
+test('config route persists a custom prompt and restores the default', async () => {
+  const mock = harness()
+  await apply(mock.ctx)
+  const saved = await callConfigRoute(mock.routeHandler(), 'POST', { prompt: 'Custom safety prompt' })
+  assert.equal(saved.status, 200)
+  assert.equal(saved.body.prompt, 'Custom safety prompt')
+  assert.equal(mock.prompt(), 'Custom safety prompt')
+  const restored = await callConfigRoute(mock.routeHandler(), 'POST', { reset: true })
+  assert.equal(restored.status, 200)
+  assert.notEqual(restored.body.prompt, 'Custom safety prompt')
+  assert.equal(restored.body.prompt, restored.body.defaultPrompt)
+})
 
 test('does nothing while the ordinary workspace-write preset is selected', async () => {
   const mock = harness('ALLOW', true, 'workspace-write')
@@ -121,6 +181,7 @@ test('AI fallback sends reason, schema, arguments, and enables reasoning', async
   assert.equal(options.maxTokens, 256)
   assert.equal(options.temperature, 0)
   assert.equal(options.reasoningEffort, 'low')
+  assert.equal(options.system, 'Configured review prompt')
   assert.equal(options.messages.length, 1)
   assert.equal(options.provider, 'test-provider')
   assert.equal(options.model, 'test-model')

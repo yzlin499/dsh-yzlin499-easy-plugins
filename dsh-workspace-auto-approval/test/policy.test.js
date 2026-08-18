@@ -23,7 +23,7 @@ test('allows read-only commands even when they read outside', () => {
 })
 
 test('sends workspace shell writes to AI instead of trusting text-only containment', () => {
-  assert.equal(classifyCommand({ command: 'Remove-Item .\\build -Recurse', workdir: workspace, workspaceRoot: workspace }).decision, 'ai')
+  assert.equal(classifyCommand({ command: 'Remove-Item .\\build -Recurse', workdir: workspace, workspaceRoot: workspace }).decision, 'human')
   assert.equal(classifyCommand({ command: 'Get-ChildItem .\\build | Remove-Item -Force', workdir: workspace, workspaceRoot: workspace }).decision, 'ai')
   assert.equal(classifyCommand({ command: 'Set-Content .\\out\\pwn.txt x', workdir: workspace, workspaceRoot: workspace }).decision, 'ai')
   assert.equal(classifyCommand({ command: 'Set-Content $HOME\\pwn.txt x', workdir: workspace, workspaceRoot: workspace }).decision, 'ai')
@@ -50,6 +50,21 @@ test('does not auto-allow write-capable forms of read commands', () => {
 test('resolves relative workdirs and file targets from the workspace root', () => {
   assert.equal(classifyCommand({ command: 'Remove-Item target.txt', workdir: '../outside', workspaceRoot: workspace }).decision, 'ai')
   assert.equal(classifyToolCall({ toolName: 'write', args: { file_path: '../outside.txt' }, workspaceRoot: workspace }).decision, 'human')
+})
+
+test('requires downstream user judgment for mass-destructive operations', () => {
+  assert.equal(classifyCommand({ command: 'rm -rf ./build ./dist', workdir: workspace, workspaceRoot: workspace }).decision, 'human')
+  assert.equal(classifyCommand({ command: 'Remove-Item .\\cache -Recurse -Force', workdir: workspace, workspaceRoot: workspace }).decision, 'human')
+  assert.equal(classifyCommand({ command: 'psql -c "DROP DATABASE production"', workdir: workspace, workspaceRoot: workspace }).decision, 'human')
+  assert.equal(classifyCommand({ command: 'mysql -e "DELETE FROM users"', workdir: workspace, workspaceRoot: workspace }).decision, 'human')
+  assert.equal(classifyToolCall({
+    toolName: 'mcp__database__delete_database',
+    toolDescription: 'Delete an entire database permanently',
+    approvalReason: 'requested database deletion',
+    args: { database: 'production' },
+    workspaceRoot: workspace,
+  }).decision, 'human')
+  assert.equal(classifyCommand({ command: 'Remove-Item .\\one-file.txt', workdir: workspace, workspaceRoot: workspace }).decision, 'ai')
 })
 
 test('does not auto-allow host changes or uploads', () => {
