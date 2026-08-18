@@ -19,6 +19,8 @@ window.__ModuleLoader__.load({
       commandDone: '操作完成', diffEmpty: '没有可显示的文本差异。', diffError: '差异加载失败', diffTruncated: '差异过大，仅显示前 10,000 行。',
       copied: '复制', switched: '切换', property: '属性', treeConflict: '树冲突',
       loadError: '加载失败', commitError: '提交失败', actionError: '操作失败',
+      statusTruncated: '状态项过多，仅显示前 {shown} 项；冲突和已纳管变更优先。',
+      unversionedSuppressed: '未纳管文件数量过多，已隐藏未纳管列表；请配置 svn:ignore 后刷新。',
     }
     const en = {
       title: 'SVN', refresh: 'Refresh', updating: 'Updating', update: 'Update', loading: 'Loading…',
@@ -32,6 +34,8 @@ window.__ModuleLoader__.load({
       commandDone: 'Operation completed', diffEmpty: 'No text differences to display.', diffError: 'Failed to load diff', diffTruncated: 'The diff is large; only the first 10,000 lines are shown.',
       copied: 'Copied', switched: 'Switched', property: 'Properties', treeConflict: 'Tree conflict',
       loadError: 'Load failed', commitError: 'Commit failed', actionError: 'Action failed',
+      statusTruncated: 'Too many status entries; showing the first {shown}, prioritizing conflicts and versioned changes.',
+      unversionedSuppressed: 'Too many unversioned paths; they are hidden. Configure svn:ignore and refresh.',
     }
 
     function localeOf(ctx) {
@@ -255,6 +259,11 @@ window.__ModuleLoader__.load({
       if (snapshot && !snapshot.info?.isWorkingCopy) return h('div', { className: 'svnm-placeholder' }, labels.notWorkingCopy)
       const groups = classify(snapshot?.entries)
       const hasCommittable = groups.changes.length > 0 || groups.conflicts.length > 0
+      const statusWarning = snapshot?.unversionedSuppressed
+        ? labels.unversionedSuppressed
+        : snapshot?.truncated
+          ? labels.statusTruncated.replace('{shown}', String(snapshot.shownEntries ?? snapshot.entries?.length ?? 0))
+          : null
 
       return h('div', { className: 'svnm-root' },
         h('header', { className: 'svnm-header' },
@@ -268,6 +277,7 @@ window.__ModuleLoader__.load({
             onClick: () => setConfirmState({ title: labels.updateTitle, description: labels.updateDesc, onConfirm: () => { setConfirmState(null); void run('update', { confirm: true }, labels.commandDone) } }),
           }, icon('update', 14), h('span', null, busy ? labels.updating : labels.update)),
         ),
+        statusWarning ? h('div', { className: 'svnm-warning' }, statusWarning) : null,
         h(ChangeSection, { title: labels.conflicts, entries: groups.conflicts, kind: 'conflict', labels, busy, onDiff: openDiff, onOpen: openFile, onAction: action }),
         h(ChangeSection, { title: labels.changes, entries: groups.changes, kind: 'change', labels, busy, onDiff: openDiff, onOpen: openFile, onAction: action }),
         h(ChangeSection, { title: labels.unversioned, entries: groups.unversioned, kind: 'unversioned', labels, busy, onDiff: openDiff, onOpen: openFile, onAction: action }),

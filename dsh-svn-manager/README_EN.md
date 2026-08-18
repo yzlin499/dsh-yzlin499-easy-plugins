@@ -39,7 +39,7 @@ Restart DSH Web after installing or updating the Host half, then refresh the bro
 2. Select `SVN` from the better-sidebar `+` menu.
 3. Select a changed file to view its diff, or use the file button to open it in the editor.
 4. Use the `+` action to schedule an unversioned path for addition.
-5. Enter a log message and commit all scheduled and modified working-copy content.
+5. Enter a log message and commit all scheduled and modified content under the current session cwd.
 6. Revert and update operations show a confirmation dialog before changing files.
 
 Authentication uses the existing SVN auth cache, certificate configuration, and OS credentials. The plugin never stores usernames, passwords, or certificate trust. Network commands use `--non-interactive`; complete initial authentication or certificate acceptance in a terminal first.
@@ -51,7 +51,7 @@ The Host half spawns the system `svn` executable with an argument array and neve
 - `svn info/status/log --xml` supplies structured data
 - `svn diff --git --show-copies-as-adds` supplies unified patches
 - JSON endpoints live under `/svn-manager/api/*`
-- cwd is resolved exclusively from the current DSH Session
+- status, log, diff, commit, and update are scoped to the current session cwd; the working-copy root is used only as a path safety boundary
 - every file target must remain inside the working-copy root returned by `svn info`
 - routes use Host/Origin trust checks and mutations require JSON POST requests
 - subprocess output and runtime are bounded
@@ -69,7 +69,7 @@ Cordis owns all tab registrations and injected styles, so plugin disable and HMR
 - Externals are not recursively committed
 - The plugin does not store credentials or show interactive password prompts
 - SVN patches use the plugin's own unified diff surface; the built-in diff component is Git-specific
-- Commit currently targets the entire working-copy root rather than a checked path subset
+- Commit targets the current session cwd subtree rather than a checked path subset
 
 ## License
 

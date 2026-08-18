@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, writeFile, appendFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm, writeFile, appendFile } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
 import { Readable } from 'node:stream'
 import { join, resolve } from 'node:path'
@@ -10,6 +10,7 @@ import { apply as applyPlugin } from '../index.js'
 import {
   add,
   commit,
+  compactStatusEntries,
   diff,
   log,
   parseInfoXml,
@@ -48,6 +49,23 @@ test('parses SVN status, info, and log XML', () => {
   ])
 })
 
+test('prioritizes versioned changes when a large status is compacted', () => {
+  const entries = [
+    ...Array.from({ length: 8 }, (_, index) => ({ path: `unversioned-${index}`, item: 'unversioned' })),
+    { path: 'modified.txt', item: 'modified' },
+    { path: 'conflicted.txt', item: 'conflicted' },
+  ]
+  const compacted = compactStatusEntries(entries, 5)
+  assert.deepEqual(compacted.entries.map((entry) => entry.path), [
+    'modified.txt', 'conflicted.txt', 'unversioned-0', 'unversioned-1', 'unversioned-2',
+  ])
+  assert.equal(compacted.truncated, true)
+  assert.equal(compacted.totalEntries, 10)
+  assert.equal(compacted.shownEntries, 5)
+  assert.equal(compacted.omittedImportant, 0)
+  assert.equal(compacted.omittedUnversioned, 5)
+})
+
 test('rejects paths outside the working-copy root', () => {
   const root = resolve('C:/work/wc')
   assert.equal(resolveTarget(root, 'src/file.txt'), resolve(root, 'src/file.txt'))
@@ -72,6 +90,26 @@ test('runs an SVN working-copy lifecycle', { skip: !(hasSvn && hasSvnAdmin), tim
     await commit(wc, 'initial')
     run('svn', ['update', wc], fixture)
 
+    const nested = join(wc, 'nested')
+    const sibling = join(wc, 'sibling')
+    await mkdir(nested)
+    await mkdir(sibling)
+    await writeFile(join(nested, 'scoped.txt'), 'nested\n', 'utf8')
+    await writeFile(join(sibling, 'outside.txt'), 'outside\n', 'utf8')
+    await add(wc, ['nested/scoped.txt', 'sibling/outside.txt'])
+    await commit(wc, 'scope fixtures')
+    run('svn', ['update', wc], fixture)
+    await appendFile(join(nested, 'scoped.txt'), 'changed\n', 'utf8')
+    await appendFile(join(sibling, 'outside.txt'), 'changed\n', 'utf8')
+    const scopedSnapshot = await status(nested)
+    assert.equal(scopedSnapshot.entries.some((entry) => entry.path === 'nested/scoped.txt'), true)
+    assert.equal(scopedSnapshot.entries.some((entry) => entry.path === 'sibling/outside.txt'), false)
+    await commit(nested, 'nested only')
+    const rootAfterScopedCommit = await status(wc)
+    assert.equal(rootAfterScopedCommit.entries.some((entry) => entry.path === 'nested/scoped.txt'), false)
+    assert.equal(rootAfterScopedCommit.entries.some((entry) => entry.path === 'sibling/outside.txt'), true)
+    await revert(wc, ['sibling/outside.txt'])
+
     await appendFile(join(wc, 'tracked.txt'), 'two\n', 'utf8')
     await writeFile(join(wc, 'new @ file.txt'), 'new\n', 'utf8')
     let snapshot = await status(wc)
@@ -89,7 +127,7 @@ test('runs an SVN working-copy lifecycle', { skip: !(hasSvn && hasSvnAdmin), tim
     assert.match(patch.diff, /\+two/)
 
     const rows = await log(wc, { limit: 10 })
-    assert.equal(rows[0]?.message, 'initial')
+    assert.equal(rows.some((entry) => entry.message === 'initial'), true)
 
     let route
     applyPlugin({

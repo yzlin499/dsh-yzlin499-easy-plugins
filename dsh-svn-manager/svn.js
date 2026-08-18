@@ -5,6 +5,8 @@ import { isAbsolute, normalize, relative, resolve, sep } from 'node:path'
 const DEFAULT_TIMEOUT_MS = 30_000
 const NETWORK_TIMEOUT_MS = 180_000
 const MAX_OUTPUT_BYTES = 8 * 1024 * 1024
+const STATUS_MAX_OUTPUT_BYTES = 64 * 1024 * 1024
+const STATUS_ENTRY_LIMIT = 5_000
 
 export class SvnCommandError extends Error {
   constructor(message, code = 'svn-error', command = '', status = 400) {
@@ -255,29 +257,72 @@ async function requireWorkingCopy(cwd, options = {}) {
   return info
 }
 
+export function compactStatusEntries(entries, limit = STATUS_ENTRY_LIMIT) {
+  const important = []
+  const unversioned = []
+  for (const entry of entries) {
+    if (entry.item === 'unversioned') unversioned.push(entry)
+    else important.push(entry)
+  }
+  const selected = important.slice(0, limit)
+  if (selected.length < limit) selected.push(...unversioned.slice(0, limit - selected.length))
+  return {
+    entries: selected,
+    totalEntries: entries.length,
+    shownEntries: selected.length,
+    truncated: selected.length < entries.length,
+    omittedImportant: Math.max(important.length - Math.min(important.length, limit), 0),
+    omittedUnversioned: Math.max(entries.length - selected.length - Math.max(important.length - limit, 0), 0),
+  }
+}
+
 export async function status(cwd, options = {}) {
   const info = await workingCopyInfo(cwd, options)
-  if (!info.isWorkingCopy || !info.wcRoot) return { info, entries: [] }
-  const args = ['status', '--xml']
-  if (options.showUpdates === true) args.push('--show-updates')
-  args.push(pegSafe(info.wcRoot))
-  const output = await runSvn(info.wcRoot, args, {
+  if (!info.isWorkingCopy || !info.wcRoot) {
+    return { info, entries: [], totalEntries: 0, shownEntries: 0, truncated: false, omittedImportant: 0, omittedUnversioned: 0, unversionedSuppressed: false }
+  }
+  const scopeTarget = resolve(cwd)
+  const buildArgs = (quiet) => {
+    const args = ['status', '--xml']
+    if (quiet) args.push('--quiet')
+    if (options.showUpdates === true) args.push('--show-updates')
+    args.push(pegSafe(scopeTarget))
+    return args
+  }
+  const runStatus = (quiet) => runSvn(info.wcRoot, buildArgs(quiet), {
     timeoutMs: options.showUpdates ? NETWORK_TIMEOUT_MS : DEFAULT_TIMEOUT_MS,
+    maxOutputBytes: STATUS_MAX_OUTPUT_BYTES,
     signal: options.signal,
   })
-  return { info, entries: parseStatusXml(output, info.wcRoot) }
+  let output
+  let unversionedSuppressed = false
+  try {
+    output = await runStatus(false)
+  } catch (error) {
+    if (!(error instanceof SvnCommandError) || error.code !== 'output-too-large') throw error
+    output = await runStatus(true)
+    unversionedSuppressed = true
+  }
+  const compacted = compactStatusEntries(parseStatusXml(output, info.wcRoot))
+  return {
+    info,
+    ...compacted,
+    truncated: compacted.truncated || unversionedSuppressed,
+    unversionedSuppressed,
+  }
 }
 
 export async function diff(cwd, options = {}) {
   const info = await requireWorkingCopy(cwd, options)
+  const scopeTarget = resolve(cwd)
   const args = ['diff', '--git', '--show-copies-as-adds']
   if (options.revision !== undefined) {
     if (!/^\d+$/.test(String(options.revision))) throw new SvnCommandError('Invalid SVN revision', 'bad-request')
-    args.push('-c', String(options.revision), pegSafe(info.wcRoot))
+    args.push('-c', String(options.revision), pegSafe(scopeTarget))
   } else if (options.path !== undefined && options.path !== '') {
     args.push(pegSafe(resolveTarget(info.wcRoot, options.path)))
   } else {
-    args.push(pegSafe(info.wcRoot))
+    args.push(pegSafe(scopeTarget))
   }
   return { diff: await runSvn(info.wcRoot, args, { timeoutMs: NETWORK_TIMEOUT_MS, signal: options.signal }) }
 }
@@ -287,7 +332,7 @@ export async function log(cwd, options = {}) {
   const limit = Number.isInteger(options.limit) ? Math.min(Math.max(options.limit, 1), 100) : 20
   const start = options.startRevision === undefined || options.startRevision === '' ? 'HEAD' : String(options.startRevision)
   if (start !== 'HEAD' && !/^\d+$/.test(start)) throw new SvnCommandError('Invalid SVN start revision', 'bad-request')
-  const output = await runSvn(info.wcRoot, ['log', '--xml', '-r', `${start}:1`, '--limit', String(limit), pegSafe(info.wcRoot)], { timeoutMs: NETWORK_TIMEOUT_MS, signal: options.signal })
+  const output = await runSvn(info.wcRoot, ['log', '--xml', '-r', `${start}:1`, '-l', String(limit), pegSafe(resolve(cwd))], { timeoutMs: NETWORK_TIMEOUT_MS, signal: options.signal })
   return parseLogXml(output)
 }
 
@@ -317,12 +362,12 @@ export async function commit(cwd, message, options = {}) {
   const info = await requireWorkingCopy(cwd, options)
   const clean = String(message ?? '').trim()
   if (clean === '' || clean.length > 10_000) throw new SvnCommandError('Commit message is required', 'bad-request')
-  const output = await runSvn(info.wcRoot, ['commit', '-m', clean, pegSafe(info.wcRoot)], { timeoutMs: NETWORK_TIMEOUT_MS, signal: options.signal })
+  const output = await runSvn(info.wcRoot, ['commit', '-m', clean, pegSafe(resolve(cwd))], { timeoutMs: NETWORK_TIMEOUT_MS, signal: options.signal })
   return { done: true, output: redact(output.trim()) }
 }
 
 export async function update(cwd, options = {}) {
   const info = await requireWorkingCopy(cwd, options)
-  const output = await runSvn(info.wcRoot, ['update', pegSafe(info.wcRoot)], { timeoutMs: NETWORK_TIMEOUT_MS, signal: options.signal })
+  const output = await runSvn(info.wcRoot, ['update', pegSafe(resolve(cwd))], { timeoutMs: NETWORK_TIMEOUT_MS, signal: options.signal })
   return { done: true, output: redact(output.trim()) }
 }
