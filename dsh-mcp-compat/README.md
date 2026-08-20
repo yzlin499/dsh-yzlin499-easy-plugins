@@ -30,6 +30,27 @@ dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/ds
 > 官方 `@deepseek-ai/dsh-mcp-client` 目前支持 stdio 和 Streamable HTTP，不支持旧版 SSE。
 > 显式声明 `type: "sse"` 的条目会被跳过，以便后续配置文件中的同名 Streamable HTTP 条目接管。
 
+## 重连
+
+官方客户端自带自动重连（0.5s 起、指数退避、封顶 30s、最多 10 次），但**连续失败超过上限会
+「放弃」**：注销该服务器的工具并停止，日志输出
+`giving up after N consecutive failed reconnect attempts …`。这之后只能重载插件或重启 Host。
+`dsh-mcp-compat` 在此基础上补了两层：
+
+1. **自动重连看门狗**：每 15s 检查一次已挂载服务器，若检测到某服务器的工具已从注册表消失
+   （说明官方重连已放弃），会自动**只重连 down 的那一个**（不惊动其它健康挂载），并按
+   指数退避（15s → 30s → 60s → … → 封顶 10 分钟）低频重试，UE 只要最终能起来就能自动接上，
+   且不会在离线期间无限刷日志。
+2. **手动重连**，两种方式任选：
+   - **对话框 slash 命令 `/mcp-reconnect`**：直接在输入框输入即可，不经模型、立即执行、结果直显。
+     `/mcp-reconnect` 重连全部（重读配置）；`/mcp-reconnect <服务器名>`（如 `/mcp-reconnect unreal`）
+     只精准重连那一个。
+   - **模型工具 `mcp_reconnect`**：在会话里对模型说「重连一下 UE 的 MCP」，模型即可调用
+     `mcp_reconnect`（传 `serverName` 只重连指定服务器，省略则重连全部）。
+
+例如会话里说「重连一下 UE 的 MCP」，模型会调用 `mcp_reconnect`；或直接在对话框输入
+`/mcp-reconnect unreal`。
+
 ## License
 
 MIT

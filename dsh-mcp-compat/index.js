@@ -22,7 +22,7 @@ import { homedir } from 'node:os'
 export const name = 'mcp-compat'
 // loader：经 loader 自己的解析拿 dsh-mcp-client（bundle 源目录在项目里，
 // 顶层裸 import '@deepseek-ai/dsh-mcp-client' 会按源目录解析失败）
-export const inject = ['workspaceRegistry', 'loader', 'tools', 'agents']
+export const inject = ['workspaceRegistry', 'loader', 'tools', 'agents', 'commands']
 
 const log = (...a) => console.log('[mcp-compat]', ...a)
 const reportedInvalidCommands = new Set()
@@ -258,11 +258,25 @@ export function apply(ctx) {
     return mcpClientPlugin
   }
   let fibers = []
+  // fiberByName：按服务器名索引 fiber，用于「只重连 down 的那部分」时精准定位并单独 dispose
+  const fiberByName = new Map()
   let watchers = []
   let restrictions = []
   let projectTools = []
   let generation = 0
   let timer = null
+  // ── 重连支持 ──
+  // currentServers：最近一次 sync 挂载的服务器清单（供看门狗/手动重连引用）
+  let currentServers = []
+  // syncing：sync 正在执行时置位，看门狗据此跳过，避免与在途重扫互相踩踏
+  let syncing = false
+  // healthTimer：自动重连看门狗定时器
+  let healthTimer = null
+  const HEALTH_CHECK_INTERVAL_MS = 15000
+  // hostState：按服务器名记录看门狗状态（downSince 首次离线时间、presentCount 连续在线轮数、
+  // attempts 已退避重连次数、lastAttempt 上次真正发起重连的时间戳）。
+  // 用于对离线服务器做指数退避 + 只在状态跃迁/真正重连时打印日志，避免 UE 未开启时无限刷屏。
+  const hostState = new Map()
 
   const pathKey = (value) => {
     const normalized = resolve(String(value || ''))
@@ -308,6 +322,7 @@ export function apply(ctx) {
   const disposeAll = async () => {
     const list = fibers
     fibers = []
+    fiberByName.clear()
     for (const f of list) {
       try {
         if (f && typeof f.dispose === 'function') await f.dispose()
@@ -321,65 +336,138 @@ export function apply(ctx) {
     watchers = []
   }
 
-  const sync = async () => {
-    const gen = ++generation
-    clearRestrictions()
-    projectTools = []
-    await disposeAll()
-    closeWatchers()
-
-    let roots = []
-    try {
-      roots = ctx.workspaceRegistry.list().map((w) => String(w.path))
-    } catch (e) {
-      log('workspaceRegistry 不可用:', String((e && e.message) || e))
+  // 只 dispose 指定名字的服务器，其它健康服务器不受影响。
+  const disposeServers = async (names) => {
+    const removed = []
+    for (const name of names) {
+      const f = fiberByName.get(name)
+      if (f) {
+        removed.push(f)
+        fiberByName.delete(name)
+      }
     }
-    const servers = collectServers(roots)
-    log('发现', servers.length, '个 MCP 服务器:', servers.map((s) => s.name).join(', ') || '(无)')
+    if (removed.length) fibers = fibers.filter((f) => !removed.includes(f))
+    for (const f of removed) {
+      try {
+        if (f && typeof f.dispose === 'function') await f.dispose()
+      } catch {}
+    }
+  }
 
-    let client
-    try {
-      client = await ensureClient()
-    } catch (e) {
-      log('无法加载 dsh-mcp-client:', String((e && e.message) || e))
+  // ── 精准重连 ──
+  // 只重建传入名字的服务器（针对看门狗发现 down 的那部分），不惊动其它健康挂载。
+  // 配置本身的变更仍走全量 sync()（fs.watch / session/created / mcp_reconnect）。
+  const rebuildCfg = (s) => s.transport === 'streamable-http'
+    ? { serverName: s.name, transport: s.transport, url: s.url, headers: s.headers }
+    : { serverName: s.name, transport: s.transport, command: s.command, args: s.args, env: s.env, cwd: s.cwd }
+  const reconnectServers = async (names) => {
+    if (syncing) {
+      scheduleSync()
       return
     }
-
-    for (const s of servers) {
-      if (gen !== generation) return
-      const cfg = s.transport === 'streamable-http'
-        ? { serverName: s.name, transport: s.transport, url: s.url, headers: s.headers }
-        : { serverName: s.name, transport: s.transport, command: s.command, args: s.args, env: s.env, cwd: s.cwd }
+    const targetSet = new Set(names)
+    const targets = currentServers.filter((s) => targetSet.has(s.name))
+    if (!targets.length) return
+    syncing = true
+    const gen = ++generation
+    try {
+      await disposeServers(targetSet)
+      let client
       try {
-        const f = ctx.plugin(client, cfg)
-        fibers.push(f)
-        log('挂载', s.name, s.transport, s.url || s.command, '<-', s.source)
+        client = await ensureClient()
       } catch (e) {
-        log('挂载失败:', s.name, String((e && e.message) || e))
+        log('无法加载 dsh-mcp-client:', String((e && e.message) || e))
+        return
       }
-    }
-
-    // Wait for initial tool synchronization before deriving per-agent visibility.
-    await Promise.allSettled(fibers.map((fiber) => Promise.resolve(fiber)))
-    if (gen !== generation) return
-    refreshRestrictions(servers)
-
-    // 监听已存在的候选配置文件（编辑后自动重扫）
-    const candidateFiles = [
-      ...PROJECT_FILES.map((f) => f.file),
-      '.mcp.json',
-      '.codex/config.toml',
-      join('.config', 'opencode', 'opencode.json'),
-    ]
-    for (const root of [...roots, homedir()]) {
-      for (const rel of candidateFiles) {
-        const p = join(root, rel)
-        if (!existsSync(p)) continue
+      const mounted = []
+      for (const s of targets) {
+        if (gen !== generation) return
         try {
-          const w = watch(p, { persistent: false }, () => scheduleSync())
-          watchers.push(w)
-        } catch {}
+          const f = ctx.plugin(client, rebuildCfg(s))
+          fibers.push(f)
+          fiberByName.set(s.name, f)
+          mounted.push(f)
+          log('重连', s.name, s.transport, s.url || s.command, '<-', s.source)
+        } catch (e) {
+          log('挂载失败:', s.name, String((e && e.message) || e))
+        }
       }
+      await Promise.allSettled(mounted.map((f) => Promise.resolve(f)))
+      if (gen !== generation) return
+      refreshRestrictions(currentServers)
+    } finally {
+      syncing = false
+    }
+  }
+
+  const sync = async () => {
+    if (syncing) {
+      scheduleSync()
+      return
+    }
+    syncing = true
+    const gen = ++generation
+    try {
+      clearRestrictions()
+      projectTools = []
+      await disposeAll()
+      closeWatchers()
+
+      let roots = []
+      try {
+        roots = ctx.workspaceRegistry.list().map((w) => String(w.path))
+      } catch (e) {
+        log('workspaceRegistry 不可用:', String((e && e.message) || e))
+      }
+      const servers = collectServers(roots)
+      log('发现', servers.length, '个 MCP 服务器:', servers.map((s) => s.name).join(', ') || '(无)')
+
+      let client
+      try {
+        client = await ensureClient()
+      } catch (e) {
+        log('无法加载 dsh-mcp-client:', String((e && e.message) || e))
+        return
+      }
+
+      for (const s of servers) {
+        if (gen !== generation) return
+        const cfg = rebuildCfg(s)
+        try {
+          const f = ctx.plugin(client, cfg)
+          fibers.push(f)
+          fiberByName.set(s.name, f)
+          log('挂载', s.name, s.transport, s.url || s.command, '<-', s.source)
+        } catch (e) {
+          log('挂载失败:', s.name, String((e && e.message) || e))
+        }
+      }
+
+      // Wait for initial tool synchronization before deriving per-agent visibility.
+      await Promise.allSettled(fibers.map((fiber) => Promise.resolve(fiber)))
+      if (gen !== generation) return
+      refreshRestrictions(servers)
+      currentServers = servers
+
+      // 监听已存在的候选配置文件（编辑后自动重扫）
+      const candidateFiles = [
+        ...PROJECT_FILES.map((f) => f.file),
+        '.mcp.json',
+        '.codex/config.toml',
+        join('.config', 'opencode', 'opencode.json'),
+      ]
+      for (const root of [...roots, homedir()]) {
+        for (const rel of candidateFiles) {
+          const p = join(root, rel)
+          if (!existsSync(p)) continue
+          try {
+            const w = watch(p, { persistent: false }, () => scheduleSync())
+            watchers.push(w)
+          } catch {}
+        }
+      }
+    } finally {
+      syncing = false
     }
   }
 
@@ -391,16 +479,164 @@ export function apply(ctx) {
     }, 500)
   }
 
+  // ── 自动重连看门狗 ──
+  // 官方 dsh-mcp-client 有自带重连，但在连续失败超过 maxAttempts 后会「放弃」：
+  // 注销该服务器的工具并停止（日志 giving up after N consecutive failed …）。
+  // 这种「放弃」终态正是 UE 反复开关后连不上的根因。看门狗定期检查每个已挂载
+  // 服务器的工具是否仍在注册表里；若消失（说明官方已放弃），就用一次完整 sync()
+  // （dispose 全部 + 重新挂载）强制重建连接，实现「UE 回来就能自动接上」。
+  const serversPresent = (server) => {
+    const prefix = `mcp__${server.name}__`
+    return ctx.tools.schemas().some((s) => s.name.startsWith(prefix))
+  }
+  // 对曾经在线、后来工具消失的服务器做指数退避重连，而不是每 15s 无脑全量重扫。
+  // 这样 UE 临时关闭时日志不会一直刷，UE 一旦恢复就通知并复位计时。
+  const backoffFor = (attempts) => Math.min(15000 << Math.min(attempts, 8), 10 * 60 * 1000)
+
+  const checkHealth = () => {
+    if (syncing) return
+    if (!currentServers.length) return
+    const names = new Set(currentServers.map((s) => s.name))
+    // 清理已不在挂载清单里的残留状态
+    for (const k of [...hostState.keys()]) if (!names.has(k)) hostState.delete(k)
+    const now = Date.now()
+    const toReconnect = []
+    for (const server of currentServers) {
+      const st = hostState.get(server.name) || { downSince: null, presentCount: 0, attempts: 0, lastAttempt: 0 }
+      const present = serversPresent(server)
+      if (present) {
+        // 连续两轮都观察到工具存在，才判定「恢复」，避免重连窗口内的抖动误报
+        st.presentCount++
+        if (st.downSince !== null && st.presentCount >= 2) {
+          log('MCP 服务器已恢复:', server.name)
+          st.downSince = null
+          st.presentCount = 0
+          st.attempts = 0
+          st.lastAttempt = now
+        }
+      } else {
+        st.presentCount = 0
+        if (st.downSince === null) {
+          // 首次发现离线：立即重连一次并记录时间，之后进入退避节奏
+          st.downSince = now
+          st.attempts = 0
+          st.lastAttempt = now
+          log('检测到 MCP 服务器工具已消失，进入自动重连:', server.name)
+          toReconnect.push(server.name)
+        } else if (now - st.lastAttempt >= backoffFor(st.attempts) && now - st.downSince > 5000) {
+          const attempts = st.attempts + 1
+          st.attempts = attempts
+          st.lastAttempt = now
+          log(`MCP 服务器仍离线，第 ${attempts} 次退避重连:`, server.name)
+          toReconnect.push(server.name)
+        }
+      }
+      hostState.set(server.name, st)
+    }
+    // 只重连 down 的那部分（按名字精准重建），健康服务器不受影响
+    if (toReconnect.length) void reconnectServers(toReconnect)
+  }
+  const startHealthCheck = () => {
+    if (healthTimer) return
+    healthTimer = setInterval(checkHealth, HEALTH_CHECK_INTERVAL_MS)
+    healthTimer.unref()
+  }
+  const stopHealthCheck = () => {
+    if (healthTimer) {
+      clearInterval(healthTimer)
+      healthTimer = null
+    }
+  }
+
   ctx.effect(() => {
     void sync()
+    startHealthCheck()
+    // 手动重连工具：强制重新读取配置并重建所有（或指定）MCP 服务器连接。
+    // 官方客户端放弃重连后，这是从「giving up」终态恢复的标准入口。
+    try {
+      ctx.tools.register({
+        name: 'mcp_reconnect',
+        description: '手动重连 MCP 服务器。当 MCP 服务器（例如 UE 的 MCP）被关闭后再打开，官方客户端的自动重连可能已放弃（工具被注销），调用本工具会强制重新读取配置并重建连接。参数 serverName 省略时重连全部已配置服务器。',
+        parameters: {
+          serverName: {
+            type: 'string',
+            description: '要重连的 MCP 服务器名；省略则重连全部已配置服务器。'
+          }
+        },
+        output: {
+          schema: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              ok: { type: 'boolean', required: true },
+              message: { type: 'string', required: true },
+              reconnected: { type: 'array', items: { type: 'string' }, required: false }
+            }
+          },
+          render: (_args, value) => [{ type: 'text', text: value.message }]
+        },
+        timeoutMs: 90000,
+        async execute(args) {
+          const target = typeof args?.serverName === 'string' ? args.serverName.trim() : ''
+          if (target) {
+            // 指定了 serverName：只精准重连该服务器
+            const exists = currentServers.some((s) => s.name === target)
+            if (!exists) return { ok: false, message: `未找到已配置的 MCP 服务器「${target}」。当前已配置: ${currentServers.map((s) => s.name).join(', ') || '(无)'}`, reconnected: [] }
+            await reconnectServers([target])
+            const restored = currentServers.filter((s) => s.name === target && serversPresent(s)).map((s) => s.name)
+            return { ok: true, message: `已重连 MCP 服务器「${target}」。`, reconnected: restored }
+          }
+          // 未指定：全量重建（重读配置，处理配置变更）
+          await sync()
+          const reconnected = currentServers.map((s) => s.name)
+          return { ok: true, message: `已重连全部 MCP 服务器。当前已挂载: ${reconnected.join(', ') || '(无)'}`, reconnected }
+        }
+      })
+    } catch (e) {
+      log('注册 mcp_reconnect 工具失败:', String((e && e.message) || e))
+    }
+    // ── 对话框 slash 命令：/mcp-reconnect [服务器名] ──
+    // 直接执行、结果直接显示，不经过模型。用法：
+    //   /mcp-reconnect            重连全部（重读配置）
+    //   /mcp-reconnect unreal     只精准重连指定服务器
+    let offReconnectCommand = () => {}
+    try {
+      offReconnectCommand = ctx.commands.register({
+        name: 'mcp-reconnect',
+        description: '手动重连 MCP 服务器（如 UE 的 MCP 被关闭后重新打开）。传服务器名则只重连该服务器，省略则重连全部。',
+        input: { hint: 'MCP 服务器名（可省略）' },
+        async handler(invocation) {
+          const target = String(invocation.rawInput || '').trim()
+          try {
+            if (target) {
+              const exists = currentServers.some((s) => s.name === target)
+              if (!exists) {
+                return { kind: 'error', text: `未找到已配置的 MCP 服务器「${target}」。已配置: ${currentServers.map((s) => s.name).join(', ') || '(无)'}` }
+              }
+              await reconnectServers([target])
+              return { kind: 'success', text: `已重连 MCP 服务器「${target}」。` }
+            }
+            await sync()
+            const mounted = currentServers.map((s) => s.name).join(', ') || '(无)'
+            return { kind: 'success', text: `已重连全部 MCP 服务器。当前已挂载: ${mounted}` }
+          } catch (e) {
+            return { kind: 'error', text: `重连失败: ${String((e && e.message) || e)}` }
+          }
+        },
+      })
+    } catch (e) {
+      log('注册 /mcp-reconnect 命令失败:', String((e && e.message) || e))
+    }
     const offSession = ctx.on('session/created', () => scheduleSync(), { global: true })
     const offAgent = ctx.on('agent/created', ({ agent }) => restrictAgent(agent), { global: true })
     return () => {
       offSession()
       offAgent()
+      try { offReconnectCommand() } catch {}
       clearRestrictions()
       projectTools = []
       closeWatchers()
+      stopHealthCheck()
       if (timer) clearTimeout(timer)
       void disposeAll()
     }

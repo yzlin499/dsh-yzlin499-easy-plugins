@@ -35,6 +35,34 @@ and skips it instead of handing it to the MCP client's reconnect loop.
 > Streamable HTTP, not legacy SSE. Explicit `type: "sse"` entries are skipped so
 > a later supported configuration with the same name can take over.
 
+## Reconnection
+
+The official client ships its own auto-reconnect (starts at 0.5s, exponential
+backoff capped at 30s, max 10 attempts), but **after too many consecutive
+failures it gives up**: it unregisters that server's tools and stops, logging
+`giving up after N consecutive failed reconnect attempts …`. After that the only
+recovery was reloading the plugin or restarting the Host. `dsh-mcp-compat` adds
+two layers on top:
+
+1. **Auto-reconnect watchdog**: every 15s it checks the mounted servers; if a
+   server's tools vanish from the registry (meaning the official reconnect gave
+   up), it **reconnects only that down server** (leaving healthy mounts alone),
+   retrying with exponential backoff (15s → 30s → 60s → … → capped at 10 min).
+   Great for repeatedly toggling UE or any slow-starting server — as long as the
+   server eventually comes back, it reconnects on its own, without spamming logs
+   while it is offline.
+2. **Manual reconnect**, either way:
+   - **Slash command `/mcp-reconnect`** in the chat input box: executes directly
+     without going through the model, with the result shown inline.
+     `/mcp-reconnect` reconnects all (re-reads config); `/mcp-reconnect <name>`
+     (e.g. `/mcp-reconnect unreal`) reconnects only that one server.
+   - **Model tool `mcp_reconnect`**: ask the model in any session to force a
+     reconnect — it re-reads the config and rebuilds (all or a named) server
+     connections immediately. Also clears the "gave up" terminal state.
+
+For example, say "reconnect the UE MCP" to make the model call `mcp_reconnect`,
+or type `/mcp-reconnect unreal` directly in the input box.
+
 ## License
 
 MIT
