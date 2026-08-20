@@ -27,6 +27,12 @@ dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/ds
 配置文件变更（fs.watch）或新会话（`session/created`）自动重扫。stdio 服务器若配置了不存在的
 绝对命令路径，插件只输出一次明确诊断并跳过，不会交给 MCP client 持续重连。
 
+### 设置：选择要扫描的配置源
+
+设置页（「插件」→「MCP 兼容」卡片）可按需勾选要扫描的配置源体系（默认全开）：
+Claude（`.mcp.json`）、Cursor（`.cursor/mcp.json`）、opencode、Codex（`.codex/config.toml`）。
+只勾选你常用的（例如只开 Claude），就不会再“全部扫一遍”。保存后立即按新配置重建挂载。
+
 > 官方 `@deepseek-ai/dsh-mcp-client` 目前支持 stdio 和 Streamable HTTP，不支持旧版 SSE。
 > 显式声明 `type: "sse"` 的条目会被跳过，以便后续配置文件中的同名 Streamable HTTP 条目接管。
 

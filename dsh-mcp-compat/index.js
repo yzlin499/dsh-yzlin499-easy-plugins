@@ -22,7 +22,7 @@ import { homedir } from 'node:os'
 export const name = 'mcp-compat'
 // loader：经 loader 自己的解析拿 dsh-mcp-client（bundle 源目录在项目里，
 // 顶层裸 import '@deepseek-ai/dsh-mcp-client' 会按源目录解析失败）
-export const inject = ['workspaceRegistry', 'loader', 'tools', 'agents', 'commands']
+export const inject = ['workspaceRegistry', 'loader', 'tools', 'agents', 'commands', 'settings', 'webServer']
 
 const log = (...a) => console.log('[mcp-compat]', ...a)
 const reportedInvalidCommands = new Set()
@@ -190,24 +190,34 @@ function parseCodexToml(text, source) {
   return out
 }
 
+// 可扫描的配置源体系：每个 family 对应一类 Agent 的约定，可在设置里按需开启
+const ALL_FAMILIES = ['claude', 'cursor', 'opencode', 'codex']
+const FAMILY_LABELS = {
+  claude: 'Claude（.mcp.json）',
+  cursor: 'Cursor（.cursor/mcp.json）',
+  opencode: 'opencode（opencode.json / ~/.config/opencode/opencode.json）',
+  codex: 'Codex（.codex/config.toml）',
+}
 // ── 配置来源清单 ──
 const PROJECT_FILES = [
-  { file: '.mcp.json', parse: parseMcpJson },
-  { file: 'opencode.json', parse: parseOpencodeJson },
-  { file: 'opencode.jsonc', parse: parseOpencodeJson },
-  { file: '.cursor/mcp.json', parse: parseMcpJson },
-  { file: '.codex/config.toml', parse: parseCodexToml },
+  { file: '.mcp.json', parse: parseMcpJson, family: 'claude' },
+  { file: 'opencode.json', parse: parseOpencodeJson, family: 'opencode' },
+  { file: 'opencode.jsonc', parse: parseOpencodeJson, family: 'opencode' },
+  { file: '.cursor/mcp.json', parse: parseMcpJson, family: 'cursor' },
+  { file: '.codex/config.toml', parse: parseCodexToml, family: 'codex' },
 ]
 const GLOBAL_FILES = [
-  { file: '.mcp.json', parse: parseMcpJson },
-  { file: '.codex/config.toml', parse: parseCodexToml },
-  { file: join('.config', 'opencode', 'opencode.json'), parse: parseOpencodeJson },
+  { file: '.mcp.json', parse: parseMcpJson, family: 'claude' },
+  { file: '.codex/config.toml', parse: parseCodexToml, family: 'codex' },
+  { file: join('.config', 'opencode', 'opencode.json'), parse: parseOpencodeJson, family: 'opencode' },
 ]
 
 // 测试钩子：node 脚本可直接 import 本模块做解析验证
 export { parseMcpJson, parseOpencodeJson, parseCodexToml, collectServers, PROJECT_FILES, GLOBAL_FILES }
 
-function collectServers(workspacePaths) {
+// 支持按启用的 family（配置源体系）过滤。enabled 为空/未传时 = 全部开启（保持原行为）。
+function collectServers(workspacePaths, enabled) {
+  const enabledSet = !enabled ? null : new Set(enabled)
   const byName = new Map()
   const found = []
   const add = (server) => {
@@ -227,7 +237,8 @@ function collectServers(workspacePaths) {
     found.push(server)
   }
   const readAll = (root, list, workspaceRoot) => {
-    for (const { file, parse } of list) {
+    for (const { file, parse, family } of list) {
+      if (enabledSet && !enabledSet.has(family)) continue
       const p = join(root, file)
       if (!existsSync(p)) continue
       try {
@@ -248,7 +259,35 @@ function collectServers(workspacePaths) {
   return found
 }
 
-export function apply(ctx) {
+export async function apply(ctx) {
+  // ── 持久化设置：注册命名空间（schemastery schema 经 loader 拉取）──
+  const NS = 'dsh-mcp-compat'
+  let scope = null
+  let memScanners = [...ALL_FAMILIES]
+  try {
+    const mod = await ctx.loader.import('@deepseek-ai/schemastery')
+    const z = mod && mod.default ? mod.default : mod
+    scope = ctx.settings.register(NS, z.object({
+      scanners: z.array(z.string()).default(ALL_FAMILIES),
+    }))
+  } catch (e) {
+    log('settings 注册失败，回退内存态:', String((e && e.message) || e))
+  }
+
+  // 当前启用的扫描 family（设置里勾选；settings 不可用时回退全部）
+  const readScanners = () => {
+    if (scope) {
+      try {
+        const v = scope.get()
+        if (v && Array.isArray(v.scanners) && v.scanners.length) {
+          const valid = v.scanners.filter((s) => ALL_FAMILIES.includes(s))
+          return valid.length ? valid : [...memScanners]
+        }
+      } catch {}
+    }
+    return [...memScanners]
+  }
+
   let mcpClientPlugin = null
   const ensureClient = async () => {
     if (mcpClientPlugin) return mcpClientPlugin
@@ -419,8 +458,9 @@ export function apply(ctx) {
       } catch (e) {
         log('workspaceRegistry 不可用:', String((e && e.message) || e))
       }
-      const servers = collectServers(roots)
-      log('发现', servers.length, '个 MCP 服务器:', servers.map((s) => s.name).join(', ') || '(无)')
+      const scanners = readScanners()
+      const servers = collectServers(roots, scanners)
+      log('发现', servers.length, '个 MCP 服务器:', servers.map((s) => s.name).join(', ') || '(无)', '（扫描源:', scanners.join('+') || '(未启用)', '）')
 
       let client
       try {
@@ -449,12 +489,11 @@ export function apply(ctx) {
       refreshRestrictions(servers)
       currentServers = servers
 
-      // 监听已存在的候选配置文件（编辑后自动重扫）
+      // 监听已存在的候选配置文件（编译后自动重扫）；只监听当前启用的 family
+      const enabledSet = new Set(scanners)
       const candidateFiles = [
-        ...PROJECT_FILES.map((f) => f.file),
-        '.mcp.json',
-        '.codex/config.toml',
-        join('.config', 'opencode', 'opencode.json'),
+        ...PROJECT_FILES.filter((f) => enabledSet.has(f.family)).map((f) => f.file),
+        ...GLOBAL_FILES.filter((f) => enabledSet.has(f.family)).map((f) => f.file),
       ]
       for (const root of [...roots, homedir()]) {
         for (const rel of candidateFiles) {
@@ -640,5 +679,59 @@ export function apply(ctx) {
       if (timer) clearTimeout(timer)
       void disposeAll()
     }
+  })
+
+  // ── 设置卡片数据路由（Client 设置卡片读写扫描源配置）──
+  const sendJson = (res, obj, status = 200) => {
+    res.writeHead(status, {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-store',
+    })
+    res.end(JSON.stringify(obj))
+  }
+  const readBody = (req) => new Promise((resolve) => {
+    let data = ''
+    req.on('data', (c) => { data += c })
+    req.on('end', () => {
+      try { resolve(data ? JSON.parse(data) : {}) } catch { resolve({}) }
+    })
+    req.on('error', () => resolve({}))
+  })
+  ctx.webServer.register({
+    kind: 'prefix',
+    path: '/mcp-compat',
+    handler: async (req, res) => {
+      try {
+        const url = new URL(req.url, 'http://localhost')
+        if (url.pathname === '/mcp-compat/config' && req.method === 'GET') {
+          sendJson(res, { scanners: readScanners(), all: ALL_FAMILIES, labels: FAMILY_LABELS })
+          return
+        }
+        if (url.pathname === '/mcp-compat/config' && req.method === 'POST') {
+          const a = await readBody(req)
+          if (!Array.isArray(a.scanners)) {
+            sendJson(res, { ok: false, error: 'scanners 需为 family 名数组' }, 400)
+            return
+          }
+          const next = a.scanners.filter((s) => ALL_FAMILIES.includes(String(s)))
+          try {
+            if (scope) await scope.update({ scanners: next })
+            else memScanners = [...next]
+            log('扫描源配置 ->', JSON.stringify(next))
+            // 立即按新配置重建挂载
+            void sync()
+            sendJson(res, { ok: true, scanners: next })
+          } catch (e) {
+            log('扫描源配置保存失败:', String((e && e.message) || e))
+            sendJson(res, { ok: false, error: '保存失败: ' + String((e && e.message) || e) }, 500)
+          }
+          return
+        }
+        sendJson(res, { ok: false, error: 'not-found' }, 404)
+      } catch (e) {
+        log('config 路由异常:', String((e && e.message) || e))
+        sendJson(res, { ok: false, error: String((e && e.message) || e) }, 500)
+      }
+    },
   })
 }

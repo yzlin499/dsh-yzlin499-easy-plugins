@@ -31,6 +31,14 @@ new sessions (`session/created`) trigger a rescan. If a stdio server declares an
 absolute command path that does not exist, the plugin logs one clear diagnostic
 and skips it instead of handing it to the MCP client's reconnect loop.
 
+### Setting: choose which config sources to scan
+
+In Settings (Plugins → "MCP 兼容" card) you can tick which config-source
+families to scan (all enabled by default): Claude (`.mcp.json`), Cursor
+(`.cursor/mcp.json`), opencode, Codex (`.codex/config.toml`). Tick only the ones
+you use (e.g. just Claude) to stop scanning everything. Saving re-mounts
+immediately with the new selection.
+
 > The official `@deepseek-ai/dsh-mcp-client` currently supports stdio and
 > Streamable HTTP, not legacy SSE. Explicit `type: "sse"` entries are skipped so
 > a later supported configuration with the same name can take over.
