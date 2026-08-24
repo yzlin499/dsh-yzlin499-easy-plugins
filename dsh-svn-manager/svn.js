@@ -21,15 +21,140 @@ function redact(text) {
   return String(text).replace(/([a-z][a-z0-9+.-]*:\/\/)([^/@\s]+)@/gi, '$1***@')
 }
 
-export function runSvn(cwd, args, options = {}) {
+// ── SVN 可执行文件解析与 WSL 路径转换 ──────────────────────────────────────
+// 原生 Windows 上直接 `svn`；WSL（Linux）下 `svn` 不存在时自动回退到 Windows 的
+// `svn.exe`（WSL interop 会把 Windows PATH 自动追加到 WSL PATH）。Windows 版
+// svn 只认 Windows 路径：interop 只翻译子进程的 cwd，argv 里的绝对 Linux 路径
+// 原样透传。因此在 WSL 下使用 svn.exe 时，cwd 与绝对路径参数需转换成
+// `C:\...`（/mnt/c/... → C:\...），返回的 XML 里的路径再转回 Linux 路径。
+const RESOLUTION = { key: undefined, pending: null }
+const currentBackend = { windows: false }
+
+function resolveKey(configured) {
+  return typeof configured === 'string' ? configured.trim() : ''
+}
+
+export function svnExecutableCandidates(configured) {
+  if (resolveKey(configured) !== '') return [resolveKey(configured)]
+  const list = ['svn', 'svn.exe']
+  if (process.platform === 'win32') {
+    list.push(
+      'C:\\Program Files\\TortoiseSVN\\bin\\svn.exe',
+      'C:\\Program Files (x86)\\TortoiseSVN\\bin\\svn.exe',
+      'C:\\Program Files\\SlikSvn\\bin\\svn.exe',
+      'C:\\Program Files (x86)\\SlikSvn\\bin\\svn.exe',
+    )
+  } else {
+    // WSL：TortoiseSVN / SlikSvn 常见安装路径（Windows PATH 未包含时兜底）
+    list.push(
+      '/mnt/c/Program Files/TortoiseSVN/bin/svn.exe',
+      '/mnt/c/Program Files (x86)/TortoiseSVN/bin/svn.exe',
+      '/mnt/c/Program Files/SlikSvn/bin/svn.exe',
+      '/mnt/c/Program Files (x86)/SlikSvn/bin/svn.exe',
+    )
+  }
+  return [...new Set(list)]
+}
+
+function windowsLikeExecutable(executable) {
+  return /\.exe$/i.test(executable) || /\\/.test(executable) || /^[a-zA-Z]:[\\/]/.test(executable)
+}
+
+function probeExecutable(candidate) {
+  return new Promise((resolvePromise) => {
+    let settled = false
+    const finish = (value) => { if (!settled) { settled = true; resolvePromise(value) } }
+    const child = spawn(candidate, ['--version', '--quiet'], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
+    const timer = setTimeout(() => { child.kill('SIGKILL'); finish(false) }, 8_000)
+    child.on('error', () => { clearTimeout(timer); finish(false) })
+    child.on('close', (code) => { clearTimeout(timer); finish(code === 0) })
+  })
+}
+
+export async function resolveSvnExecutable(configured) {
+  const key = resolveKey(configured)
+  if (!RESOLUTION.pending || RESOLUTION.key !== key) {
+    const candidates = svnExecutableCandidates(configured)
+    const probe = (index) => {
+      if (index >= candidates.length) return Promise.resolve('')
+      return probeExecutable(candidates[index]).then((ok) => {
+        if (ok) {
+          currentBackend.windows = process.platform === 'linux' && windowsLikeExecutable(candidates[index])
+          return candidates[index]
+        }
+        return probe(index + 1)
+      })
+    }
+    RESOLUTION.key = key
+    RESOLUTION.pending = probe(0)
+  }
+  return RESOLUTION.pending
+}
+
+export function resetSvnExecutableResolution() {
+  RESOLUTION.key = undefined
+  RESOLUTION.pending = null
+  currentBackend.windows = false
+}
+
+/** Linux 绝对路径 → Windows 路径（/mnt/c/x → C:\x；发行版内部路径 → \\wsl$\<distro>\x） */
+export function toWindowsPath(path) {
+  const value = String(path)
+  const mount = /^\/mnt\/([a-zA-Z])(?:\/(.*))?$/.exec(value)
+  if (mount) return `${mount[1].toUpperCase()}:\\${(mount[2] ?? '').replace(/\//g, '\\')}`
+  if (/^[a-zA-Z]:[\\/]/.test(value)) return value.replace(/\//g, '\\')
+  if (value.startsWith('\\\\')) return value
+  const distro = process.env.WSL_DISTRO_NAME || 'WSL'
+  return `\\\\wsl$\\${distro}\\${value.replace(/^\/+/, '').replace(/\//g, '\\')}`
+}
+
+/** Windows 路径 → Linux 路径（C:\x → /mnt/c/x；\\wsl$\distro\x → /x） */
+export function toLinuxPath(path) {
+  const value = String(path)
+  // UNC：\\wsl$\<distro>\...（Windows 访问发行版内部路径）→ /<rest>
+  const wslShare = /^\\\\wsl\$\\([^\\/]+)\\(.*)$/.exec(value)
+  if (wslShare) return `/${wslShare[2].replace(/\\/g, '/')}`
+  const normalized = value.replace(/[\\/]+/g, '/')
+  const drive = /^([a-zA-Z]):\/(.*)$/.exec(normalized)
+  if (drive) return `/mnt/${drive[1].toLowerCase()}/${drive[2]}`.replace(/\/+$/, '') || `/mnt/${drive[1].toLowerCase()}`
+  return normalized
+}
+
+const NON_PATH_FLAGS = new Set(['-m', '-r', '-l', '-c'])
+function translateArgs(args) {
+  if (process.platform !== 'linux' || !currentBackend.windows) return args
+  let previous = ''
+  return args.map((arg) => {
+    const isPath = arg.startsWith('/') && !NON_PATH_FLAGS.has(previous)
+    previous = arg
+    return isPath ? toWindowsPath(arg) : arg
+  })
+}
+
+export async function runSvn(cwd, args, options = {}) {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
   const maxOutputBytes = options.maxOutputBytes ?? MAX_OUTPUT_BYTES
   const signal = options.signal
-  const command = `svn ${args.join(' ')}`
+  const executable = await resolveSvnExecutable(options.svnExecutable)
+  const translatedArgs = translateArgs(args)
+  const command = `${executable} ${translatedArgs.join(' ')}`
   if (signal?.aborted) {
     return Promise.reject(new SvnCommandError('SVN command was cancelled', 'cancelled', command, 499))
   }
-  const fullArgs = ['--non-interactive', ...args]
+  if (!executable) {
+    const configured = resolveKey(options.svnExecutable)
+    const detail = configured
+      ? `configured SVN executable is not runnable: "${configured}"`
+      : `no SVN CLI found (tried: ${svnExecutableCandidates(options.svnExecutable).join(', ')})`
+    const hint = process.platform === 'linux'
+      ? ' In WSL, install the Linux SVN CLI (e.g. sudo apt install subversion) or point the plugin setting at the Windows svn.exe.'
+      : ''
+    return Promise.reject(new SvnCommandError(`SVN CLI was not found: ${detail}.${hint}`, 'svn-unavailable', command, 503))
+  }
+  // 注意：cwd 保持 Linux 路径原样传给 spawn——WSL interop 只会把 Windows 子进程的
+  // cwd 自动翻译成 Windows 路径；若这里改传 D:\... 之类 Windows 路径，Node 会在
+  // Linux 命名空间里 chdir 失败直接 ENOENT。
+  const fullArgs = ['--non-interactive', ...translatedArgs]
   return new Promise((resolvePromise, reject) => {
     let settled = false
     let timer
@@ -38,7 +163,7 @@ export function runSvn(cwd, args, options = {}) {
     const stdoutDecoder = new StringDecoder('utf8')
     const stderrDecoder = new StringDecoder('utf8')
     let outputBytes = 0
-    const child = spawn('svn', fullArgs, {
+    const child = spawn(executable, fullArgs, {
       cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
@@ -78,7 +203,7 @@ export function runSvn(cwd, args, options = {}) {
     child.on('error', (error) => {
       const unavailable = error && error.code === 'ENOENT'
       finishError(new SvnCommandError(
-        unavailable ? 'SVN CLI was not found on PATH' : `Cannot run SVN: ${error.message}`,
+        unavailable ? `SVN executable was not found: ${executable}` : `Cannot run SVN: ${error.message}`,
         unavailable ? 'svn-unavailable' : 'svn-error',
         command,
         unavailable ? 503 : 500,
@@ -178,7 +303,7 @@ export function parseStatusXml(xml, root) {
     const wc = child(entry, 'wc-status')
     const commit = child(wc, 'commit')
     return {
-      path: displayPath(root, entry.attrs.path ?? ''),
+      path: displayPath(root, currentBackend.windows ? toLinuxPath(entry.attrs.path ?? '') : (entry.attrs.path ?? '')),
       item: wc?.attrs.item ?? 'none',
       props: wc?.attrs.props ?? 'none',
       revision: wc?.attrs.revision ?? '',
@@ -207,7 +332,7 @@ export function parseInfoXml(xml) {
     relativeUrl: text(entry, 'relative-url'),
     repositoryRoot: redact(text(repository, 'root')),
     repositoryUuid: text(repository, 'uuid'),
-    wcRoot: text(wcInfo, 'wcroot-abspath'),
+    wcRoot: currentBackend.windows ? toLinuxPath(text(wcInfo, 'wcroot-abspath')) : text(wcInfo, 'wcroot-abspath'),
     depth: text(wcInfo, 'depth'),
   }
 }
@@ -237,7 +362,7 @@ export function resolveTarget(root, requested) {
 
 export async function workingCopyInfo(cwd, options = {}) {
   try {
-    return parseInfoXml(await runSvn(cwd, ['info', '--xml', '.'], { signal: options.signal }))
+    return parseInfoXml(await runSvn(cwd, ['info', '--xml', '.'], { signal: options.signal, svnExecutable: options.svnExecutable }))
   } catch (error) {
     const notWorkingCopy = error instanceof SvnCommandError
       && error.code === 'svn-error'
@@ -293,6 +418,7 @@ export async function status(cwd, options = {}) {
     timeoutMs: options.showUpdates ? NETWORK_TIMEOUT_MS : DEFAULT_TIMEOUT_MS,
     maxOutputBytes: STATUS_MAX_OUTPUT_BYTES,
     signal: options.signal,
+    svnExecutable: options.svnExecutable,
   })
   let output
   let unversionedSuppressed = false
@@ -324,7 +450,7 @@ export async function diff(cwd, options = {}) {
   } else {
     args.push(pegSafe(scopeTarget))
   }
-  return { diff: await runSvn(info.wcRoot, args, { timeoutMs: NETWORK_TIMEOUT_MS, signal: options.signal }) }
+  return { diff: await runSvn(info.wcRoot, args, { timeoutMs: NETWORK_TIMEOUT_MS, signal: options.signal, svnExecutable: options.svnExecutable }) }
 }
 
 export async function log(cwd, options = {}) {
@@ -332,7 +458,7 @@ export async function log(cwd, options = {}) {
   const limit = Number.isInteger(options.limit) ? Math.min(Math.max(options.limit, 1), 100) : 20
   const start = options.startRevision === undefined || options.startRevision === '' ? 'HEAD' : String(options.startRevision)
   if (start !== 'HEAD' && !/^\d+$/.test(start)) throw new SvnCommandError('Invalid SVN start revision', 'bad-request')
-  const output = await runSvn(info.wcRoot, ['log', '--xml', '-r', `${start}:1`, '-l', String(limit), pegSafe(resolve(cwd))], { timeoutMs: NETWORK_TIMEOUT_MS, signal: options.signal })
+  const output = await runSvn(info.wcRoot, ['log', '--xml', '-r', `${start}:1`, '-l', String(limit), pegSafe(resolve(cwd))], { timeoutMs: NETWORK_TIMEOUT_MS, signal: options.signal, svnExecutable: options.svnExecutable })
   return parseLogXml(output)
 }
 
@@ -348,13 +474,13 @@ function targetArgs(root, paths) {
 
 export async function add(cwd, paths, options = {}) {
   const info = await requireWorkingCopy(cwd, options)
-  await runSvn(info.wcRoot, ['add', '--parents', ...targetArgs(info.wcRoot, paths)], { signal: options.signal })
+  await runSvn(info.wcRoot, ['add', '--parents', ...targetArgs(info.wcRoot, paths)], { signal: options.signal, svnExecutable: options.svnExecutable })
   return { done: true }
 }
 
 export async function revert(cwd, paths, options = {}) {
   const info = await requireWorkingCopy(cwd, options)
-  await runSvn(info.wcRoot, ['revert', '--depth', 'infinity', ...targetArgs(info.wcRoot, paths)], { signal: options.signal })
+  await runSvn(info.wcRoot, ['revert', '--depth', 'infinity', ...targetArgs(info.wcRoot, paths)], { signal: options.signal, svnExecutable: options.svnExecutable })
   return { done: true }
 }
 
@@ -362,12 +488,12 @@ export async function commit(cwd, message, options = {}) {
   const info = await requireWorkingCopy(cwd, options)
   const clean = String(message ?? '').trim()
   if (clean === '' || clean.length > 10_000) throw new SvnCommandError('Commit message is required', 'bad-request')
-  const output = await runSvn(info.wcRoot, ['commit', '-m', clean, pegSafe(resolve(cwd))], { timeoutMs: NETWORK_TIMEOUT_MS, signal: options.signal })
+  const output = await runSvn(info.wcRoot, ['commit', '-m', clean, pegSafe(resolve(cwd))], { timeoutMs: NETWORK_TIMEOUT_MS, signal: options.signal, svnExecutable: options.svnExecutable })
   return { done: true, output: redact(output.trim()) }
 }
 
 export async function update(cwd, options = {}) {
   const info = await requireWorkingCopy(cwd, options)
-  const output = await runSvn(info.wcRoot, ['update', pegSafe(resolve(cwd))], { timeoutMs: NETWORK_TIMEOUT_MS, signal: options.signal })
+  const output = await runSvn(info.wcRoot, ['update', pegSafe(resolve(cwd))], { timeoutMs: NETWORK_TIMEOUT_MS, signal: options.signal, svnExecutable: options.svnExecutable })
   return { done: true, output: redact(output.trim()) }
 }

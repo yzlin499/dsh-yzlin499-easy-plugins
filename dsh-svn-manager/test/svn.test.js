@@ -20,6 +20,8 @@ import {
   revert,
   runSvn,
   status,
+  toLinuxPath,
+  toWindowsPath,
 } from '../svn.js'
 
 const hasSvn = spawnSync('svn', ['--version', '--quiet'], { encoding: 'utf8' }).status === 0
@@ -70,6 +72,24 @@ test('rejects paths outside the working-copy root', () => {
   const root = resolve('C:/work/wc')
   assert.equal(resolveTarget(root, 'src/file.txt'), resolve(root, 'src/file.txt'))
   assert.throws(() => resolveTarget(root, '../outside.txt'), /outside the SVN working copy/)
+})
+
+test('converts paths between WSL and Windows', () => {
+  // /mnt/<drive> mounts
+  assert.equal(toWindowsPath('/mnt/d/Users/a b.txt'), 'D:\\Users\\a b.txt')
+  assert.equal(toWindowsPath('/mnt/c/Program Files/TortoiseSVN/bin/svn.exe'), 'C:\\Program Files\\TortoiseSVN\\bin\\svn.exe')
+  assert.equal(toWindowsPath('/mnt/d'), 'D:\\')
+  // distro-internal paths（发行版名取 WSL_DISTRO_NAME）
+  const distro = process.env.WSL_DISTRO_NAME || 'WSL'
+  assert.equal(toWindowsPath('/home/user/wc'), `\\\\wsl$\\${distro}\\home\\user\\wc`)
+  // already Windows
+  assert.equal(toWindowsPath('C:\\dev'), 'C:\\dev')
+  // back
+  assert.equal(toLinuxPath('D:\\Users\\a b.txt'), '/mnt/d/Users/a b.txt')
+  assert.equal(toLinuxPath('C:/work/wc/nested'), '/mnt/c/work/wc/nested')
+  assert.equal(toLinuxPath(`\\\\wsl$\\${distro}\\home\\user\\wc`), '/home/user/wc')
+  // round-trip
+  assert.equal(toLinuxPath(toWindowsPath('/mnt/d/a/b')), '/mnt/d/a/b')
 })
 
 test('honors an already-cancelled SVN command signal', async () => {
@@ -129,31 +149,48 @@ test('runs an SVN working-copy lifecycle', { skip: !(hasSvn && hasSvnAdmin), tim
     const rows = await log(wc, { limit: 10 })
     assert.equal(rows.some((entry) => entry.message === 'initial'), true)
 
-    let route
+    let routes = []
     applyPlugin({
       sessions: { get: (id) => id === 'session-1' ? { header: { cwd: wc } } : undefined },
       webRuntime: { trustedHosts: [] },
-      webServer: { register: (value) => { route = value; return () => {} } },
+      webServer: { register: (value) => { routes.push(value); return () => {} } },
       effect: (install) => install(),
     })
-    assert.ok(route)
-    const invoke = async (host, method, body) => {
-      const req = Readable.from([JSON.stringify(body)])
-      req.method = 'POST'
-      req.url = `/svn-manager/api/${method}`
+    assert.ok(routes.length >= 2)
+    const invoke = async (path, host, method, body) => {
+      const route = routes.find((entry) => path.startsWith(entry.path))
+      assert.ok(route, `no route for ${path}`)
+      const req = Readable.from([JSON.stringify(body ?? {})])
+      req.method = method
+      req.url = path
       req.headers = { host, origin: `http://${host}`, 'content-type': 'application/json' }
       const response = { status: 0, body: '', writeHead(code) { this.status = code }, end(value) { this.body = String(value ?? '') } }
       await route.handler(req, response)
-      return { status: response.status, body: JSON.parse(response.body) }
+      return { status: response.status, body: response.body ? JSON.parse(response.body) : null }
     }
-    const routedStatus = await invoke('127.0.0.1:3080', 'status', { sessionId: 'session-1' })
+    const routedStatus = await invoke('/svn-manager/api/status', '127.0.0.1:3080', 'POST', { sessionId: 'session-1' })
     assert.equal(routedStatus.status, 200)
     assert.equal(routedStatus.body.value.info.isWorkingCopy, true)
-    const rejected = await invoke('evil.example:3080', 'status', { sessionId: 'session-1' })
+    const rejected = await invoke('/svn-manager/api/status', 'evil.example:3080', 'POST', { sessionId: 'session-1' })
     assert.equal(rejected.status, 403)
-    const confirmation = await invoke('127.0.0.1:3080', 'revert', { sessionId: 'session-1', paths: ['tracked.txt'] })
+    const confirmation = await invoke('/svn-manager/api/revert', '127.0.0.1:3080', 'POST', { sessionId: 'session-1', paths: ['tracked.txt'] })
     assert.equal(confirmation.status, 400)
     assert.equal(confirmation.body.error.code, 'confirm-required')
+
+    // 配置路由：GET 返回当前值与检测结果；POST 保存 svnExecutable
+    const configRead = await invoke('/svn-manager/config', '127.0.0.1:3080', 'GET')
+    assert.equal(configRead.status, 200)
+    assert.equal(configRead.body.ok, true)
+    assert.equal(typeof configRead.body.svnExecutable, 'string')
+    assert.equal(typeof configRead.body.platform, 'string')
+    const configWrite = await invoke('/svn-manager/config', '127.0.0.1:3080', 'POST', { svnExecutable: 'svn.exe' })
+    assert.equal(configWrite.status, 200)
+    assert.equal(configWrite.body.ok, true)
+    assert.equal(configWrite.body.svnExecutable, 'svn.exe')
+    const configReadBack = await invoke('/svn-manager/config', '127.0.0.1:3080', 'GET')
+    assert.equal(configReadBack.body.svnExecutable, 'svn.exe')
+    // 恢复默认，避免影响后续环境无关断言
+    await invoke('/svn-manager/config', '127.0.0.1:3080', 'POST', { svnExecutable: '' })
 
     await revert(wc, ['tracked.txt', 'new @ file.txt'])
     snapshot = await status(wc)

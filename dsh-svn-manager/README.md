@@ -21,7 +21,9 @@ SVN 没有 Git 的 staging index，因此本插件不会伪造“已暂存/未�
 前置条件：
 
 1. 已安装 `dsh-better-sidebar >= 0.12.1`
-2. 系统已安装 SVN CLI，终端运行 `svn --version` 可用
+2. 系统已安装 SVN CLI：
+   - Windows / 原生 Linux：终端运行 `svn --version` 可用
+   - **WSL（Windows Subsystem for Linux）**：无需额外安装 Linux 版 `svn`——插件会自动回退到 Windows 的 `svn.exe`（TortoiseSVN、SlikSvn 等，经 WSL interop 执行），也可在插件设置中手动指定可执行文件
 3. DSH 使用 Node.js 20 或更高版本
 
 无需克隆本仓库，直接执行：
@@ -41,16 +43,29 @@ dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/ds
 5. 输入提交说明后点击“提交”，提交当前会话 cwd 子树中所有已调度和已修改内容。
 6. “还原”和“更新”会修改磁盘内容，执行前会显示确认对话框。
 7. 每个会话首次打开自动刷新一次；之后切换会话复用缓存，点击顶部刷新按钮或执行写操作才重新请求。
+8. 插件设置页（「插件」→「SVN」卡片）可查看当前检测到的 SVN 可执行文件，并手动指定（留空 = 自动检测）。
 
 认证完全使用本机 SVN 已有的 auth cache、证书配置和系统凭据。本插件不保存用户名、密码或证书信任信息。网络操作使用 `--non-interactive`，需要先在终端完成首次认证或证书确认。
 
-## 工作原理
+## 工作原理（WSL 兼容）
 
-Host 半侧通过参数数组调用系统 `svn`，不经过 shell：
+Host 半侧不再硬编码 `svn`，而是按顺序解析可执行文件并缓存结果：
+
+1. 插件设置里手动填写的 `svnExecutable`（留空 = 自动检测）
+2. `svn` → `svn.exe` → TortoiseSVN / SlikSvn 常见安装路径（`/mnt/c/Program Files/…`）
+3. 以 `svn <可执行文件> --version --quiet` 探测，取第一个可运行者
+
+关键点：**WSL 下 Windows 版 svn 只认 Windows 路径**。WSL interop 只会把 Windows
+子进程的 cwd 自动翻译成 Windows 路径，argv 里的绝对 Linux 路径原样透传。因此使用
+`svn.exe` 时插件会把所有绝对路径参数转换成 `C:\...` 形式（`/mnt/c/...` → `C:\...`，
+发行版内部路径 → `\\wsl$\<distro>\...`），并把返回 XML 里的 Windows 路径转回 Linux
+路径，保证页面显示、路径安全校验和会话 cwd 一致。原生 Windows / Linux 下不做转换。
+
+其余机制不变：
 
 - `svn info/status/log --xml` 提供结构化数据
 - `svn diff --git --show-copies-as-adds` 生成 unified diff
-- JSON API 固定挂载在 `/svn-manager/api/*`
+- JSON API 固定挂载在 `/svn-manager/api/*`，设置读写走 `/svn-manager/config`
 - status / log / diff / commit / update 均限定在当前会话 cwd，working-copy root 只用于路径安全校验
 - 所有文件目标必须位于 `svn info` 返回的 working-copy root 内
 - 路由使用 Host/Origin 信任围栏，写操作只接受 JSON POST
@@ -72,6 +87,8 @@ Tab 注册和 CSS 都由 Cordis fiber 持有，插件停用或 HMR 时会自动�
 - 不保存 SVN 凭据，也不会弹出交互式密码输入
 - SVN Diff 使用统一补丁视图，不复用 better-sidebar 内置的 Git 专用 Diff 组件
 - 提交操作默认覆盖当前会话 cwd 子树，不提供逐文件勾选提交
+- WSL 下使用 Windows 版 svn 时，commit / update / diff 的自由文本输出里的路径
+  仍是 Windows 风格；结构化列表（status / info / log）已全部转回 Linux 路径
 
 ## License
 

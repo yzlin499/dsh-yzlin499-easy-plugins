@@ -1,10 +1,12 @@
 import * as svn from './svn.js'
 
 export const name = 'dsh-svn-manager'
-export const inject = ['webServer', 'sessions', 'webRuntime']
+export const inject = ['webServer', 'sessions', 'webRuntime', 'settings', 'loader']
 
 const API_PREFIX = '/svn-manager/api'
+const CONFIG_PREFIX = '/svn-manager/config'
 const MAX_BODY_BYTES = 1024 * 1024
+const NS = 'dsh-svn-manager'
 
 class ApiError extends Error {
   constructor(message, code = 'bad-request', status = 400) {
@@ -107,9 +109,9 @@ function requirePaths(payload) {
   return payload.paths
 }
 
-function buildApi(ctx, runtime) {
+function buildApi(ctx, runtime, readConfig) {
   const serialMutation = async (cwd, work) => {
-    const info = await svn.workingCopyInfo(cwd, { signal: runtime.signal })
+    const info = await svn.workingCopyInfo(cwd, { signal: runtime.signal, svnExecutable: readConfig().svnExecutable })
     if (!info.isWorkingCopy || !info.wcRoot) {
       throw new svn.SvnCommandError('The session workspace is not an SVN working copy', 'not-working-copy', '', 400)
     }
@@ -127,11 +129,13 @@ function buildApi(ctx, runtime) {
     status: (payload) => svn.status(sessionCwd(ctx, payload), {
       showUpdates: payload?.showUpdates === true,
       signal: runtime.signal,
+      svnExecutable: readConfig().svnExecutable,
     }),
     diff: (payload) => svn.diff(sessionCwd(ctx, payload), {
       path: optionalString(payload, 'path'),
       revision: optionalString(payload, 'revision'),
       signal: runtime.signal,
+      svnExecutable: readConfig().svnExecutable,
     }),
     log: (payload) => {
       const rawLimit = payload?.limit
@@ -142,61 +146,144 @@ function buildApi(ctx, runtime) {
         limit: rawLimit,
         startRevision: optionalString(payload, 'startRevision'),
         signal: runtime.signal,
+        svnExecutable: readConfig().svnExecutable,
       })
     },
     add: async (payload) => {
       requireConfirm(payload, 'SVN add')
       const cwd = sessionCwd(ctx, payload)
-      return serialMutation(cwd, () => svn.add(cwd, requirePaths(payload), { signal: runtime.signal }))
+      return serialMutation(cwd, () => svn.add(cwd, requirePaths(payload), { signal: runtime.signal, svnExecutable: readConfig().svnExecutable }))
     },
     revert: async (payload) => {
       requireConfirm(payload, 'SVN revert')
       const cwd = sessionCwd(ctx, payload)
-      return serialMutation(cwd, () => svn.revert(cwd, requirePaths(payload), { signal: runtime.signal }))
+      return serialMutation(cwd, () => svn.revert(cwd, requirePaths(payload), { signal: runtime.signal, svnExecutable: readConfig().svnExecutable }))
     },
     commit: async (payload) => {
       requireConfirm(payload, 'SVN commit')
       const cwd = sessionCwd(ctx, payload)
-      return serialMutation(cwd, () => svn.commit(cwd, requireString(payload, 'message'), { signal: runtime.signal }))
+      return serialMutation(cwd, () => svn.commit(cwd, requireString(payload, 'message'), { signal: runtime.signal, svnExecutable: readConfig().svnExecutable }))
     },
     update: async (payload) => {
       requireConfirm(payload, 'SVN update')
       const cwd = sessionCwd(ctx, payload)
-      return serialMutation(cwd, () => svn.update(cwd, { signal: runtime.signal }))
+      return serialMutation(cwd, () => svn.update(cwd, { signal: runtime.signal, svnExecutable: readConfig().svnExecutable }))
     },
   }
 }
 
-export function apply(ctx) {
+export async function apply(ctx) {
   const controller = new AbortController()
   const runtime = { signal: controller.signal, locks: new Map() }
   ctx.effect(() => () => controller.abort(), 'dsh-svn-manager: cancel active SVN commands')
-  const methods = buildApi(ctx, runtime)
-  ctx.effect(() => ctx.webServer.register({
-    kind: 'prefix',
-    path: API_PREFIX,
-    handler: async (req, res) => {
-      if (!trustedRequest(req, ctx.webRuntime.trustedHosts ?? [])) {
-        writeJson(res, 403, { ok: false, error: { code: 'forbidden', message: 'Forbidden' } })
+
+  // ── 持久化设置：命名空间 dsh-svn-manager，svnExecutable 留空 = 自动检测 ──
+  let scope = null
+  const memConfig = { svnExecutable: '' }
+  const readConfig = () => {
+    if (scope) {
+      try {
+        const value = scope.get()
+        if (value && typeof value.svnExecutable === 'string') return { svnExecutable: value.svnExecutable }
+      } catch {}
+    }
+    return { ...memConfig }
+  }
+  const initSettings = async () => {
+    try {
+      const mod = await ctx.loader.import('@deepseek-ai/schemastery')
+      const z = mod && mod.default ? mod.default : mod
+      scope = ctx.settings.register(NS, z.object({ svnExecutable: z.string().default('') }))
+    } catch (error) {
+      console.log('[dsh-svn-manager] settings 注册失败，回退内存态:', String((error && error.message) || error))
+    }
+  }
+
+  const methods = buildApi(ctx, runtime, readConfig)
+
+  const configHandler = async (req, res) => {
+    if (!trustedRequest(req, ctx.webRuntime.trustedHosts ?? [])) {
+      writeJson(res, 403, { ok: false, error: { code: 'forbidden', message: 'Forbidden' } })
+      return
+    }
+    try {
+      const cfg = readConfig()
+      if (req.method === 'GET') {
+        const detected = await svn.resolveSvnExecutable(cfg.svnExecutable)
+        writeJson(res, 200, {
+          ok: true,
+          svnExecutable: cfg.svnExecutable,
+          detected: detected || null,
+          backend: detected ? (/\.exe$/i.test(detected) ? 'windows' : 'linux') : null,
+          platform: process.platform,
+        })
         return
       }
-      try {
-        if (req.method !== 'POST') throw new ApiError('Method not allowed', 'method-error', 405)
-        const contentType = header(req.headers, 'content-type') ?? ''
-        if (!contentType.toLowerCase().startsWith('application/json')) {
-          throw new ApiError('Unsupported media type', 'method-error', 415)
-        }
-        const pathname = new URL(req.url ?? '/', 'http://dsh.internal').pathname
-        const method = pathname.startsWith(`${API_PREFIX}/`) ? pathname.slice(`${API_PREFIX}/`.length) : ''
-        if (!method || method.includes('/') || typeof methods[method] !== 'function') {
-          throw new ApiError('Unknown SVN API method', 'not-found', 404)
-        }
-        const payload = await readJson(req)
-        const value = await methods[method](payload)
-        writeJson(res, 200, { ok: true, value })
-      } catch (error) {
-        writeError(res, error)
+      if (req.method !== 'POST') throw new ApiError('Method not allowed', 'method-error', 405)
+      const contentType = header(req.headers, 'content-type') ?? ''
+      if (!contentType.toLowerCase().startsWith('application/json')) {
+        throw new ApiError('Unsupported media type', 'method-error', 415)
       }
-    },
-  }), 'dsh-svn-manager: /svn-manager/api routes')
+      const body = await readJson(req)
+      const next = typeof body?.svnExecutable === 'string' ? body.svnExecutable.trim() : ''
+      if (next.length > 260 || /[\u0000-\u001f\u007f]/.test(next)) {
+        throw new ApiError('Invalid "svnExecutable"')
+      }
+      try {
+        if (scope) await scope.update({ svnExecutable: next })
+        else Object.assign(memConfig, { svnExecutable: next })
+      } catch (error) {
+        console.log('[dsh-svn-manager] config 保存失败:', String((error && error.message) || error))
+        throw new ApiError('Failed to save configuration', 'config-error', 500)
+      }
+      svn.resetSvnExecutableResolution()
+      const detected = await svn.resolveSvnExecutable(next)
+      console.log('[dsh-svn-manager] svnExecutable ->', next || '(auto)', 'detected:', detected || '(none)')
+      writeJson(res, 200, {
+        ok: true,
+        svnExecutable: next,
+        detected: detected || null,
+        backend: detected ? (/\.exe$/i.test(detected) ? 'windows' : 'linux') : null,
+        platform: process.platform,
+      })
+    } catch (error) {
+      writeError(res, error)
+    }
+  }
+
+  ctx.effect(() => {
+    const disposers = []
+    const registerApi = {
+      kind: 'prefix',
+      path: API_PREFIX,
+      handler: async (req, res) => {
+        if (!trustedRequest(req, ctx.webRuntime.trustedHosts ?? [])) {
+          writeJson(res, 403, { ok: false, error: { code: 'forbidden', message: 'Forbidden' } })
+          return
+        }
+        try {
+          if (req.method !== 'POST') throw new ApiError('Method not allowed', 'method-error', 405)
+          const contentType = header(req.headers, 'content-type') ?? ''
+          if (!contentType.toLowerCase().startsWith('application/json')) {
+            throw new ApiError('Unsupported media type', 'method-error', 415)
+          }
+          const pathname = new URL(req.url ?? '/', 'http://dsh.internal').pathname
+          const method = pathname.startsWith(`${API_PREFIX}/`) ? pathname.slice(`${API_PREFIX}/`.length) : ''
+          if (!method || method.includes('/') || typeof methods[method] !== 'function') {
+            throw new ApiError('Unknown SVN API method', 'not-found', 404)
+          }
+          const payload = await readJson(req)
+          const value = await methods[method](payload)
+          writeJson(res, 200, { ok: true, value })
+        } catch (error) {
+          writeError(res, error)
+        }
+      },
+    }
+    disposers.push(ctx.webServer.register(registerApi))
+    disposers.push(ctx.webServer.register({ kind: 'prefix', path: CONFIG_PREFIX, handler: configHandler }))
+    return () => { for (const off of disposers) { try { off?.() } catch {} } }
+  }, 'dsh-svn-manager: /svn-manager/api and /svn-manager/config routes')
+
+  void initSettings()
 }

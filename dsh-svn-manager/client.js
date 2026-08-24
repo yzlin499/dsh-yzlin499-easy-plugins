@@ -422,9 +422,55 @@ window.__ModuleLoader__.load({
       '.svnm-mask{position:fixed;inset:0;z-index:2147482000;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(0,0,0,.45)}.svnm-dialog{width:min(390px,100%);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;padding:16px;background:var(--dsw-alias-bg-layer-3);box-shadow:0 18px 50px rgba(0,0,0,.3)}.svnm-dialog-title{font-size:15px;font-weight:600}.svnm-dialog-desc{margin-top:9px;color:var(--dsw-alias-label-secondary);line-height:1.55}.svnm-dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}',
       '.svnm-diff-head span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}.svnm-diff-code{flex:1;margin:0;padding:8px 0;overflow:auto;background:var(--dsw-alias-bg-layer-3);font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;tab-size:4}.svnm-diff-line{display:block;min-width:max-content;padding:0 10px;white-space:pre}.svnm-diff-add{background:rgba(24,160,88,.14);color:var(--dsw-alias-label-primary)}.svnm-diff-del{background:rgba(220,55,65,.14);color:var(--dsw-alias-label-primary)}.svnm-diff-hunk{background:rgba(61,119,255,.12);color:var(--dsw-alias-brand-primary,#4d6bfe)}.svnm-diff-head{color:var(--dsw-alias-label-secondary)}',
       'body[data-ds-dark-theme] .svnm-badge{color:#e6a23c}body[data-ds-dark-theme] .svnm-status-added .svnm-badge{color:#45c690}body[data-ds-dark-theme] .svnm-status-replaced .svnm-badge{color:#ad8ce6}body[data-ds-dark-theme] .svnm-diff-add{background:rgba(50,190,110,.16)}body[data-ds-dark-theme] .svnm-diff-del{background:rgba(245,85,95,.16)}',
+      // 设置卡片（settings.plugin.item）
+      '.svnm-set{display:flex;flex-direction:column;gap:9px}',
+      '.svnm-set-row{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--dsw-alias-label-secondary)}',
+      '.svnm-set-label{width:112px;flex-shrink:0}',
+      '.svnm-set-input{flex:1;min-width:0;background:rgba(0,0,0,.04);border:1px solid var(--dsw-alias-border-l2);border-radius:6px;color:var(--dsw-alias-label-primary);font-size:12px;padding:5px 8px}',
+      'body[data-ds-dark-theme] .svnm-set-input{background:rgba(255,255,255,.05)}',
+      '.svnm-set-input:focus{outline:none;border-color:var(--dsw-alias-brand-primary)}',
+      '.svnm-set-hint{font-size:11px;color:var(--dsw-alias-label-secondary);opacity:.8;line-height:1.6}',
+      '.svnm-set-detected{font-size:11.5px;word-break:break-all;line-height:1.5}',
+      '.svnm-set-ok{color:#158452}body[data-ds-dark-theme] .svnm-set-ok{color:#45c690}',
+      '.svnm-set-bad{color:var(--dsw-alias-status-error,#d33c48)}',
+      '.svnm-set-foot{display:flex;align-items:center;gap:10px;margin-top:2px}',
+      '.svnm-set-btn{background:transparent;border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary);border-radius:6px;font-size:12px;line-height:1;padding:5px 12px;cursor:pointer}',
+      '.svnm-set-btn:hover{color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-border-l1)}',
+      '.svnm-set-btn[disabled]{opacity:.45;cursor:default}',
+      '.svnm-set-status{font-size:11px;color:var(--dsw-alias-label-secondary)}',
+      // 官方插件卡片外壳（对齐 PluginCard）
+      '.pc-card{border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-3);border-radius:12px;overflow:hidden}',
+      '.pc-head{appearance:none;width:100%;font:inherit;color:inherit;text-align:left;cursor:pointer;background:0 0;border:0;display:flex;align-items:center;gap:12px;padding:14px 16px}',
+      '.pc-head-text{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}',
+      '.pc-name{color:var(--dsw-alias-label-primary);font-size:15px;font-weight:600;line-height:1.4}',
+      '.pc-desc{color:var(--dsw-alias-label-tertiary);font-size:13px;line-height:1.5}',
+      '.pc-chevron{color:var(--dsw-alias-label-tertiary);flex:none;transition:transform .16s}',
+      '.pc-open{transform:rotate(180deg)}',
+      '.pc-body{border-top:1px solid var(--dsw-alias-border-l2);padding:14px 16px}',
     ].join('')
 
-    const inject = ['betterSidebar', 'locale']
+    const settingsZh = {
+      title: 'SVN 可执行文件配置（WSL / svn.exe）',
+      exec: 'SVN 可执行文件',
+      placeholder: '留空自动检测，如 svn.exe 或完整路径',
+      hint: 'WSL 下找不到 svn 时自动回退：svn → svn.exe → TortoiseSVN / SlikSvn 常见安装路径。使用 Windows 版 svn 时，工作副本路径会自动在 WSL 与 Windows 之间转换（如 /mnt/d/x ↔ D:\\x）。',
+      detected: '当前检测到',
+      detectedNone: '未检测到 SVN（请安装 Linux 版 subversion，或在下方指定路径）',
+      backendWin: 'Windows 后端', backendLinux: 'Linux 后端',
+      save: '保存', saved: '已保存', saving: '保存中…', loadFailed: '读取失败', saveFailed: '保存失败',
+    }
+    const settingsEn = {
+      title: 'SVN executable settings (WSL / svn.exe)',
+      exec: 'SVN executable',
+      placeholder: 'Leave empty to auto-detect; e.g. svn.exe or a full path',
+      hint: 'When svn is missing under WSL, falls back to: svn → svn.exe → common TortoiseSVN / SlikSvn install paths. When the Windows svn.exe is used, working-copy paths are translated between WSL and Windows automatically (e.g. /mnt/d/x ↔ D:\\x).',
+      detected: 'Detected',
+      detectedNone: 'No SVN detected (install the Linux subversion, or set a path below)',
+      backendWin: 'Windows backend', backendLinux: 'Linux backend',
+      save: 'Save', saved: 'Saved', saving: 'Saving…', loadFailed: 'Failed to load', saveFailed: 'Failed to save',
+    }
+
+    const inject = ['betterSidebar', 'locale', 'slots']
     function apply(ctx) {
       ctx.effect(() => {
         const tag = document.createElement('style')
@@ -441,6 +487,104 @@ window.__ModuleLoader__.load({
         id: 'dsh-svn-manager:diff', title: 'SVN Diff', icon: (size) => icon('file', size), order: -1, hidden: true,
         dedupeKey: (tab) => tab.id, component: (props) => h(DiffView, props),
       }))
+
+      // 设置卡片：注册进官方「插件」设置页（settings.plugin.item，keyed 插槽，
+      // key = Host 侧注册的 settings 命名空间 dsh-svn-manager）。配置读写走
+      // /svn-manager/config 路由，Host 侧经 ctx.settings 持久化。
+      function SettingsCard() {
+        const [open, setOpen] = React.useState(false)
+        const [rev, setRev] = React.useState(0)
+        const [cfg, setCfg] = React.useState({ svnExecutable: '', detected: null, backend: null, platform: '', loading: true, status: '' })
+        const labels = localeOf(ctx) === 'en' ? settingsEn : settingsZh
+
+        React.useEffect(() => {
+          const off = ctx.locale?.subscribe?.(() => setRev((value) => value + 1))
+          return typeof off === 'function' ? off : undefined
+        }, [])
+
+        React.useEffect(() => {
+          let alive = true
+          setCfg((s) => ({ ...s, loading: true }))
+          fetch('/svn-manager/config')
+            .then((r) => r.json())
+            .then((d) => {
+              if (!alive) return
+              setCfg((s) => ({
+                ...s, loading: false,
+                svnExecutable: d && typeof d.svnExecutable === 'string' ? d.svnExecutable : s.svnExecutable,
+                detected: d && d.detected ? d.detected : null,
+                backend: d && d.backend ? d.backend : null,
+                platform: d && typeof d.platform === 'string' ? d.platform : s.platform,
+                status: '',
+              }))
+            })
+            .catch(() => { if (alive) setCfg((s) => ({ ...s, loading: false, status: labels.loadFailed })) })
+          return () => { alive = false }
+        }, [rev])
+
+        const save = () => {
+          setCfg((s) => ({ ...s, status: labels.saving }))
+          fetch('/svn-manager/config', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ svnExecutable: String(cfg.svnExecutable || '').trim() }),
+          })
+            .then((r) => r.json())
+            .then((d) => {
+              if (d && d.ok) {
+                setCfg((s) => ({
+                  ...s,
+                  svnExecutable: d.svnExecutable != null ? d.svnExecutable : s.svnExecutable,
+                  detected: d.detected, backend: d.backend,
+                  status: labels.saved,
+                }))
+              } else {
+                setCfg((s) => ({ ...s, status: (d && d.error) || labels.saveFailed }))
+              }
+            })
+            .catch((error) => setCfg((s) => ({ ...s, status: String((error && error.message) || labels.saveFailed) })))
+        }
+
+        const detectedLine = cfg.detected
+          ? h('div', { className: 'svnm-set-detected svnm-set-ok' }, `${labels.detected}: ${cfg.detected}${cfg.backend ? `（${cfg.backend === 'windows' ? labels.backendWin : labels.backendLinux}）` : ''}`)
+          : h('div', { className: 'svnm-set-detected svnm-set-bad' }, `${labels.detected}: ${labels.detectedNone}`)
+
+        return h('div', { className: 'pc-card' },
+          h('button', { className: 'pc-head', onClick: () => setOpen((value) => !value) },
+            h('span', { className: 'pc-head-text' },
+              h('span', { className: 'pc-name' }, 'SVN'),
+              h('span', { className: 'pc-desc' }, labels.title),
+            ),
+            h('span', { className: 'pc-chevron' + (open ? ' pc-open' : '') }, '▾'),
+          ),
+          open ? h('div', { className: 'pc-body' },
+            h('div', { className: 'svnm-set' },
+              detectedLine,
+              h('label', { className: 'svnm-set-row' },
+                h('span', { className: 'svnm-set-label' }, labels.exec),
+                h('input', {
+                  className: 'svnm-set-input', type: 'text', value: cfg.svnExecutable,
+                  placeholder: labels.placeholder, spellCheck: false,
+                  onChange: (event) => setCfg((s) => ({ ...s, svnExecutable: event.target.value })),
+                }),
+              ),
+              h('div', { className: 'svnm-set-hint' }, labels.hint),
+              h('div', { className: 'svnm-set-foot' },
+                h('button', { className: 'svnm-set-btn', disabled: cfg.loading, onClick: save }, labels.save),
+                cfg.status ? h('span', { className: 'svnm-set-status' }, cfg.status) : null,
+              ),
+            ),
+          ) : null,
+        )
+      }
+
+      ctx.slots.inject('settings.plugin.item', () => ctx.slots.register({
+        name: 'settings.plugin.item',
+        key: 'dsh-svn-manager',
+        id: 'svn-manager-settings',
+        order: 40,
+        label: 'SVN',
+      }, SettingsCard))
     }
     exports.apply = apply
     exports.inject = inject
