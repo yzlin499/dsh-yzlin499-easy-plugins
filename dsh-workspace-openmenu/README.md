@@ -32,8 +32,10 @@ dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/ds
   WSL 互操作启动 Windows 侧应用——资源管理器直接开对应文件夹；
   cmd 开命令提示符新窗口（`pushd` 兼容 UNC 路径）；pwsh 优先 Windows 侧
   PowerShell 7（pwsh.exe）开新窗口，没装则回退 Linux pwsh（终端模拟器）；
-  vscode 优先 Linux `code` CLI（连接 Windows 版 VS Code），回退 Windows
-  `Code.exe`。路径转换失败或互操作关闭时返回明确错误。
+  vscode 优先 Windows 版 `bin/code` CLI——检测到 **Remote - WSL 扩展**时传
+  Linux 路径、以 WSL 远程方式打开；未检测到则先转成 Windows 路径再打开
+  （避免 Windows 端 CLI 把 `/mnt/...` 误当本机路径而打开错项目），并建议
+  安装 Remote - WSL 扩展。路径转换失败或互操作关闭时返回明确错误。
 - **原生 Linux（尽力而为）**：explorer → `xdg-open`；cmd/pwsh → 终端模拟器
   （gnome-terminal / konsole / kitty 等，取第一个存在的）；vscode → `code`。
 
@@ -44,7 +46,8 @@ dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/ds
   点击项 POST `/workspace-open/open`。
 - **Host**（`index.js`）：`/workspace-open/open` 按会话 cwd 和运行平台选择
   启动策略——Windows 原生启动；WSL 先 `wslpath -w` 转换路径再经互操作启动
-  Windows 侧应用；纯 Linux 走 xdg-open / 终端模拟器 / code。启动做早期失败
+  Windows 侧应用（vscode 按是否装有 Remote - WSL 扩展决定传 Linux 路径还是
+  Windows 路径）；纯 Linux 走 xdg-open / 终端模拟器 / code。启动做早期失败
   检测（找不到可执行文件、互操作关闭时快速返回错误）。
 
 ## License

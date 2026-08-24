@@ -14,11 +14,12 @@
 //     转成 Windows 路径，再走 WSL 互操作启动 Windows 侧应用：
 //       explorer.exe 直接开资源管理器；cmd.exe / start 开命令提示符新窗口；
 //       pwsh 优先 pwsh.exe（Windows 侧 PowerShell 7）开新窗口，
-//       找不到回退 Linux pwsh（终端模拟器）；vscode 优先 Linux `code` CLI
-//       （连接 Windows 版 VS Code），找不到回退 Windows Code.exe。
+//       找不到回退 Linux pwsh（终端模拟器）；vscode 优先 Windows 版
+//       `bin/code` CLI（装了 Remote-WSL 扩展时传 Linux 路径走 wslCode.sh
+//       桥接，没装则先转 Windows 路径再打开），找不到回退 Code.exe。
 //   · 原生 Linux——explorer → xdg-open；cmd/pwsh → 终端模拟器；vscode → code。
 // ═══════════════════════════════════════════════════════════════════════════
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -55,6 +56,29 @@ const CODE_CANDIDATES_WSL = [
   '/mnt/c/Program Files/Microsoft VS Code/Code.exe',
   '/mnt/c/Program Files (x86)/Microsoft VS Code/Code.exe',
 ]
+
+/**
+ * Windows 侧是否装了 Remote - WSL 扩展（ms-vscode-remote.remote-wsl）。
+ * 它决定了 WSL 下 `code` CLI 的参数形态：装了 → 直接传 Linux 路径（脚本走
+ * wslCode.sh 桥接进 WSL 远程）；没装 → 必须传 Windows 路径，否则 Windows
+ * 端 CLI 会把 Linux 路径误当成本机路径，打开错项目。
+ */
+const HAS_REMOTE_WSL = (() => {
+  try {
+    const names = []
+    for (const u of readdirSync('/mnt/c/Users')) {
+      const extDir = join('/mnt/c/Users', u, '.vscode', 'extensions')
+      try { names.push(...readdirSync(extDir)) } catch { /* 用户目录可能没有扩展 */ }
+    }
+    for (const p of CODE_CANDIDATES_WSL) {
+      if (!existsSync(p)) continue
+      try { names.push(...readdirSync(join(dirname(p), 'data', 'extensions'))) } catch { /* 非便携安装 */ }
+    }
+    return names.some((n) => n.startsWith('ms-vscode-remote.remote-wsl-'))
+  } catch {
+    return false
+  }
+})()
 
 // 原生 Linux 的终端模拟器候选（按常见程度排序，第一个存在的被采用）
 const TERMINALS = [
@@ -207,9 +231,19 @@ export function apply(ctx) {
         return { ok: false, error: '未找到 PowerShell——Windows 侧请安装 PowerShell 7（winget install Microsoft.PowerShell）' }
       }
       case 'vscode': {
-        // Linux `code` CLI：连 Windows 版 VS Code，直接吃 Linux 路径，最顺
+        // Windows 版 `bin/code` CLI：装了 Remote-WSL 扩展时直接传 Linux 路径
+        // （脚本内部 wslCode.sh 桥接，以 WSL 远程方式打开）；没装时 Windows 端
+        // CLI 不认 /mnt/… 这类路径，必须先转成 Windows 路径再打开
         const code = await resolveExe('code')
-        if (code) return spawnFork([code, workdir])
+        if (code) {
+          if (HAS_REMOTE_WSL) return spawnFork([code, workdir])
+          const win = await toWindowsPath(workdir)
+          if (win) {
+            log('未检测到 Remote-WSL 扩展，以 Windows 路径打开 vscode；建议安装 ms-vscode-remote.remote-wsl')
+            return spawnFork([code, win])
+          }
+          return { ok: false, error: '无法把工作区 Linux 路径转换为 Windows 路径' }
+        }
         const win = await toWindowsPath(workdir)
         if (win) {
           const exe = CODE_CANDIDATES_WSL.find((p) => existsSync(p))

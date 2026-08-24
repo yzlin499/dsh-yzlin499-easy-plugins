@@ -36,9 +36,12 @@ an error is shown when the session has no workspace.
   then launches Windows-side apps through WSL interop — Explorer opens the mapped
   folder directly; cmd opens a new Command Prompt window (`pushd` handles UNC
   paths); pwsh prefers Windows PowerShell 7 (`pwsh.exe`) in a new window, falling
-  back to Linux pwsh (terminal emulator); vscode prefers the Linux `code` CLI
-  (connects to the Windows VS Code), falling back to Windows `Code.exe`. Clear
-  errors are returned when path conversion or interop fails.
+  back to Linux pwsh (terminal emulator); vscode prefers the Windows `bin/code`
+  CLI — when the **Remote - WSL** extension is detected it passes the Linux path
+  and opens in WSL-remote mode; otherwise it converts the path to a Windows path
+  first (the Windows CLI would otherwise mistake `/mnt/...` for a local path and
+  open the wrong project) and suggests installing Remote - WSL. Clear errors are
+  returned when path conversion or interop fails.
 - **Native Linux (best effort)**: explorer → `xdg-open`; cmd/pwsh → a terminal
   emulator (gnome-terminal / konsole / kitty …, first one found); vscode → `code`.
 
@@ -49,9 +52,10 @@ an error is shown when the session has no workspace.
   button); button + dropdown menu, picking an item POSTs `/workspace-open/open`.
 - **Host** (`index.js`): `/workspace-open/open` picks a launch strategy from the
   session cwd and the running platform — native launch on Windows; `wslpath -w`
-  conversion plus WSL interop on WSL; xdg-open / terminal emulator / code on
-  plain Linux. Early spawn failures (missing executables, interop disabled) are
-  detected and reported quickly.
+  conversion plus WSL interop on WSL (vscode picks a Linux path or a converted
+  Windows path depending on whether Remote - WSL is installed); xdg-open /
+  terminal emulator / code on plain Linux. Early spawn failures (missing
+  executables, interop disabled) are detected and reported quickly.
 
 ## License
 
