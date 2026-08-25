@@ -731,7 +731,7 @@ export async function apply(ctx) {
     wslMode.clear()
   }
 
-  // ── 宿主机转发自动配置（每个端口只尝试一次，避免反复弹 UAC）──
+  // ── 宿主机转发自动配置（UAC 类尝试每端口一次防骚扰；瞬时状态可重试）──
   const forwardAttempted = new Set()
   const forwardWarned = new Set()
   // 为某端口确保宿主机侧可达：
@@ -739,7 +739,8 @@ export async function apply(ctx) {
   //   already          已有 portproxy + 防火墙规则；
   //   done             本次自动配置成功（UAC 授权后）；
   //   failed           配置失败（未批准 UAC / 无管理员 / 命令失败）；
-  //   skipped          本进程已尝试过该端口 / 非 WSL。
+  //   skipped          本进程已尝试过该端口（done/failed 等稳定结论）；
+  //   no-listener      瞬时状态：服务未运行/未绑定——不粘滞，后续会重试（如 UE 稍后启动）。
   const ensureHostForward = async (port) => {
     if (!isWsl()) return { status: 'not-wsl' }
     if (forwardAttempted.has(port)) return { status: 'skipped' }
@@ -775,7 +776,9 @@ export async function apply(ctx) {
       return { status: 'all-interfaces' }
     }
     if (Array.isArray(listeners) && listeners.length === 0) {
-      log('WSL 兼容：宿主机', port, '无监听（服务未运行或未绑回环）:', '不会自动转发')
+      // 瞬时状态（如 UE 稍后启动才绑定端口）：不粘滞，下次检查会重新判定
+      forwardAttempted.delete(port)
+      log('WSL 兼容：宿主机', port, '无监听（服务未运行或未绑回环）:', '暂不转发，稍后自动重试')
       return { status: 'no-listener' }
     }
     // 3) 只剩回环监听：自动建立转发——listenaddress 只绑宿主机网卡 IP
@@ -1129,16 +1132,36 @@ export async function apply(ctx) {
               fwd = r && r.status
             }
             const [probe, http] = await Promise.all([probeTcp(target), probeHttp(target)])
-            // 服务只认本机 Host（403）：改写直连无效，升级为同端口透明隧道
+            // 服务只认本机 Host（403）：改写直连无效，升级为同端口透明隧道并重连，
+            // 不再输出误导性的“仍连不上”。
             const is403 = typeof http === 'string' && http.startsWith('HTTP 403')
             if (is403 && readWslCfg().compat && wslMode.get(server.name) !== 'tunnel') {
-              log('WSL 兼容：宿主机服务只认本机 Host（HTTP 403），升级为同端口透明隧道:', server.name, server.url)
+              log('WSL 兼容：宿主机服务只认本机 Host（HTTP 403），升级为同端口透明隧道并重连:', server.name, server.url)
               wslMode.set(server.name, 'tunnel')
               if (!wslActive.has(server.name)) wslActive.add(server.name)
-              if (await ensureTunnel(server.url)) void reconnectServers([server.name])
+              if (await ensureTunnel(server.url)) {
+                void reconnectServers([server.name])
+                return
+              }
             }
             log('WSL 兼容：仍连不上', server.name, server.url, '（TCP:', probe, '；握手:', http, fwd ? `；转发: ${fwd}` : '', '）。若 TCP 不可达：确认宿主机端口转发已生效（可点设置卡片“立即配置宿主机转发”）且服务在运行；若 HTTP 403：服务只认本机 Host（如 JetBrains），已自动升级隧道；若握手超时：服务未响应 MCP 握手，多半是服务未启动或还在启动中。详见 README「WSL 宿主兼容」。')
           })()
+        }
+        // 周期性地重试宿主机转发（no-listener 是瞬时状态，服务稍后启动就会补上；
+        // done/failed 等结论由 forwardAttempted 防重，开销极低）
+        if (readWslCfg().compat && readWslCfg().autoForward && wslActive.has(server.name)) {
+          const tUrl = server.transport === 'streamable-http' ? wslFallbackUrl(server.url) || server.url : ''
+          if (tUrl) {
+            try {
+              const fwdPort = Number(new URL(tUrl).port) || (tUrl.startsWith('https:') ? 443 : 80)
+              void ensureHostForward(fwdPort).then((r) => {
+                if (r && r.status === 'done') {
+                  log('WSL 兼容：宿主机转发已就绪，触发重连:', server.name)
+                  void reconnectServers([server.name])
+                }
+              })
+            } catch {}
+          }
         }
         if (st.downSince === null) {
           // 首次发现离线：立即重连一次并记录时间，之后进入退避节奏
@@ -1214,10 +1237,11 @@ export async function apply(ctx) {
           schema: {
             type: 'object',
             additionalProperties: false,
+            required: ['ok', 'message'],
             properties: {
-              ok: { type: 'boolean', required: true },
-              message: { type: 'string', required: true },
-              reconnected: { type: 'array', items: { type: 'string' }, required: false }
+              ok: { type: 'boolean' },
+              message: { type: 'string' },
+              reconnected: { type: 'array', items: { type: 'string' } }
             }
           },
           render: (_args, value) => [{ type: 'text', text: value.message }]
