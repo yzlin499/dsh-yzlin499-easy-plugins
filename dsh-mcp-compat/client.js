@@ -63,8 +63,15 @@ window.__ModuleLoader__.load({
 		}
 
 		function apply(ctx) {
+			function configWslText(wsl) {
+				if (!wsl || !wsl.detected) return "未检测到 WSL，无需改写（直连 localhost）";
+				const ip = wsl.hostIp ? "宿主机 IP " + wsl.hostIp : "未解析到宿主机 IP（可设置环境变量 WSL_HOST_IP）";
+				const mode = wsl.mode && wsl.mode.length ? "；已启用兼容: " + wsl.mode.join("、") : "；localhost 连接失败时自动启用兼容（同端口隧道 / 地址改写）";
+				return "已检测到 WSL，" + ip + mode;
+			}
+
 			function SettingsCard() {
-				const [cfg, setCfg] = react.useState({ scanners: [], all: [], labels: {}, loading: true, status: "" });
+				const [cfg, setCfg] = react.useState({ scanners: [], all: [], labels: {}, wsl: null, compat: true, autoForward: true, fwdStatus: "", loading: true, status: "" });
 				const [open, setOpen] = react.useState(false);
 
 				react.useEffect(() => {
@@ -80,6 +87,9 @@ window.__ModuleLoader__.load({
 								scanners: list,
 								all: Array.isArray(d && d.all) ? d.all : [],
 								labels: d && d.labels || {},
+								wsl: (d && d.wsl) || null,
+								compat: !!(d && d.wsl && d.wsl.compat),
+								autoForward: !!(d && d.wsl && d.wsl.autoForward),
 								status: "",
 							}));
 						})
@@ -104,7 +114,7 @@ window.__ModuleLoader__.load({
 					fetch("/mcp-compat/config", {
 						method: "POST",
 						headers: { "content-type": "application/json" },
-						body: JSON.stringify({ scanners: cfg.scanners }),
+						body: JSON.stringify({ scanners: cfg.scanners, wslCompat: cfg.compat, wslAutoForward: cfg.autoForward }),
 					})
 						.then((r) => r.json())
 						.then((d) => {
@@ -119,6 +129,37 @@ window.__ModuleLoader__.load({
 							}
 						})
 						.catch((e) => setCfg((s) => ({ ...s, status: String((e && e.message) || "保存失败") })));
+				};
+
+				const runWslForward = () => {
+					setCfg((s) => ({ ...s, fwdStatus: "正在配置宿主机转发（可能弹出 Windows UAC 授权框）…" }));
+					fetch("/mcp-compat/wsl-forward", { method: "POST" })
+						.then((r) => r.json())
+						.then((d) => {
+							if (!d || !d.ok || !Array.isArray(d.results)) {
+								setCfg((s) => ({ ...s, fwdStatus: "转发配置失败" }));
+								return;
+							}
+							const text = d.results.map((x) => (x.status === "done" ? `端口 ${x.port} 已配置` : x.status === "already" ? `端口 ${x.port} 已有规则` : x.status === "all-interfaces" ? `端口 ${x.port} 已监听所有网卡` : `端口 ${x.port}: ${x.status}`)).join("；");
+							setCfg((s) => ({ ...s, fwdStatus: text || "无待配置端口" }));
+						})
+						.catch((e) => setCfg((s) => ({ ...s, fwdStatus: String((e && e.message) || "转发配置失败") })));
+				};
+
+				const runWslRelease = () => {
+					setCfg((s) => ({ ...s, fwdStatus: "正在释放宿主机转发（可能需要批准 UAC）…" }));
+					fetch("/mcp-compat/wsl-release", { method: "POST" })
+						.then((r) => r.json())
+						.then((d) => {
+							if (!d || !d.ok) {
+								const rem = d && Array.isArray(d.remaining) && d.remaining.length ? "；未释放: " + d.remaining.join("、") : "";
+								setCfg((s) => ({ ...s, fwdStatus: "释放未完成（可能未批准 UAC）" + rem }));
+								return;
+							}
+							const rel = Array.isArray(d.released) && d.released.length ? "已释放: " + d.released.join("、") : "无待释放规则";
+							setCfg((s) => ({ ...s, fwdStatus: rel }));
+						})
+						.catch((e) => setCfg((s) => ({ ...s, fwdStatus: String((e && e.message) || "释放失败") })));
 				};
 
 				const rows = (cfg.all || []).map((name) =>
@@ -152,6 +193,42 @@ window.__ModuleLoader__.load({
 					open
 						? react.createElement("div", { className: "pc-body" },
 							react.createElement("div", { className: "mc-card" },
+								react.createElement("div", { className: "mc-item" },
+									react.createElement("label", null,
+										react.createElement("span", { className: "mc-label" },
+											react.createElement("span", { className: "mc-name" }, "WSL 宿主兼容"),
+											react.createElement("span", { className: "mc-hint" },
+												configWslText(cfg.wsl)),
+										),
+									),
+								),
+								cfg.wsl && cfg.wsl.detected
+									? react.createElement("div", { className: "mc-card" },
+										react.createElement("div", { className: "mc-item" },
+											react.createElement("label", null,
+												react.createElement("input", { type: "checkbox", checked: cfg.compat, onChange: () => setCfg((s) => ({ ...s, compat: !s.compat })) }),
+												react.createElement("span", { className: "mc-label" },
+													react.createElement("span", { className: "mc-name" }, "启用 WSL 兼容"),
+													react.createElement("span", { className: "mc-hint" }, "连接失败时自动启动同端口隧道 / 地址改写"),
+												),
+											),
+										),
+										react.createElement("div", { className: "mc-item" },
+											react.createElement("label", null,
+												react.createElement("input", { type: "checkbox", checked: cfg.autoForward, onChange: () => setCfg((s) => ({ ...s, autoForward: !s.autoForward })) }),
+												react.createElement("span", { className: "mc-label" },
+													react.createElement("span", { className: "mc-name" }, "自动配置宿主机转发"),
+													react.createElement("span", { className: "mc-hint" }, "宿主机端口不可达时，自动运行 netsh 端口转发 + 防火墙放行（需批准一次 UAC）"),
+												),
+											),
+										),
+										react.createElement("div", { className: "mc-foot" },
+											react.createElement("button", { className: "mc-btn", onClick: runWslForward }, "立即配置宿主机转发"),
+											react.createElement("button", { className: "mc-btn", onClick: runWslRelease }, "释放并清除转发"),
+											cfg.fwdStatus ? react.createElement("span", { className: "mc-status" }, cfg.fwdStatus) : null,
+										),
+									)
+									: null,
 								rows,
 								react.createElement("div", { className: "mc-foot" },
 									react.createElement("button", { className: "mc-btn", onClick: save, disabled: cfg.loading }, "保存"),
