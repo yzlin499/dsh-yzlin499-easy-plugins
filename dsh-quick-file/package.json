@@ -1,7 +1,7 @@
 {
   "name": "dsh-quick-file",
-  "version": "0.1.0",
-  "description": "DSH plugin: type @ in the input box to quickly pick a workspace file — the path is inserted as plain text (powered by the built-in input trigger pipeline)",
+  "version": "0.2.0",
+  "description": "Everything-backed provider for the official DSH native @ file search",
   "type": "module",
   "main": "index.js",
   "exports": {
@@ -12,7 +12,6 @@
   "dsh": {
     "client": {
       "inject": [
-        "inputTriggers",
         "slots"
       ],
       "platform": "web"

@@ -1,5 +1,5 @@
 window.__ModuleLoader__.load({
-  id: 'dsh-svn-manager',
+  id: 'dsh-version-control',
   factory: (require) => {
     const module = { exports: {} }
     const exports = module.exports
@@ -8,36 +8,41 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const zh = {
-      title: 'SVN', refresh: '刷新', updating: '更新中', update: '更新', loading: '加载中…',
-      notWorkingCopy: '当前会话工作区不是 SVN 工作副本。', unavailable: '无法连接 SVN 管理服务。',
-      conflicts: '冲突', changes: '待提交变更', unversioned: '未纳管文件', history: '提交记录',
-      empty: '没有变更', add: '纳入版本控制', revert: '还原', openFile: '打开文件',
+      title: '版本控制', diff: '差异', git: 'Git', svn: 'SVN', refresh: '刷新', updating: '处理中', update: '更新', push: '推送', loading: '加载中…',
+      notWorkingCopy: '当前会话工作区不是有效的版本库。', unavailable: '无法连接版本控制服务。',
+      conflicts: '冲突', changes: '变更', unversioned: '未跟踪文件', svnChanges: '待提交变更', svnUnversioned: '未纳管文件', history: '提交记录',
+      empty: '没有变更', add: '暂存', svnAdd: '纳入版本控制', revert: '还原', openFile: '打开文件',
       commitPlaceholder: '提交说明', commit: '提交更改', loadMore: '加载更多', noHistory: '没有提交记录',
       searchHistory: '搜索已加载日志', noSearchResults: '没有匹配的日志',
-      repository: '仓库', revision: '工作副本版本', confirm: '确认', cancel: '取消',
-      revertTitle: '还原本地变更？', revertDesc: '这会丢弃“{path}”的本地修改，无法从 SVN 工作副本恢复。',
-      updateTitle: '更新工作副本？', updateDesc: 'SVN 将从仓库合并最新内容，本地修改可能产生冲突。',
+      repository: '仓库', revision: '当前版本', confirm: '确认', cancel: '取消',
+      revertTitle: '还原本地变更？', revertDesc: '这会丢弃“{path}”的本地修改，无法恢复。',
+      updateTitle: '更新工作区？', updateDesc: '远程更新可能与本地修改产生冲突。', pushTitle: '推送 Git 提交？', pushDesc: '这会把本地 Git 提交推送到远程仓库。',
       commandDone: '操作完成', diffEmpty: '没有可显示的文本差异。', diffError: '差异加载失败', diffTruncated: '差异过大，仅显示前 10,000 行。',
-      copied: '复制', switched: '切换', property: '属性', treeConflict: '树冲突',
+      copied: '复制', switched: '切换', property: '属性', treeConflict: '树冲突', branch: '分支', remote: '远程',
       loadError: '加载失败', commitError: '提交失败', actionError: '操作失败',
       statusTruncated: '状态项过多，仅显示前 {shown} 项；冲突和已纳管变更优先。',
       unversionedSuppressed: '未纳管文件数量过多，已隐藏未纳管列表；请配置 svn:ignore 后刷新。',
     }
     const en = {
-      title: 'SVN', refresh: 'Refresh', updating: 'Updating', update: 'Update', loading: 'Loading…',
-      notWorkingCopy: 'The current session workspace is not an SVN working copy.', unavailable: 'Cannot reach the SVN manager service.',
-      conflicts: 'Conflicts', changes: 'Changes to commit', unversioned: 'Unversioned', history: 'History',
-      empty: 'No changes', add: 'Add', revert: 'Revert', openFile: 'Open file',
+      title: 'Version control', diff: 'Diff', git: 'Git', svn: 'SVN', refresh: 'Refresh', updating: 'Working', update: 'Update', push: 'Push', loading: 'Loading…',
+      notWorkingCopy: 'The current session workspace is not a recognized repository.', unavailable: 'Cannot reach the version control service.',
+      conflicts: 'Conflicts', changes: 'Changes', unversioned: 'Untracked', svnChanges: 'Changes to commit', svnUnversioned: 'Unversioned', history: 'History',
+      empty: 'No changes', add: 'Stage', svnAdd: 'Add to version control', revert: 'Restore', openFile: 'Open file',
       commitPlaceholder: 'Commit message', commit: 'Commit changes', loadMore: 'Load more', noHistory: 'No history',
       searchHistory: 'Search loaded history', noSearchResults: 'No matching history',
-      repository: 'Repository', revision: 'Working revision', confirm: 'Confirm', cancel: 'Cancel',
-      revertTitle: 'Revert local changes?', revertDesc: 'This discards local changes to “{path}” and cannot be recovered from the working copy.',
-      updateTitle: 'Update working copy?', updateDesc: 'SVN will merge repository changes and local modifications may conflict.',
+      repository: 'Repository', revision: 'Current revision', confirm: 'Confirm', cancel: 'Cancel',
+      revertTitle: 'Restore local changes?', revertDesc: 'This discards local changes to “{path}” and cannot be recovered.',
+      updateTitle: 'Update workspace?', updateDesc: 'Remote updates may conflict with local changes.', pushTitle: 'Push Git commits?', pushDesc: 'This pushes local Git commits to the remote repository.',
       commandDone: 'Operation completed', diffEmpty: 'No text differences to display.', diffError: 'Failed to load diff', diffTruncated: 'The diff is large; only the first 10,000 lines are shown.',
-      copied: 'Copied', switched: 'Switched', property: 'Properties', treeConflict: 'Tree conflict',
+      copied: 'Copied', switched: 'Switched', property: 'Properties', treeConflict: 'Tree conflict', branch: 'Branch', remote: 'Remote',
       loadError: 'Load failed', commitError: 'Commit failed', actionError: 'Action failed',
       statusTruncated: 'Too many status entries; showing the first {shown}, prioritizing conflicts and versioned changes.',
       unversionedSuppressed: 'Too many unversioned paths; they are hidden. Configure svn:ignore and refresh.',
+    }
+
+    function labelsFor(ctx) {
+      const labels = localeOf(ctx) === 'en' ? en : zh
+      return { ...labels, guideDescription: localeOf(ctx) === 'en' ? 'Git and SVN changes, history, diffs, and repository actions.' : '统一查看 Git 与 SVN 的变更、历史、差异和仓库操作。' }
     }
 
     function localeOf(ctx) {
@@ -62,7 +67,7 @@ window.__ModuleLoader__.load({
     async function api(method, payload, signal) {
       let response
       try {
-        response = await fetch(`/svn-manager/api/${method}`, {
+        response = await fetch(`/version-control/api/${method}`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify(payload),
@@ -171,11 +176,29 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function SvnView(props) {
+    function encodePathSegment(value) {
+      return encodeURIComponent(String(value)).replace(/%3A/gi, ':')
+    }
+
+    function fileAddress(sessionId, cwd, target) {
+      const normalizedTarget = String(target).replace(/\\/g, '/')
+      const normalizedCwd = String(cwd || '').replace(/\\/g, '/').replace(/\/+$/, '')
+      const sameWorkspace = normalizedCwd !== '' && (normalizedTarget === normalizedCwd || normalizedTarget.toLowerCase().startsWith(`${normalizedCwd.toLowerCase()}/`))
+      if (sameWorkspace) {
+        const relative = normalizedTarget.slice(normalizedCwd.length).replace(/^\/+/, '')
+        return `dsh-resource://file/session/${encodePathSegment(sessionId)}/${relative.split('/').filter(Boolean).map(encodePathSegment).join('/')}`
+      }
+      return `dsh-resource://file/absolute/${normalizedTarget.replace(/^\/+/, '').split('/').filter(Boolean).map(encodePathSegment).join('/')}`
+    }
+
+    function VersionControlView(props) {
       const labels = useLocale(props.ctx)
-      const scope = props.scope
-      const service = props.ctx.betterSidebar
-      const initialCache = sessionCache.get(scope.sessionId)
+      const tabInfo = props.useTabInfo()
+      const tab = tabInfo.tab
+      const sessionId = props.sessionId
+      const cwd = props.useSessions?.((sessions) => sessions.byId[sessionId]?.cwd) || ''
+      const scope = { sessionId }
+      const initialCache = sessionCache.get(sessionId)
       const [snapshot, setSnapshot] = React.useState(initialCache?.snapshot ?? null)
       const [history, setHistory] = React.useState(initialCache?.history ?? [])
       const [historyEnded, setHistoryEnded] = React.useState(initialCache?.historyEnded ?? false)
@@ -187,66 +210,61 @@ window.__ModuleLoader__.load({
       const [confirmState, setConfirmState] = React.useState(null)
       const [collapsed, setCollapsed] = React.useState({ conflicts: false, changes: false, unversioned: false, history: false })
       const [historyQuery, setHistoryQuery] = React.useState('')
-      const loadedSession = React.useRef(initialCache === undefined ? null : scope.sessionId)
+      const [provider, setProvider] = React.useState(initialCache?.provider ?? 'auto')
 
-      const payload = React.useCallback((extra = {}) => ({ sessionId: scope.sessionId, ...extra }), [scope.sessionId])
-      const refresh = React.useCallback(async (signal) => {
-        const sessionId = scope.sessionId
+      const payload = React.useCallback((extra = {}) => ({ sessionId, provider, ...extra }), [sessionId, provider])
+      const refresh = React.useCallback(async (signal, requestedProvider = provider) => {
         setLoading(true)
         setError(null)
         try {
-          const next = await api('status', payload(), signal)
+          const next = await api('status', { sessionId, provider: requestedProvider }, signal)
           let rows = []
           let ended = true
           let loadError = null
           if (next.info?.isWorkingCopy) {
             try {
-              rows = await api('log', payload({ limit: 20 }), signal)
-              ended = rows.length < 20
+              rows = await api('log', { sessionId, provider: next.provider }, signal)
+              ended = next.provider === 'git' || rows.length < 20
             } catch (caught) {
               if (caught?.name === 'AbortError') throw caught
               loadError = caught instanceof Error ? caught.message : String(caught)
             }
           }
+          setProvider(next.provider || requestedProvider)
           setSnapshot(next)
           setHistory(rows)
           setHistoryEnded(ended)
           setError(loadError)
-          cacheSession(sessionId, { snapshot: next, history: rows, historyEnded: ended, error: loadError })
+          cacheSession(sessionId, { provider: next.provider || requestedProvider, snapshot: next, history: rows, historyEnded: ended, error: loadError })
         } catch (caught) {
           if (caught?.name !== 'AbortError') {
-            const message = caught instanceof Error ? caught.message : String(caught)
-            const previous = sessionCache.get(sessionId) ?? { snapshot: null, history: [], historyEnded: true }
-            setError(message)
-            cacheSession(sessionId, { ...previous, error: message })
+            const errorMessage = caught instanceof Error ? caught.message : String(caught)
+            const previous = sessionCache.get(sessionId) ?? { snapshot: null, history: [], historyEnded: true, provider: requestedProvider }
+            setError(errorMessage)
+            cacheSession(sessionId, { ...previous, error: errorMessage })
           }
         } finally {
           if (!signal?.aborted) setLoading(false)
         }
-      }, [payload, scope.sessionId])
+      }, [provider, sessionId])
 
       React.useEffect(() => {
-        const cached = sessionCache.get(scope.sessionId)
-        loadedSession.current = cached === undefined ? null : scope.sessionId
+        const cached = sessionCache.get(sessionId)
         setSnapshot(cached?.snapshot ?? null)
         setHistory(cached?.history ?? [])
         setHistoryEnded(cached?.historyEnded ?? false)
         setError(cached?.error ?? null)
+        setProvider(cached?.provider ?? 'auto')
         setLoading(cached === undefined)
         setHistoryQuery('')
-      }, [scope.sessionId])
+      }, [sessionId])
 
       React.useEffect(() => {
-        if (!props.visible || loadedSession.current === scope.sessionId) return undefined
-        const sessionId = scope.sessionId
-        loadedSession.current = sessionId
+        if (!tab.visible) return undefined
         const controller = new AbortController()
-        void refresh(controller.signal)
-        return () => {
-          controller.abort()
-          if (!sessionCache.has(sessionId)) loadedSession.current = null
-        }
-      }, [props.visible, refresh, scope.sessionId])
+        void refresh(controller.signal, provider)
+        return () => controller.abort()
+      }, [provider, refresh, sessionId, tab.visible])
 
       const run = async (method, extra, success, after) => {
         setBusy(true); setError(null); setNotice(null)
@@ -260,58 +278,76 @@ window.__ModuleLoader__.load({
         } finally { setBusy(false) }
       }
 
+      const activeProvider = snapshot?.provider || (provider === 'svn' ? 'svn' : 'git')
+      const activeLabels = activeProvider === 'svn'
+        ? { ...labels, changes: labels.svnChanges, unversioned: labels.svnUnversioned, add: labels.svnAdd, update: labels.update }
+        : labels
       const absolutePath = (path) => {
-        const root = String(snapshot?.info?.wcRoot || scope.cwd || '')
+        const root = String(snapshot?.info?.wcRoot || snapshot?.info?.root || cwd || '')
         if (!root || /^[A-Za-z]:[\\/]/.test(path) || path.startsWith('/') || path.startsWith('\\\\')) return path
         const separator = root.includes('\\') ? '\\' : '/'
         return `${root.replace(/[\\/]+$/, '')}${separator}${String(path).replace(/^[\\/]+/, '').replace(/[\\/]/g, separator)}`
       }
       const openFile = (path) => {
         const target = absolutePath(path)
-        if (service.features?.includes('openFile')) service.openFile(scope, target, baseName(path))
-        else service.openTab({ type: 'editor', id: `editor:${target}`, path: target, title: baseName(path) }, scope)
+        tab.actions.openResource(fileAddress(sessionId, cwd, target))
       }
-      const openDiff = (path) => service.openTab({
-        type: 'dsh-svn-manager:diff', id: `dsh-svn-manager:diff:working:${path}`, title: baseName(path),
-        meta: { kind: 'working', path },
-      }, scope)
-      const openRevision = (entry) => service.openTab({
-        type: 'dsh-svn-manager:diff', id: `dsh-svn-manager:diff:revision:${entry.revision}`,
-        title: `r${entry.revision} ${entry.message || ''}`.trim(), meta: { kind: 'revision', revision: entry.revision },
-      }, scope)
+      const openDiff = (path) => tab.actions.openTab('version-control-diff', { params: { provider: activeProvider, kind: 'working', path } })
+      const openRevision = (entry) => tab.actions.openTab('version-control-diff', { params: { provider: activeProvider, kind: 'revision', revision: entry.revision } })
+      const selectProvider = (next) => {
+        if (next === provider) return
+        setProvider(next)
+        setSnapshot(null)
+        setHistory([])
+        setError(null)
+      }
+      const providerSwitcher = () => h('div', { className: 'svnm-provider' },
+        h('button', { type: 'button', className: `svnm-provider-btn${activeProvider === 'git' ? ' svnm-provider-active' : ''}`, disabled: busy, onClick: () => selectProvider('git') }, activeLabels.git),
+        h('button', { type: 'button', className: `svnm-provider-btn${activeProvider === 'svn' ? ' svnm-provider-active' : ''}`, disabled: busy, onClick: () => selectProvider('svn') }, activeLabels.svn),
+      )
+      const emptyState = (content) => h('div', { className: 'svnm-root' },
+        h('header', { className: 'svnm-header' },
+          providerSwitcher(),
+          h('div', { className: 'svnm-repo' },
+            h('div', { className: 'svnm-repo-url' }, activeLabels.title),
+            h('div', { className: 'svnm-revision' }, activeProvider === 'git' ? activeLabels.git : activeLabels.svn),
+          ),
+        ),
+        content,
+      )
       const action = (entry, kind) => {
-        if (kind === 'unversioned') { void run('add', { paths: [entry.path], confirm: true }, labels.commandDone); return }
+        if (kind === 'unversioned') { void run('add', { paths: [entry.path], confirm: true }, activeLabels.commandDone); return }
         setConfirmState({
-          title: labels.revertTitle,
-          description: labels.revertDesc.replace('{path}', entry.path),
-          onConfirm: () => { setConfirmState(null); void run('revert', { paths: [entry.path], confirm: true }, labels.commandDone) },
+          title: activeLabels.revertTitle,
+          description: activeLabels.revertDesc.replace('{path}', entry.path),
+          onConfirm: () => { setConfirmState(null); void run('revert', { paths: [entry.path], confirm: true }, activeLabels.commandDone) },
         })
       }
       const loadMore = async () => {
+        if (activeProvider !== 'svn') return
         const last = history[history.length - 1]
         if (!last || busy) return
-        const start = String(Math.max(Number(last.revision) - 1, 1))
         setBusy(true)
         try {
-          const rows = await api('log', payload({ limit: 20, startRevision: start }))
+          const rows = await api('log', payload({ limit: 20, startRevision: String(Math.max(Number(last.revision) - 1, 1)) }))
           const nextHistory = [...history, ...rows]
           const nextEnded = rows.length < 20
           setHistory(nextHistory)
           setHistoryEnded(nextEnded)
-          cacheSession(scope.sessionId, { snapshot, history: nextHistory, historyEnded: nextEnded, error: null })
+          cacheSession(sessionId, { provider: activeProvider, snapshot, history: nextHistory, historyEnded: nextEnded, error: null })
         } catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)) }
         finally { setBusy(false) }
       }
 
-      if (loading && snapshot === null) return h('div', { className: 'svnm-placeholder' }, labels.loading)
-      if (error && snapshot === null) return h('div', { className: 'svnm-error svnm-pad' }, `${labels.loadError}: ${error}`)
-      if (snapshot && !snapshot.info?.isWorkingCopy) return h('div', { className: 'svnm-placeholder' }, labels.notWorkingCopy)
+      if (loading && snapshot === null) return emptyState(h('div', { className: 'svnm-placeholder' }, activeLabels.loading))
+      if (error && snapshot === null) return emptyState(h('div', { className: 'svnm-error svnm-pad' }, `${activeLabels.loadError}: ${error}`))
+      if (snapshot && !snapshot.info?.isWorkingCopy) return emptyState(h('div', { className: 'svnm-placeholder' }, activeLabels.notWorkingCopy))
       const groups = classify(snapshot?.entries)
       const hasCommittable = groups.changes.length > 0 || groups.conflicts.length > 0
       const statusWarning = snapshot?.unversionedSuppressed
-        ? labels.unversionedSuppressed
+        ? activeLabels.unversionedSuppressed
         : snapshot?.truncated
-          ? labels.statusTruncated.replace('{shown}', String(snapshot.shownEntries ?? snapshot.entries?.length ?? 0))
+          ? activeLabels.statusTruncated.replace('{shown}', String(snapshot.shownEntries ?? snapshot.entries?.length ?? 0))
           : null
       const toggleSection = (key) => setCollapsed((current) => ({ ...current, [key]: !current[key] }))
       const normalizedQuery = historyQuery.trim().toLocaleLowerCase()
@@ -321,55 +357,52 @@ window.__ModuleLoader__.load({
 
       return h('div', { className: 'svnm-root' },
         h('header', { className: 'svnm-header' },
+          providerSwitcher(),
           h('div', { className: 'svnm-repo' },
-            h('div', { className: 'svnm-repo-url', title: snapshot?.info?.url || '' }, snapshot?.info?.relativeUrl || snapshot?.info?.url || labels.repository),
-            h('div', { className: 'svnm-revision' }, `${labels.revision}: r${snapshot?.info?.revision || '?'}`),
+            h('div', { className: 'svnm-repo-url', title: snapshot?.info?.remote || snapshot?.info?.url || '' }, snapshot?.info?.remote || snapshot?.info?.relativeUrl || snapshot?.info?.url || activeLabels.repository),
+            h('div', { className: 'svnm-revision' }, `${activeLabels.revision}: ${activeProvider === 'git' ? `${snapshot?.info?.branch || activeLabels.branch} @ ${snapshot?.info?.revision || '?'}` : `r${snapshot?.info?.revision || '?'}`}`),
           ),
-          h('button', { type: 'button', className: 'svnm-icon-btn', disabled: busy, title: labels.refresh, 'aria-label': labels.refresh, onClick: () => void refresh() }, icon('refresh', 15)),
+          h('button', { type: 'button', className: 'svnm-icon-btn', disabled: busy, title: activeLabels.refresh, 'aria-label': activeLabels.refresh, onClick: () => void refresh() }, icon('refresh', 15)),
           h('button', {
-            type: 'button', className: 'svnm-action-btn', disabled: busy, title: labels.update,
-            onClick: () => setConfirmState({ title: labels.updateTitle, description: labels.updateDesc, onConfirm: () => { setConfirmState(null); void run('update', { confirm: true }, labels.commandDone) } }),
-          }, icon('update', 14), h('span', null, busy ? labels.updating : labels.update)),
+            type: 'button', className: 'svnm-action-btn', disabled: busy, title: activeLabels.update,
+            onClick: () => setConfirmState({ title: activeLabels.updateTitle, description: activeLabels.updateDesc, onConfirm: () => { setConfirmState(null); void run('update', { confirm: true }, activeLabels.commandDone) } }),
+          }, icon('update', 14), h('span', null, busy ? activeLabels.updating : activeLabels.update)),
+          activeProvider === 'git' ? h('button', {
+            type: 'button', className: 'svnm-action-btn', disabled: busy, title: activeLabels.push,
+            onClick: () => setConfirmState({ title: activeLabels.pushTitle, description: activeLabels.pushDesc, onConfirm: () => { setConfirmState(null); void run('push', { confirm: true }, activeLabels.commandDone) } }),
+          }, icon('update', 14), h('span', null, activeLabels.push)) : null,
         ),
         statusWarning ? h('div', { className: 'svnm-warning' }, statusWarning) : null,
-        h(ChangeSection, { title: labels.conflicts, entries: groups.conflicts, kind: 'conflict', labels, busy, collapsed: collapsed.conflicts, onToggle: () => toggleSection('conflicts'), onDiff: openDiff, onOpen: openFile, onAction: action }),
-        h(ChangeSection, { title: labels.changes, entries: groups.changes, kind: 'change', labels, busy, collapsed: collapsed.changes, onToggle: () => toggleSection('changes'), onDiff: openDiff, onOpen: openFile, onAction: action }),
-        h(ChangeSection, { title: labels.unversioned, entries: groups.unversioned, kind: 'unversioned', labels, busy, collapsed: collapsed.unversioned, onToggle: () => toggleSection('unversioned'), onDiff: openDiff, onOpen: openFile, onAction: action }),
+        h(ChangeSection, { title: activeLabels.conflicts, entries: groups.conflicts, kind: 'conflict', labels: activeLabels, busy, collapsed: collapsed.conflicts, onToggle: () => toggleSection('conflicts'), onDiff: openDiff, onOpen: openFile, onAction: action }),
+        h(ChangeSection, { title: activeLabels.changes, entries: groups.changes, kind: 'change', labels: activeLabels, busy, collapsed: collapsed.changes, onToggle: () => toggleSection('changes'), onDiff: openDiff, onOpen: openFile, onAction: action }),
+        h(ChangeSection, { title: activeLabels.unversioned, entries: groups.unversioned, kind: 'unversioned', labels: activeLabels, busy, collapsed: collapsed.unversioned, onToggle: () => toggleSection('unversioned'), onDiff: openDiff, onOpen: openFile, onAction: action }),
         h('div', { className: 'svnm-commit' },
-          h('textarea', { className: 'svnm-message', rows: 2, value: message, maxLength: 10000, placeholder: labels.commitPlaceholder, disabled: busy, onChange: (event) => setMessage(event.target.value) }),
-          h('button', { type: 'button', className: 'svnm-btn svnm-primary svnm-commit-button', disabled: busy || !hasCommittable || !message.trim(), onClick: () => void run('commit', { message: message.trim(), confirm: true }, labels.commandDone, () => setMessage('')) }, labels.commit),
+          h('textarea', { className: 'svnm-message', rows: 2, value: message, maxLength: 10000, placeholder: activeLabels.commitPlaceholder, disabled: busy, onChange: (event) => setMessage(event.target.value) }),
+          h('button', { type: 'button', className: 'svnm-btn svnm-primary svnm-commit-button', disabled: busy || !hasCommittable || !message.trim(), onClick: () => void run('commit', { message: message.trim(), confirm: true }, activeLabels.commandDone, () => setMessage('')) }, activeLabels.commit),
         ),
         error ? h('div', { className: 'svnm-error' }, error) : null,
         notice ? h('pre', { className: 'svnm-notice' }, notice) : null,
         h('section', { className: 'svnm-section svnm-history' },
-          h('button', {
-            type: 'button', className: 'svnm-section-toggle', 'aria-expanded': !collapsed.history,
-            onClick: () => toggleSection('history'),
-          },
-            icon('chevron', 14, `svnm-chevron${collapsed.history ? '' : ' svnm-chevron-open'}`),
-            h('span', null, `${labels.history} (${history.length})`),
+          h('button', { type: 'button', className: 'svnm-section-toggle', 'aria-expanded': !collapsed.history, onClick: () => toggleSection('history') },
+            icon('chevron', 14, `svnm-chevron${collapsed.history ? '' : ' svnm-chevron-open'}`), h('span', null, `${activeLabels.history} (${history.length})`),
           ),
-          collapsed.history ? null : h('div', { className: 'svnm-history-search' },
-            h('input', {
-              type: 'search', value: historyQuery, placeholder: labels.searchHistory,
-              'aria-label': labels.searchHistory, onChange: (event) => setHistoryQuery(event.target.value),
-            }),
-          ),
-          collapsed.history ? null : history.length === 0 ? h('div', { className: 'svnm-empty' }, labels.noHistory) : null,
-          collapsed.history || history.length === 0 || filteredHistory.length > 0 ? null : h('div', { className: 'svnm-empty' }, labels.noSearchResults),
-          collapsed.history ? null : filteredHistory.map((entry) => h('button', { type: 'button', className: 'svnm-log-row', key: entry.revision, onClick: () => openRevision(entry), title: entry.message || `r${entry.revision}` },
-            h('span', { className: 'svnm-log-top' }, h('b', null, `r${entry.revision}`), h('span', null, entry.message || '—')),
+          collapsed.history ? null : h('div', { className: 'svnm-history-search' }, h('input', { type: 'search', value: historyQuery, placeholder: activeLabels.searchHistory, 'aria-label': activeLabels.searchHistory, onChange: (event) => setHistoryQuery(event.target.value) })),
+          collapsed.history ? null : history.length === 0 ? h('div', { className: 'svnm-empty' }, activeLabels.noHistory) : null,
+          collapsed.history || history.length === 0 || filteredHistory.length > 0 ? null : h('div', { className: 'svnm-empty' }, activeLabels.noSearchResults),
+          collapsed.history ? null : filteredHistory.map((entry) => h('button', { type: 'button', className: 'svnm-log-row', key: entry.revision, onClick: () => openRevision(entry), title: entry.message || String(entry.revision) },
+            h('span', { className: 'svnm-log-top' }, h('b', null, activeProvider === 'git' ? String(entry.revision).slice(0, 8) : `r${entry.revision}`), h('span', null, entry.message || '—')),
             h('span', { className: 'svnm-log-meta' }, `${entry.author || '—'} · ${entry.date ? new Date(entry.date).toLocaleString() : '—'}`),
           )),
-          !collapsed.history && !historyEnded ? h('button', { type: 'button', className: 'svnm-more', disabled: busy, onClick: () => void loadMore() }, labels.loadMore) : null,
+          !collapsed.history && !historyEnded ? h('button', { type: 'button', className: 'svnm-more', disabled: busy, onClick: () => void loadMore() }, activeLabels.loadMore) : null,
         ),
-        h(ConfirmDialog, { state: confirmState, labels, busy, onClose: () => setConfirmState(null) }),
+        h(ConfirmDialog, { state: confirmState, labels: activeLabels, busy, onClose: () => setConfirmState(null) }),
       )
     }
 
     function DiffView(props) {
       const labels = useLocale(props.ctx)
-      const meta = props.tab.meta && typeof props.tab.meta === 'object' ? props.tab.meta : {}
+      const tab = props.useTabInfo().tab
+      const meta = tab.navigation.params && typeof tab.navigation.params === 'object' ? tab.navigation.params : {}
       const [content, setContent] = React.useState('')
       const [loading, setLoading] = React.useState(true)
       const [error, setError] = React.useState(null)
@@ -378,14 +411,17 @@ window.__ModuleLoader__.load({
         const controller = new AbortController()
         setLoading(true); setError(null)
         api('diff', {
-          sessionId: props.scope.sessionId,
+          sessionId: props.sessionId,
+          provider: meta.provider,
           ...(meta.kind === 'revision' ? { revision: String(meta.revision || '') } : { path: String(meta.path || '') }),
         }, controller.signal).then((value) => setContent(value.diff || '')).catch((caught) => {
           if (caught?.name !== 'AbortError') setError(caught instanceof Error ? caught.message : String(caught))
         }).finally(() => { if (!controller.signal.aborted) setLoading(false) })
         return () => controller.abort()
-      }, [props.scope.sessionId, meta.kind, meta.path, meta.revision, tick])
-      const title = meta.kind === 'revision' ? `r${meta.revision || '?'}` : String(meta.path || props.tab.title)
+      }, [props.sessionId, meta.provider, meta.kind, meta.path, meta.revision, tick])
+      const title = meta.kind === 'revision'
+        ? `${meta.provider === 'git' ? String(meta.revision || '').slice(0, 8) : `r${meta.revision || '?'}`}`
+        : String(meta.path || tab.title)
       const diffText = content.slice(0, 2 * 1024 * 1024)
       const diffLines = diffText.split('\n').slice(0, 10_000)
       const diffTruncated = diffText.length < content.length || diffText.split('\n').length > diffLines.length
@@ -408,7 +444,7 @@ window.__ModuleLoader__.load({
 
     const styles = [
       '.svnm-root,.svnm-diff{height:100%;min-height:0;display:flex;flex-direction:column;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-module-platform);font-size:12px;overflow:auto}',
-      '.svnm-header,.svnm-diff-head{position:sticky;top:0;z-index:3;display:flex;align-items:center;gap:6px;min-height:42px;padding:6px 8px;border-bottom:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-module-platform)}',
+      '.svnm-provider{display:flex;flex:none;gap:2px;padding:2px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:var(--dsw-alias-bg-layer-3)}.svnm-provider-btn{appearance:none!important;border:0!important;border-radius:4px;padding:4px 6px;background:transparent!important;color:var(--dsw-alias-label-tertiary)!important;font:inherit;cursor:pointer}.svnm-provider-btn:hover:not(:disabled){color:var(--dsw-alias-label-primary)!important;background:var(--dsw-alias-interactive-bg-hover)!important}.svnm-provider-active{background:var(--dsw-alias-interactive-bg-hover)!important;color:var(--dsw-alias-label-primary)!important;box-shadow:inset 0 -2px var(--dsw-alias-brand-primary,#4d6bfe)}.svnm-provider-active:hover:not(:disabled){color:var(--dsw-alias-label-primary)!important;background:var(--dsw-alias-interactive-bg-hover)!important}',
       '.svnm-repo{flex:1;min-width:0}.svnm-repo-url{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.svnm-revision,.svnm-log-meta{margin-top:2px;color:var(--dsw-alias-label-tertiary);font-size:11px}',
       '.svnm-icon-btn{width:28px;height:28px;flex:none;display:inline-flex;align-items:center;justify-content:center;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer}.svnm-icon-btn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
       '.svnm-action-btn,.svnm-btn{min-height:28px;display:inline-flex;align-items:center;justify-content:center;gap:5px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;padding:4px 9px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;cursor:pointer}.svnm-action-btn:hover:not(:disabled),.svnm-btn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}.svnm-root button:disabled,.svnm-dialog button:disabled{opacity:.45;cursor:default}',
@@ -450,7 +486,7 @@ window.__ModuleLoader__.load({
     ].join('')
 
     const settingsZh = {
-      title: 'SVN 可执行文件配置（WSL / svn.exe）',
+      title: 'SVN 可执行文件配置（WSL / svn.exe）', cardTitle: '版本控制',
       exec: 'SVN 可执行文件',
       placeholder: '留空自动检测，如 svn.exe 或完整路径',
       hint: 'WSL 下找不到 svn 时自动回退：svn → svn.exe → TortoiseSVN / SlikSvn 常见安装路径。使用 Windows 版 svn 时，工作副本路径会自动在 WSL 与 Windows 之间转换（如 /mnt/d/x ↔ D:\\x）。',
@@ -460,7 +496,7 @@ window.__ModuleLoader__.load({
       save: '保存', saved: '已保存', saving: '保存中…', loadFailed: '读取失败', saveFailed: '保存失败',
     }
     const settingsEn = {
-      title: 'SVN executable settings (WSL / svn.exe)',
+      title: 'SVN executable settings (WSL / svn.exe)', cardTitle: 'Version control',
       exec: 'SVN executable',
       placeholder: 'Leave empty to auto-detect; e.g. svn.exe or a full path',
       hint: 'When svn is missing under WSL, falls back to: svn → svn.exe → common TortoiseSVN / SlikSvn install paths. When the Windows svn.exe is used, working-copy paths are translated between WSL and Windows automatically (e.g. /mnt/d/x ↔ D:\\x).',
@@ -470,27 +506,33 @@ window.__ModuleLoader__.load({
       save: 'Save', saved: 'Saved', saving: 'Saving…', loadFailed: 'Failed to load', saveFailed: 'Failed to save',
     }
 
-    const inject = ['betterSidebar', 'locale', 'slots']
+    const inject = ['sidebarRightTabs', 'locale', 'slots']
     function apply(ctx) {
       ctx.effect(() => {
         const tag = document.createElement('style')
-        tag.dataset.pluginCss = 'dsh-svn-manager'
+        tag.dataset.pluginCss = 'dsh-version-control'
         tag.textContent = styles
         document.head.appendChild(tag)
         return () => tag.remove()
       })
-      ctx.effect(() => ctx.betterSidebar.registerTab({
-        id: 'dsh-svn-manager', title: () => localeOf(ctx) === 'en' ? 'SVN' : 'SVN', icon: (size) => icon('branch', size), order: 21, single: true,
-        component: (props) => h(SvnView, props),
-      }))
-      ctx.effect(() => ctx.betterSidebar.registerTab({
-        id: 'dsh-svn-manager:diff', title: 'SVN Diff', icon: (size) => icon('file', size), order: -1, hidden: true,
-        dedupeKey: (tab) => tab.id, component: (props) => h(DiffView, props),
-      }))
+      ctx.effect(() => ctx.sidebarRightTabs.register({
+        id: 'dsh-version-control', kind: 'version-control', title: () => labelsFor(ctx).title,
+        guide: [{ order: 30, title: () => labelsFor(ctx).title, description: () => labelsFor(ctx).guideDescription }],
+      }), 'dsh-version-control: version control tab type')
+      ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register(
+        { name: 'sidebar.right.pane.tab', key: 'dsh-version-control' },
+        (props) => h(VersionControlView, { ...props, ctx }),
+      )), 'dsh-version-control: version control tab body')
+      ctx.effect(() => ctx.sidebarRightTabs.register({
+        id: 'dsh-version-control:diff', kind: 'version-control-diff', title: () => labelsFor(ctx).diff,
+      }), 'dsh-version-control: diff tab type')
+      ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register(
+        { name: 'sidebar.right.pane.tab', key: 'dsh-version-control:diff' },
+        (props) => h(DiffView, { ...props, ctx }),
+      )), 'dsh-version-control: diff tab body')
 
       // 设置卡片：注册进官方「插件」设置页（settings.plugin.item，keyed 插槽，
-      // key = Host 侧注册的 settings 命名空间 dsh-svn-manager）。配置读写走
-      // /svn-manager/config 路由，Host 侧经 ctx.settings 持久化。
+      // key = Host 侧注册的 settings 命名空间 dsh-version-control）。
       function SettingsCard() {
         const [open, setOpen] = React.useState(false)
         const [rev, setRev] = React.useState(0)
@@ -505,7 +547,7 @@ window.__ModuleLoader__.load({
         React.useEffect(() => {
           let alive = true
           setCfg((s) => ({ ...s, loading: true }))
-          fetch('/svn-manager/config')
+          fetch('/version-control/config')
             .then((r) => r.json())
             .then((d) => {
               if (!alive) return
@@ -524,7 +566,7 @@ window.__ModuleLoader__.load({
 
         const save = () => {
           setCfg((s) => ({ ...s, status: labels.saving }))
-          fetch('/svn-manager/config', {
+          fetch('/version-control/config', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ svnExecutable: String(cfg.svnExecutable || '').trim() }),
@@ -552,7 +594,7 @@ window.__ModuleLoader__.load({
         return h('div', { className: 'pc-card' },
           h('button', { className: 'pc-head', onClick: () => setOpen((value) => !value) },
             h('span', { className: 'pc-head-text' },
-              h('span', { className: 'pc-name' }, 'SVN'),
+              h('span', { className: 'pc-name' }, labels.cardTitle),
               h('span', { className: 'pc-desc' }, labels.title),
             ),
             h('span', { className: 'pc-chevron' + (open ? ' pc-open' : '') }, '▾'),
@@ -580,8 +622,8 @@ window.__ModuleLoader__.load({
 
       ctx.slots.inject('settings.plugin.item', () => ctx.slots.register({
         name: 'settings.plugin.item',
-        key: 'dsh-svn-manager',
-        id: 'svn-manager-settings',
+        key: 'dsh-version-control',
+        id: 'version-control-settings',
         order: 40,
         label: 'SVN',
       }, SettingsCard))

@@ -1,288 +1,316 @@
-// ═══════════════════════════════════════════════════════════════════════════
-// dsh-quick-file — Host 半侧（ESM 模块，由 cordis loader 挂载）
-//
-// 为 Client 的 `@` 文件输入源提供文件列表：
-//   GET /quick-file/files?session=<sessionId>&q=<query>
-//   GET/POST /quick-file/config（深度/数量上限 / Everything HTTP 地址）
-//
-// 两种搜索后端：
-//   1) 默认：递归扫描会话工作区（深度/忽略/数量受限）
-//   2) 配置 everythingUrl 后：走 Everything HTTP Server 搜索
-//      （Everything 已索引全盘，比逐目录遍历更快）
-//
-// 配置经官方 settings 服务持久化（命名空间 dsh-quick-file，schemastery schema
-// 由 ctx.loader.import 从应用侧解析）；settings 不可用时回退内存态。
-// ═══════════════════════════════════════════════════════════════════════════
-import { join, relative, sep } from 'node:path'
+import { lstat, readdir } from 'node:fs/promises'
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
-
-export const name = 'quick-file'
-export const inject = ['fs', 'sessions', 'webServer', 'loader', 'settings']
-
-const log = (...a) => console.log('[quick-file]', ...a)
+import { join, relative, resolve, sep } from 'node:path'
 
 const NS = 'dsh-quick-file'
-// 忽略目录可配置：逗号分隔字符串，默认值如下；留空 = 不忽略任何目录
-const DEFAULT_IGNORE = 'node_modules,.git,dist,build,coverage,.next,.cache,__pycache__,.venv,venv,target,.dsh'
-const DEFAULTS = { depth: 3, max: 50, everythingUrl: '', ignoreDirs: DEFAULT_IGNORE }
+const FILE_REFERENCE_PROMPT = 'Tokens prefixed with @ are workspace paths the user explicitly referenced, relative to the workspace root. A trailing slash marks a directory: list it when its contents matter. Anything else is a file: use the read tool when its contents are needed, and do not claim to have inspected it before reading. @"..." quotes a path containing spaces.'
+const DEFAULT_EXCLUDED = ['node_modules', '.git', 'dist', 'build', 'out', 'coverage', 'target', '.next', '.nuxt', '.turbo', '.venv', '__pycache__', '.pytest_cache', '.mypy_cache', '.gradle']
+const DEFAULT_EVERYTHING_URL = 'http://127.0.0.1:8074'
+const MAX_BODY_BYTES = 64 * 1024
+const MAX_EVERYTHING_BYTES = 16 * 1024 * 1024
 
-/** 解析 ignoreDirs 配置（逗号分隔，去空白，去空项）为 Set */
-function parseIgnoreDirs(raw) {
-  const set = new Set()
-  if (typeof raw === 'string') {
-    for (const part of raw.split(',')) {
-      const name = part.trim()
-      if (name) set.add(name)
-    }
-  }
-  return set
+function parseIgnoreDirs(value) {
+  const raw = Array.isArray(value) ? value : String(value || '').split(',')
+  return [...new Set(raw.map((part) => String(part).trim()).filter(Boolean))]
 }
 
-/** 简易 HTTP GET + JSON 解析（Everything HTTP Server 返回 {totalResults, results}） */
-function httpGetJson(href, timeoutMs = 6000) {
-  return new Promise((resolve, reject) => {
-    let u
-    try { u = new URL(href) } catch (e) { reject(e); return }
-    const request = u.protocol === 'https:' ? httpsRequest : httpRequest
-    const req = request(u, { method: 'GET' }, (res) => {
+function validEverythingUrl(value) {
+  const raw = String(value || '').trim()
+  if (!raw) return ''
+  const parsed = new URL(raw)
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw new Error('everythingUrl must use http or https')
+  return raw.replace(/\/+$/, '')
+}
+
+function httpGetJson(href, signal, timeoutMs = 6000) {
+  return new Promise((resolvePromise, rejectPromise) => {
+    let url
+    try { url = new URL(href) } catch (error) { rejectPromise(error); return }
+    const request = url.protocol === 'https:' ? httpsRequest : httpRequest
+    let settled = false
+    const finish = (error, value) => {
+      if (settled) return
+      settled = true
+      error ? rejectPromise(error) : resolvePromise(value)
+    }
+    const req = request(url, { method: 'GET', signal }, (res) => {
       let data = ''
-      res.on('data', (c) => { data += c })
+      res.setEncoding('utf8')
+      res.on('data', (chunk) => {
+        data += chunk
+        if (data.length > MAX_EVERYTHING_BYTES) req.destroy(new Error('Everything response is too large'))
+      })
       res.on('end', () => {
-        try { resolve(JSON.parse(data)) } catch (e) { reject(new Error('响应不是合法 JSON: ' + String(e.message || e))) }
+        if (res.statusCode !== 200) { finish(new Error(`Everything HTTP ${res.statusCode}`)); return }
+        try { finish(null, JSON.parse(data)) } catch (error) { finish(new Error(`Everything response is not JSON: ${error.message}`)) }
       })
     })
-    req.on('error', reject)
-    req.setTimeout(timeoutMs, () => { req.destroy(new Error('HTTP 请求超时')) })
-    req.end()
+    req.setTimeout(timeoutMs, () => req.destroy(new Error('Everything request timed out')))
+    req.on('error', (error) => finish(error))
   })
 }
 
-export async function apply(ctx) {
-  // ── 持久化设置：注册命名空间（schemastery schema 经 loader 拉取）──
-  let scope = null
-  let memConfig = { ...DEFAULTS }
-  try {
-    const mod = await ctx.loader.import('@deepseek-ai/schemastery')
-    const z = mod && mod.default ? mod.default : mod
-    scope = ctx.settings.register(NS, z.object({
-      depth: z.natural().min(1).max(10),
-      max: z.natural().min(10).max(200),
-      everythingUrl: z.string().default(''),
-      ignoreDirs: z.string().default(DEFAULT_IGNORE),
-    }))
-  } catch (e) {
-    log('settings 注册失败，回退内存态:', String((e && e.message) || e))
-  }
+function pathInside(root, target) {
+  const rootResolved = resolve(root)
+  const targetResolved = resolve(target)
+  const rootKey = process.platform === 'win32' ? rootResolved.toLowerCase() : rootResolved
+  const targetKey = process.platform === 'win32' ? targetResolved.toLowerCase() : targetResolved
+  return targetKey === rootKey || targetKey.startsWith(`${rootKey}${sep}`)
+}
 
-  const readConfig = () => {
-    if (scope) {
-      try {
-        const v = scope.get()
-        if (v) {
-          return {
-            depth: Number.isInteger(v.depth) ? v.depth : DEFAULTS.depth,
-            max: Number.isInteger(v.max) ? v.max : DEFAULTS.max,
-            everythingUrl: typeof v.everythingUrl === 'string' ? v.everythingUrl : DEFAULTS.everythingUrl,
-            ignoreDirs: typeof v.ignoreDirs === 'string' ? v.ignoreDirs : DEFAULTS.ignoreDirs,
-          }
-        }
-      } catch {}
+function relativePath(root, target) {
+  if (!pathInside(root, target)) return null
+  const value = relative(resolve(root), resolve(target))
+  return value === '' ? '.' : value.split(sep).join('/')
+}
+
+function candidateFromResult(root, result) {
+  if (!result || typeof result.path !== 'string' || typeof result.name !== 'string') return null
+  const path = relativePath(root, join(result.path, result.name))
+  if (!path || path === '.') return null
+  return { path, kind: result.type === 'folder' || result.type === 'directory' ? 'directory' : 'file' }
+}
+
+function directChildOf(path, directory) {
+  const normalized = String(path).replace(/\\/g, '/')
+  const parent = normalized.includes('/') ? normalized.slice(0, normalized.lastIndexOf('/')) : ''
+  return parent === directory.replace(/\/+$/, '')
+}
+
+function visible(candidate, query) {
+  return query.startsWith('.') || query.includes('/.') || !candidate.path.split('/').some((part) => part.startsWith('.'))
+}
+
+function rankCandidates(candidates, query, limit) {
+  const needle = query.toLowerCase()
+  const score = (candidate) => {
+    const name = candidate.path.slice(candidate.path.lastIndexOf('/') + 1).toLowerCase()
+    if (needle === '') return 0
+    if (name === needle) return 1000
+    if (name.startsWith(needle)) return 900
+    if (name.includes(needle)) return 700
+    if (candidate.path.toLowerCase().includes(needle)) return 500
+    return 0
+  }
+  return candidates.filter((candidate) => visible(candidate, query) && (needle === '' || score(candidate) > 0)).sort((left, right) => {
+    return score(right) - score(left) || Number(right.kind === 'directory') - Number(left.kind === 'directory') || left.path.localeCompare(right.path)
+  }).slice(0, limit)
+}
+
+async function readDirectory(root, displayDirectory, fragment, excluded, signal) {
+  const directory = displayDirectory.replace(/\/+$/, '')
+  const absolute = resolve(root, directory || '.')
+  if (!pathInside(root, absolute)) return []
+  const entries = await readdir(absolute, { withFileTypes: true })
+  const candidates = []
+  for (const entry of entries) {
+    signal.throwIfAborted()
+    if (entry.name.startsWith('.') && !fragment.startsWith('.')) continue
+    if (entry.isDirectory() && excluded.has(entry.name)) continue
+    if (!entry.isDirectory() && !entry.isFile()) continue
+    const path = `${directory ? `${directory}/` : ''}${entry.name}`
+    candidates.push({ path, kind: entry.isDirectory() ? 'directory' : 'file' })
+  }
+  return rankCandidates(candidates, fragment, Number.MAX_SAFE_INTEGER)
+}
+
+async function fallbackList(root, query, config, signal) {
+  const slash = query.lastIndexOf('/')
+  if (query === '' || slash >= 0) {
+    const directory = slash >= 0 ? query.slice(0, slash) : ''
+    const fragment = slash >= 0 ? query.slice(slash + 1) : ''
+    return (await readDirectory(root, directory, fragment, new Set(config.excludedDirectories), signal)).slice(0, config.maxResults)
+  }
+  const excluded = new Set(config.excludedDirectories)
+  const queue = [{ absolute: resolve(root), display: '' }]
+  const candidates = []
+  while (queue.length > 0 && candidates.length < config.maxEntries) {
+    signal.throwIfAborted()
+    const current = queue.shift()
+    let entries
+    try { entries = await readdir(current.absolute, { withFileTypes: true }) } catch { continue }
+    for (const entry of entries) {
+      signal.throwIfAborted()
+      if (entry.isDirectory() && excluded.has(entry.name)) continue
+      if (!entry.isDirectory() && !entry.isFile()) continue
+      const path = current.display ? `${current.display}/${entry.name}` : entry.name
+      const candidate = { path, kind: entry.isDirectory() ? 'directory' : 'file' }
+      candidates.push(candidate)
+      if (entry.isDirectory()) queue.push({ absolute: join(current.absolute, entry.name), display: path })
+      if (candidates.length >= config.maxEntries) break
     }
-    return { ...memConfig }
+  }
+  return rankCandidates(candidates, query, config.maxResults)
+}
+
+export default class EverythingFileReferenceProvider {
+  static inject = ['agents', 'settings', 'webServer', 'loader']
+
+  constructor(ctx, config = {}) {
+    this.ctx = ctx
+    this.baseConfig = {
+      maxResults: Number.isSafeInteger(config.maxResults) ? config.maxResults : 20,
+      maxEntries: Number.isSafeInteger(config.maxEntries) ? config.maxEntries : 50_000,
+      excludedDirectories: parseIgnoreDirs(config.excludedDirectories ?? DEFAULT_EXCLUDED),
+      everythingUrl: String(config.everythingUrl ?? DEFAULT_EVERYTHING_URL).trim(),
+    }
+    this.settingsScope = null
+    ctx.provide('fileReferences', this)
+    this.settingsReady = this.initSettings()
+    this.installPromptHandlers()
+    ctx.effect(() => ctx.webServer.register({ kind: 'prefix', path: '/quick-file', handler: (req, res) => this.handleConfig(req, res) }), 'quick-file: configuration route')
   }
 
-  /** 会话工作区根：SessionHeader.cwd（取不到返回 null） */
-  function sessionCwd(sessionId) {
+  async initSettings() {
     try {
-      const s = ctx.sessions.get(String(sessionId))
-      const cwd = s && s.header && s.header.cwd
-      if (cwd) return String(cwd)
-    } catch (e) {
-      log('session cwd 解析失败:', String((e && e.message) || e))
+      const mod = await this.ctx.loader.import('@deepseek-ai/schemastery')
+      const z = mod?.default || mod
+      this.settingsScope = this.ctx.settings.register(NS, z.object({
+        maxResults: z.number().step(1).min(1).max(200).default(this.baseConfig.maxResults),
+        maxEntries: z.number().step(1).min(1).max(200_000).default(this.baseConfig.maxEntries),
+        everythingUrl: z.string().default(this.baseConfig.everythingUrl),
+        excludedDirectories: z.string().default(this.baseConfig.excludedDirectories.join(',')),
+      }))
+    } catch (error) {
+      this.ctx.logger?.warn?.(`[quick-file] settings registration failed: ${String(error?.message || error)}`)
     }
-    return null
   }
 
-  /** 从根目录递归收集文件（深度/忽略/数量受限），返回相对路径（`/` 分隔） */
-  async function collectFiles(root) {
-    const cfg = readConfig()
-    const ignore = parseIgnoreDirs(cfg.ignoreDirs)
-    const out = []
-    const walk = async (dir, depth) => {
-      if (depth > cfg.depth || out.length >= cfg.max) return
-      let entries
-      try {
-        const target = await ctx.fs.resolve(dir)
-        entries = await ctx.fs.listDir(target)
-      } catch {
-        return
-      }
-      for (const entry of entries) {
-        if (out.length >= cfg.max) return
-        const isDir = entry.type === 'directory'
-        if (isDir && ignore.has(entry.name)) continue
-        const abs = join(dir, entry.name)
-        const rel = relative(root, abs).split(sep).join('/')
-        out.push({ path: rel, name: entry.name, isDir })
-        if (isDir) await walk(abs, depth + 1)
-      }
+  installPromptHandlers() {
+    const fibers = new Map()
+    const install = (agent) => {
+      if (fibers.has(agent)) return
+      const fiber = agent.ctx.inject(['systemPrompt', 'tools'], (scope) => {
+        scope.systemPrompt.section({
+          name: 'context:file-reference',
+          order: scope.systemPrompt.getSectionOrder('FILE_REFERENCE'),
+          text: () => agent.ctx.tools.get('read', agent) === undefined ? '' : FILE_REFERENCE_PROMPT,
+        })
+      })
+      fibers.set(agent, fiber)
     }
-    await walk(root, 1)
-    return out
+    for (const agent of this.ctx.agents.list()) install(agent)
+    this.ctx.on('agent/created', ({ agent }) => install(agent))
+    this.ctx.on('agent/disposed', ({ agent }) => {
+      const fiber = fibers.get(agent)
+      fibers.delete(agent)
+      void fiber?.dispose()
+    })
+    this.ctx.effect(() => async () => {
+      await Promise.all([...fibers.values()].map((fiber) => fiber.dispose()))
+      fibers.clear()
+    }, 'quick-file: file-reference prompt')
   }
 
-  /**
-   * 走 Everything HTTP Server 搜索（配置了 everythingUrl 且 q 非空时使用）。
-   * 返回与 collectFiles 相同形状的列表（相对路径，`/` 分隔），失败回退 null。
-   * API（voidtools HTTP Server）：?search=<Everything 语法>&count=N&j=1&path_column=1
-   *   → { totalResults, results: [{ type: 'file'|'folder', name, path }] }
-   *
-   * 忽略目录遵循 ignoreDirs 配置（默认含 node_modules/.git 等；用户可改/清空，
-   * 清空 = 不忽略任何目录，Everything 全索引结果都可搜到）。
-   */
-  async function collectViaEverything(root, q) {
-    const cfg = readConfig()
-    const base = String(cfg.everythingUrl || '').trim().replace(/\/+$/, '')
-    if (!base || !q) return null
-    const ignore = parseIgnoreDirs(cfg.ignoreDirs)
-    // 构造 Everything 搜索词：`path:<cwd>` 限定工作区 + `!<dir>\` 排除忽略目录
-    const terms = [q, 'path:' + root]
-    for (const d of ignore) terms.push('!' + d + '\\')
-    const search = terms.join(' ')
-    // count 取 max 的 3 倍余量，过滤后仍够用
-    const count = Math.min(Math.max(cfg.max * 3, 50), 200)
-    const href = base + '/?search=' + encodeURIComponent(search) + '&count=' + count + '&j=1&path_column=1&sort=path&ascending=1'
+  currentConfig() {
+    const config = { ...this.baseConfig }
+    try {
+      const value = this.settingsScope?.get()
+      if (value) {
+        if (Number.isSafeInteger(value.maxResults)) config.maxResults = value.maxResults
+        if (Number.isSafeInteger(value.maxEntries)) config.maxEntries = value.maxEntries
+        if (typeof value.everythingUrl === 'string') config.everythingUrl = value.everythingUrl.trim()
+        if (typeof value.excludedDirectories === 'string') config.excludedDirectories = parseIgnoreDirs(value.excludedDirectories)
+      }
+    } catch {}
+    config.excludedDirectories = parseIgnoreDirs(config.excludedDirectories)
+    return config
+  }
+
+  async list(agent, query, signal) {
+    const config = this.currentConfig()
+    const root = agent.session.header.cwd || process.cwd()
+    const rawQuery = String(query || '').replace(/\\/g, '/')
+    if (config.everythingUrl && rawQuery !== '') {
+      const result = await this.listViaEverything(root, rawQuery, config, signal)
+      if (result !== null) return result
+    }
+    return fallbackList(root, rawQuery, config, signal)
+  }
+
+  async listViaEverything(root, query, config, signal) {
+    const slash = query.lastIndexOf('/')
+    const directory = slash >= 0 ? query.slice(0, slash).replace(/\/+$/, '') : ''
+    const fragment = slash >= 0 ? query.slice(slash + 1) : query
+    const searchRoot = directory ? resolve(root, ...directory.split('/').filter(Boolean)) : resolve(root)
+    if (!pathInside(root, searchRoot)) return []
+    const terms = [fragment || '*', `path:${searchRoot}`]
+    for (const excluded of config.excludedDirectories) terms.push(`!${excluded}\\`)
+    const count = Math.min(Math.max(config.maxResults * 4, 50), 500)
+    const href = `${config.everythingUrl}/?search=${encodeURIComponent(terms.join(' '))}&count=${count}&j=1&path_column=1&sort=path&ascending=1`
     let data
-    try {
-      data = await httpGetJson(href)
-    } catch (e) {
-      log('Everything 请求失败，回退递归扫描:', String((e && e.message) || e))
+    try { data = await httpGetJson(href, signal) } catch (error) {
+      this.ctx.logger?.debug?.(`[quick-file] Everything unavailable, falling back to local search: ${String(error?.message || error)}`)
       return null
     }
-    const results = Array.isArray(data && data.results) ? data.results : []
     const out = []
-    for (const r of results) {
-      if (!r || typeof r.path !== 'string' || typeof r.name !== 'string') continue
-      // path 是绝对目录，拼接文件名后转相对路径
-      const abs = join(r.path, r.name)
-      const rel = relative(root, abs).split(sep).join('/')
-      // 过滤掉工作区外的结果（path: 是子串匹配，可能带出邻近路径）
-      if (rel.startsWith('..')) continue
-      // 双保险：忽略目录（Everything 语法已排除，这里再兜底）
-      const first = rel.split('/')[0]
-      if (first && ignore.has(first)) continue
-      out.push({ path: rel, name: r.name, isDir: r.type === 'folder' })
-      if (out.length >= cfg.max) break
+    const seen = new Set()
+    for (const result of Array.isArray(data?.results) ? data.results : []) {
+      const candidate = candidateFromResult(root, result)
+      if (!candidate || seen.has(candidate.path) || !visible(candidate, query)) continue
+      if (config.excludedDirectories.some((name) => candidate.path.split('/').includes(name))) continue
+      if (slash >= 0 && !directChildOf(candidate.path, directory)) continue
+      if (slash >= 0 && fragment && !candidate.path.slice(candidate.path.lastIndexOf('/') + 1).toLowerCase().includes(fragment.toLowerCase())) continue
+      seen.add(candidate.path)
+      out.push(candidate)
+      if (out.length >= config.maxResults) break
     }
     return out
   }
 
-  const sendJson = (res, obj, status = 200) => {
-    res.writeHead(status, {
-      'content-type': 'application/json; charset=utf-8',
-      'cache-control': 'no-store',
-    })
-    res.end(JSON.stringify(obj))
-  }
-  const readBody = (req) => new Promise((resolve) => {
+  async handleConfig(req, res) {
+    const write = (status, body) => {
+      res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+      res.end(JSON.stringify(body))
+    }
+    const pathname = new URL(req.url || '/', 'http://dsh.internal').pathname
+    if (pathname !== '/quick-file/config') { write(404, { ok: false, error: 'Not found' }); return }
+    if (req.method === 'GET') {
+      const config = this.currentConfig()
+      write(200, { ...config, excludedDirectories: config.excludedDirectories.join(',') })
+      return
+    }
+    if (req.method !== 'POST') { write(405, { ok: false, error: 'Method not allowed' }); return }
+    await this.settingsReady
     let data = ''
-    req.on('data', (c) => { data += c })
-    req.on('end', () => {
-      try { resolve(data ? JSON.parse(data) : {}) } catch { resolve({}) }
-    })
-    req.on('error', () => resolve({}))
-  })
-
-  // ── 注册 /quick-file/* 路由（随插件卸载自动清理）──
-  ctx.webServer.register({
-    kind: 'prefix',
-    path: '/quick-file',
-    handler: async (req, res) => {
-      try {
-        const url = new URL(req.url, 'http://localhost')
-        if (url.pathname === '/quick-file/files' && req.method === 'GET') {
-          const sessionId = url.searchParams.get('session') || ''
-          const q = (url.searchParams.get('q') || '').trim().toLowerCase()
-          const cwd = sessionCwd(sessionId)
-          if (!cwd) {
-            sendJson(res, { files: [] })
-            return
-          }
-          // 配置了 Everything 时优先用它搜索；失败或未配置回退递归扫描
-          let files = await collectViaEverything(cwd, q)
-          if (!files) {
-            files = await collectFiles(cwd)
-            if (q) {
-              files = files.filter(
-                (f) => f.path.toLowerCase().includes(q) || f.name.toLowerCase().includes(q),
-              )
-            }
-          }
-          sendJson(res, { files: files.slice(0, readConfig().max) })
-          return
-        }
-        if (url.pathname === '/quick-file/config' && req.method === 'GET') {
-          sendJson(res, readConfig())
-          return
-        }
-        if (url.pathname === '/quick-file/config' && req.method === 'POST') {
-          const a = await readBody(req)
-          const patch = {}
-          if (a.depth != null) {
-            const d = Number(a.depth)
-            if (!Number.isInteger(d) || d < 1 || d > 10) {
-              sendJson(res, { ok: false, error: 'depth 需为 1-10 的整数' }, 400)
-              return
-            }
-            patch.depth = d
-          }
-          if (a.max != null) {
-            const m = Number(a.max)
-            if (!Number.isInteger(m) || m < 10 || m > 200) {
-              sendJson(res, { ok: false, error: 'max 需为 10-200 的整数' }, 400)
-              return
-            }
-            patch.max = m
-          }
-          if (a.everythingUrl !== undefined) {
-            const u = String(a.everythingUrl).trim()
-            if (u) {
-              try {
-                const parsed = new URL(u)
-                if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw new Error('bad protocol')
-              } catch {
-                sendJson(res, { ok: false, error: 'everythingUrl 需为 http(s)://host[:port] 形式，留空则用递归扫描' }, 400)
-                return
-              }
-            }
-            patch.everythingUrl = u
-          }
-          if (a.ignoreDirs !== undefined) {
-            // 逗号分隔目录名；允许留空（不忽略任何目录）
-            const list = String(a.ignoreDirs).split(',').map((s) => s.trim()).filter(Boolean)
-            if (list.some((name) => !/^[A-Za-z0-9._-]+$/.test(name))) {
-              sendJson(res, { ok: false, error: 'ignoreDirs 需为逗号分隔的目录名（字母/数字/._-），留空 = 不忽略' }, 400)
-              return
-            }
-            patch.ignoreDirs = list.join(',')
-          }
-          try {
-            if (scope) await scope.update(patch)
-            else Object.assign(memConfig, patch)
-            log('config ->', JSON.stringify(readConfig()))
-            sendJson(res, { ok: true, ...readConfig() })
-          } catch (e) {
-            log('config 保存失败:', String((e && e.message) || e))
-            sendJson(res, { ok: false, error: '保存失败: ' + String((e && e.message) || e) }, 500)
-          }
-          return
-        }
-        sendJson(res, { ok: false, error: 'not-found' }, 404)
-      } catch (e) {
-        console.error('[quick-file] route threw:', e)
-        sendJson(res, { ok: false, error: String((e && e.message) || e) }, 500)
-      }
-    },
-  })
+    for await (const chunk of req) {
+      data += String(chunk)
+      if (data.length > MAX_BODY_BYTES) { write(413, { ok: false, error: 'Request body too large' }); return }
+    }
+    let body
+    try { body = data.trim() ? JSON.parse(data) : {} } catch { write(400, { ok: false, error: 'Invalid JSON' }); return }
+    const current = this.currentConfig()
+    const next = { ...current }
+    if (body.maxResults !== undefined) {
+      next.maxResults = Number(body.maxResults)
+      if (!Number.isSafeInteger(next.maxResults) || next.maxResults < 1 || next.maxResults > 200) { write(400, { ok: false, error: 'maxResults must be 1-200' }); return }
+    }
+    if (body.maxEntries !== undefined) {
+      next.maxEntries = Number(body.maxEntries)
+      if (!Number.isSafeInteger(next.maxEntries) || next.maxEntries < 1 || next.maxEntries > 200_000) { write(400, { ok: false, error: 'maxEntries must be 1-200000' }); return }
+    }
+    if (body.everythingUrl !== undefined) {
+      try { next.everythingUrl = validEverythingUrl(body.everythingUrl) } catch { write(400, { ok: false, error: 'everythingUrl must be an http(s) URL' }); return }
+    }
+    if (body.excludedDirectories !== undefined) {
+      next.excludedDirectories = parseIgnoreDirs(body.excludedDirectories)
+      if (next.excludedDirectories.some((name) => name.includes('/') || name.includes('\\'))) { write(400, { ok: false, error: 'excludedDirectories must contain directory basenames' }); return }
+    }
+    try {
+      if (this.settingsScope) await this.settingsScope.update({
+        maxResults: next.maxResults,
+        maxEntries: next.maxEntries,
+        everythingUrl: next.everythingUrl,
+        excludedDirectories: next.excludedDirectories.join(','),
+      })
+      else this.baseConfig = next
+      const result = this.currentConfig()
+      write(200, { ok: true, ...result, excludedDirectories: result.excludedDirectories.join(',') })
+    } catch (error) {
+      write(500, { ok: false, error: String(error?.message || error) })
+    }
+  }
 }
+
+export { candidateFromResult, fallbackList, parseIgnoreDirs }

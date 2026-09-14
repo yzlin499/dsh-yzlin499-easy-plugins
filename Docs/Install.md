@@ -9,13 +9,11 @@
 
 | 插件 | 用途 | 安装命令 |
 |---|---|---|
-| `dsh-oc-usage` | OpenCode 用量悬浮窗（右上角，5h/7d/30d 用量） | `dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-oc-usage"` |
 | `dsh-mcp-compat` | 自动读取 `.mcp.json` / `opencode.json` 等标准 MCP 配置并连接 | `dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-mcp-compat"` |
-| `dsh-quick-file` | @ 快速输入文件（输入框 `@` 弹出文件列表，回车即插入路径） | `dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-quick-file"` |
-| `dsh-svn-manager` | SVN 侧边栏管理（需 `dsh-better-sidebar`） | `dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-svn-manager"` |
+| `dsh-quick-file` | 官方原生 @ 文件搜索的 Everything 后端 | `dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-quick-file"` |
+| `dsh-version-control` | 官方 ui-sidebar-right 侧边栏中的 Git / SVN 版本控制 | `dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-version-control"` |
 | `dsh-win-notify` | Windows 原生吐司通知（权限申请 / 提问 / 运行结束） | `dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-win-notify"` |
 | `dsh-workspace-auto-approval` | 工作区自动审批模式 | `dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-workspace-auto-approval"` |
-| `dsh-workspace-openmenu` | 工作区快捷打开（「打开为」菜单） | `dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-workspace-openmenu"` |
 | `dsh-yzlin499-plugins-manager` | 插件管理（设置页开关本集合插件，走 dsh CLI） | `dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-yzlin499-plugins-manager"` |
 
 ## 安装
@@ -26,7 +24,6 @@
 选择要装的插件，按上表的安装命令执行（一次一个，命令即上表；例如）：
 
 ```powershell
-dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-oc-usage"
 dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-mcp-compat"
 ```
 
@@ -35,13 +32,11 @@ dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/ds
 ## 卸载
 
 ```powershell
-dsh plugin --profile web remove dsh-oc-usage
 dsh plugin --profile web remove dsh-mcp-compat
 dsh plugin --profile web remove dsh-quick-file
-dsh plugin --profile web remove dsh-svn-manager
+dsh plugin --profile web remove dsh-version-control
 dsh plugin --profile web remove dsh-win-notify
 dsh plugin --profile web remove dsh-workspace-auto-approval
-dsh plugin --profile web remove dsh-workspace-openmenu
 dsh plugin --profile web remove dsh-yzlin499-plugins-manager
 ```
 

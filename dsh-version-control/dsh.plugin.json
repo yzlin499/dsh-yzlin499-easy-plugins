@@ -1,0 +1,16 @@
+{
+  "id": "dsh-external/dsh-version-control",
+  "version": "0.4.0",
+  "main": "./index.js",
+  "description": "在官方 ui-sidebar-right 侧边栏中管理 Git 与 SVN：变更、提交、更新、历史与差异",
+  "engines": {
+    "dsh": ">=0.1.5-rc.1"
+  },
+  "contributes": {
+    "tools": [],
+    "skills": []
+  },
+  "client": {
+    "main": "./client.js"
+  }
+}

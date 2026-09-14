@@ -46,8 +46,7 @@ const reportedInvalidCommands = new Set()
 // WSL1 / 镜像网络下 loopback 本来就能用，因此只在失败后兜底，不影响正常连接。
 let _wslChecked = false
 let _wslHostIp = null
-// WSL 检测：环境变量或 microsoft/WSL 内核标记（仅 Linux 上判真），与
-// dsh-workspace-openmenu 保持一致
+// WSL 检测：环境变量或 microsoft/WSL 内核标记（仅 Linux 上判真）
 function isWsl() {
   if (process.platform !== 'linux') return false
   if (process.env.WSL_DISTRO_NAME || process.env.WSL_INTEROP) return true

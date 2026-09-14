@@ -1,13 +1,8 @@
 # dsh-quick-file
 
-DSH 插件：**@ 快速输入文件**。
+为 DSH 官方原生 `@` 文件搜索提供 Everything 后端。
 
-输入框打 `@` 弹出工作区文件列表，回车/点击即把文件路径插入输入框
-（复用 DSH 内置输入触发管道，不修改输入框本身）。
-
-## 截图
-
-![截图](screenshot.png)
+本插件不注册第二套 `@` 菜单，也不替换官方输入框 UI；它替换官方的本地文件引用 Provider，因此 DSH 原生文件/会话候选、目录下钻、文件图标、引用格式和键盘操作都会继续保留。
 
 ## 安装
 
@@ -15,46 +10,50 @@ DSH 插件：**@ 快速输入文件**。
 dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-quick-file"
 ```
 
-重启 DSH Web 后生效。
+需要 DSH `0.1.5-rc.1` 或更高版本，以及正在运行的 Everything HTTP Server。安装后重启 DSH Web。
 
 ## 使用
 
-输入框打 `@` → 弹出文件列表（与其它 `@` 源分组并列）→ 继续打字过滤
-（按文件名/路径模糊匹配）→ ↑↓/回车或点击选中 → 选中项以**块（chip）**形式插入
-输入框：只显示文件名，一次 Backspace 即整块删除；发送时自动展开为完整相对路径
-交给模型。
+1. 在 Everything 中确认 HTTP Server 已开启，默认地址为 `http://127.0.0.1:8074`。
+2. 在 DSH 输入框输入 `@`，使用官方原生文件候选菜单。
+3. 输入关键词时，候选优先通过 Everything 在当前会话工作区内搜索。
+4. 输入目录路径后继续输入，例如 `@src/`，仍使用官方目录下钻语义。
+5. Everything 不可用或请求失败时，自动回退官方本地有界扫描。
+6. 文件选中后继续使用官方文件引用格式；文件内容仍由模型调用 `read` 工具读取。
 
-候选菜单撑满输入框宽度；每行显示 **类型图标 + 文件名 + 所在目录**：
-图标按扩展名染色（如 ts 蓝、js 黄、py 黄蓝、go 浅蓝、rs 橙、图片紫、压缩包橙），
-目录路径过长时省略左边、只保留靠近文件名的尾部，聚焦文件名本身。
-
-## 配置（设置 → 插件 → 快速输入文件）
+## 配置（设置 → 插件 → 快速文件搜索）
 
 | 项 | 说明 |
 |---|---|
-| Everything HTTP | **留空 = 递归扫描**工作区；填入 `http://127.0.0.1:8074` 这类地址后改用 **Everything HTTP Server** 搜索（Everything 已索引全盘，比逐目录遍历更快） |
-| 忽略目录 | 逗号分隔的目录名，两种搜索模式都跳过。默认 `node_modules,.git,dist,build,coverage,.next,.cache,__pycache__,.venv,venv,target,.dsh`；**清空 = 不忽略任何目录**（Everything 全索引结果都能搜到，包括 node_modules） |
-| 列表深度上限 | 递归扫描模式的最大目录深度（1-10，默认 3） |
-| 文件数量上限 | 最多返回的条目数（10-200，默认 50） |
+| Everything HTTP | Everything HTTP Server 地址，默认 `http://127.0.0.1:8074`；留空回退官方本地扫描 |
+| 忽略目录 | 逗号分隔的目录基名；默认忽略 `node_modules`、`.git`、`dist`、`build` 等目录 |
+| 候选数量 | Everything 和官方回退搜索的最大返回数量，范围 1-200 |
+| 本地索引上限 | Everything 不可用时官方本地索引的最大条目数，范围 1-200000 |
 
-Everything 搜索复用 Everything 的索引：在**当前会话工作区**内（`path:` 限定）按文件名匹配，
-速度快且覆盖全盘已索引内容。忽略哪些目录由「忽略目录」设置控制（默认排除
-node_modules/.git 等，避免搜索结果过杂）；需要搜索 node_modules 里的文件时，
-把对应目录从忽略列表去掉或清空即可。输入关键词时走 Everything 搜索；关键词留空时
-仍走递归扫描（干净列出工作区结构）。
+Everything 查询始终追加当前 Session 工作区的 `path:` 限定，并在返回后再次检查路径是否仍在工作区内。忽略目录同时在 Everything 查询和结果过滤阶段生效。
 
 ## 工作原理
 
-- **Client**（`client.js`）：注册一个 `@` InputTriggerSource 到内置管道
-  `dsh-client-ui-input-trigger`（`ctx.inputTriggers`）——菜单渲染、键盘导航、
-  输入改写全部由管道负责，本插件只提供文件数据源。
-- **Host**（`index.js`）：`/quick-file/files` 路由，按会话工作区根
-  （`SessionHeader.cwd`）取文件列表：
-  - 未配置 Everything 或关键词为空：用 `fs` 服务递归列目录（深度/忽略/数量受限）
-  - 配置了 Everything HTTP 且有关键词：走 `?search=...&j=1&path_column=1` JSON 接口，
-    失败自动回退递归扫描
-- 配置经官方 `ctx.settings` 持久化到 `~/.dsh/settings.yaml`（命名空间
-  `dsh-quick-file`），设置卡片走插件自身 `/quick-file/config` 路由读写。
+官方原生 `@` 链路为：
+
+```text
+ui-reference
+  → remote.fileReferences.list
+  → dsh-api-session-controller
+  → ctx.fileReferences.list
+  → dsh-quick-file Provider
+```
+
+`cordis.patch.yml` 停用官方组合树中的 `file-reference-local` 行并插入本插件 Provider。Host Provider 实现官方 `ctx.fileReferences.list` 契约，保留官方的路径引用提示词，并把带关键词的查询优先交给 Everything，失败时使用本地有界扫描回退。
+
+Provider 返回官方约定的 `{ path, kind: 'file' | 'directory' }` 候选，不参与浏览器菜单渲染。Client 半侧只注册设置卡片，不注册新的 `inputTriggers` source。
+
+## 已知限制
+
+- Everything HTTP Server 必须在 DSH Host 所在环境可访问；WSL 与 Windows 之间的地址可达性取决于本机网络配置。
+- Everything 结果按当前工作区过滤；Everything 自身的索引权限不会绕过 DSH 文件系统权限。
+- 空查询的根目录展示使用官方本地目录列举；带关键词的查询使用 Everything。
+- Everything 搜索失败时会静默回退官方扫描，不影响原生 `@` 菜单显示。
 
 ## License
 

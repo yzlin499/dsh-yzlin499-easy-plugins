@@ -1,12 +1,13 @@
 import * as svn from './svn.js'
+import * as git from './git.js'
 
-export const name = 'dsh-svn-manager'
+export const name = 'dsh-version-control'
 export const inject = ['webServer', 'sessions', 'webRuntime', 'settings', 'loader']
 
-const API_PREFIX = '/svn-manager/api'
-const CONFIG_PREFIX = '/svn-manager/config'
+const API_PREFIX = '/version-control/api'
+const CONFIG_PREFIX = '/version-control/config'
 const MAX_BODY_BYTES = 1024 * 1024
-const NS = 'dsh-svn-manager'
+const NS = 'dsh-version-control'
 
 class ApiError extends Error {
   constructor(message, code = 'bad-request', status = 400) {
@@ -71,11 +72,11 @@ function writeJson(res, status, body) {
 }
 
 function writeError(res, error) {
-  if (error instanceof ApiError || error instanceof svn.SvnCommandError) {
+  if (error instanceof ApiError || error instanceof svn.SvnCommandError || error instanceof git.GitCommandError) {
     writeJson(res, error.status ?? 400, { ok: false, error: { code: error.code ?? 'bad-request', message: error.message } })
     return
   }
-  console.error('[dsh-svn-manager] API error:', error)
+  console.error('[dsh-version-control] API error:', error)
   writeJson(res, 500, { ok: false, error: { code: 'internal', message: error instanceof Error ? error.message : String(error) } })
 }
 
@@ -109,13 +110,38 @@ function requirePaths(payload) {
   return payload.paths
 }
 
+async function detectProvider(cwd, options) {
+  const gitInfo = await git.info(cwd, options)
+  if (gitInfo.isWorkingCopy) return 'git'
+  try {
+    const svnInfo = await svn.workingCopyInfo(cwd, options)
+    return svnInfo.isWorkingCopy ? 'svn' : 'git'
+  } catch (error) {
+    if (error instanceof svn.SvnCommandError && error.code === 'svn-unavailable') return 'git'
+    throw error
+  }
+}
+
+function selectedProvider(payload) {
+  const value = payload?.provider
+  return value === 'svn' || value === 'git' ? value : undefined
+}
+
+function optionsFor(runtime, readConfig) {
+  return { signal: runtime.signal, svnExecutable: readConfig().svnExecutable }
+}
+
 function buildApi(ctx, runtime, readConfig) {
-  const serialMutation = async (cwd, work) => {
-    const info = await svn.workingCopyInfo(cwd, { signal: runtime.signal, svnExecutable: readConfig().svnExecutable })
-    if (!info.isWorkingCopy || !info.wcRoot) {
-      throw new svn.SvnCommandError('The session workspace is not an SVN working copy', 'not-working-copy', '', 400)
+  const serialMutation = async (cwd, provider, work) => {
+    const info = provider === 'git'
+      ? await git.info(cwd, { signal: runtime.signal })
+      : await svn.workingCopyInfo(cwd, optionsFor(runtime, readConfig))
+    const root = provider === 'git' ? info.root : info.wcRoot
+    if (!info.isWorkingCopy || !root) {
+      const ErrorType = provider === 'git' ? git.GitCommandError : svn.SvnCommandError
+      throw new ErrorType(`The session workspace is not a ${provider.toUpperCase()} working copy`, 'not-working-copy', '', 400)
     }
-    const key = process.platform === 'win32' ? info.wcRoot.toLowerCase() : info.wcRoot
+    const key = process.platform === 'win32' ? root.toLowerCase() : root
     const previous = runtime.locks.get(key) ?? Promise.resolve()
     const current = previous.catch(() => {}).then(work)
     runtime.locks.set(key, current)
@@ -125,49 +151,65 @@ function buildApi(ctx, runtime, readConfig) {
       if (runtime.locks.get(key) === current) runtime.locks.delete(key)
     }
   }
+  const resolve = async (payload) => {
+    const cwd = sessionCwd(ctx, payload)
+    return { cwd, provider: selectedProvider(payload) ?? await detectProvider(cwd, optionsFor(runtime, readConfig)) }
+  }
   return {
-    status: (payload) => svn.status(sessionCwd(ctx, payload), {
-      showUpdates: payload?.showUpdates === true,
-      signal: runtime.signal,
-      svnExecutable: readConfig().svnExecutable,
-    }),
-    diff: (payload) => svn.diff(sessionCwd(ctx, payload), {
-      path: optionalString(payload, 'path'),
-      revision: optionalString(payload, 'revision'),
-      signal: runtime.signal,
-      svnExecutable: readConfig().svnExecutable,
-    }),
-    log: (payload) => {
+    status: async (payload) => {
+      const { cwd, provider } = await resolve(payload)
+      const result = provider === 'git'
+        ? await git.status(cwd, { signal: runtime.signal })
+        : await svn.status(cwd, { showUpdates: payload?.showUpdates === true, ...optionsFor(runtime, readConfig) })
+      return { provider, ...result }
+    },
+    diff: async (payload) => {
+      const { cwd, provider } = await resolve(payload)
+      return provider === 'git'
+        ? git.diff(cwd, { path: optionalString(payload, 'path'), revision: optionalString(payload, 'revision'), signal: runtime.signal })
+        : svn.diff(cwd, { path: optionalString(payload, 'path'), revision: optionalString(payload, 'revision'), ...optionsFor(runtime, readConfig) })
+    },
+    log: async (payload) => {
       const rawLimit = payload?.limit
-      if (rawLimit !== undefined && (!Number.isInteger(rawLimit) || rawLimit < 1 || rawLimit > 100)) {
-        throw new ApiError('Invalid "limit"')
-      }
-      return svn.log(sessionCwd(ctx, payload), {
-        limit: rawLimit,
-        startRevision: optionalString(payload, 'startRevision'),
-        signal: runtime.signal,
-        svnExecutable: readConfig().svnExecutable,
-      })
+      if (rawLimit !== undefined && (!Number.isInteger(rawLimit) || rawLimit < 1 || rawLimit > 100)) throw new ApiError('Invalid "limit"')
+      const { cwd, provider } = await resolve(payload)
+      return provider === 'git'
+        ? git.log(cwd, { limit: rawLimit, signal: runtime.signal })
+        : svn.log(cwd, { limit: rawLimit, startRevision: optionalString(payload, 'startRevision'), ...optionsFor(runtime, readConfig) })
     },
     add: async (payload) => {
-      requireConfirm(payload, 'SVN add')
-      const cwd = sessionCwd(ctx, payload)
-      return serialMutation(cwd, () => svn.add(cwd, requirePaths(payload), { signal: runtime.signal, svnExecutable: readConfig().svnExecutable }))
+      const { cwd, provider } = await resolve(payload)
+      requireConfirm(payload, `${provider.toUpperCase()} add`)
+      return serialMutation(cwd, provider, () => provider === 'git'
+        ? git.add(cwd, requirePaths(payload), { signal: runtime.signal })
+        : svn.add(cwd, requirePaths(payload), optionsFor(runtime, readConfig)))
     },
     revert: async (payload) => {
-      requireConfirm(payload, 'SVN revert')
-      const cwd = sessionCwd(ctx, payload)
-      return serialMutation(cwd, () => svn.revert(cwd, requirePaths(payload), { signal: runtime.signal, svnExecutable: readConfig().svnExecutable }))
+      const { cwd, provider } = await resolve(payload)
+      requireConfirm(payload, `${provider.toUpperCase()} revert`)
+      return serialMutation(cwd, provider, () => provider === 'git'
+        ? git.revert(cwd, requirePaths(payload), { signal: runtime.signal })
+        : svn.revert(cwd, requirePaths(payload), optionsFor(runtime, readConfig)))
     },
     commit: async (payload) => {
-      requireConfirm(payload, 'SVN commit')
-      const cwd = sessionCwd(ctx, payload)
-      return serialMutation(cwd, () => svn.commit(cwd, requireString(payload, 'message'), { signal: runtime.signal, svnExecutable: readConfig().svnExecutable }))
+      const { cwd, provider } = await resolve(payload)
+      requireConfirm(payload, `${provider.toUpperCase()} commit`)
+      return serialMutation(cwd, provider, () => provider === 'git'
+        ? git.commit(cwd, requireString(payload, 'message'), { signal: runtime.signal })
+        : svn.commit(cwd, requireString(payload, 'message'), optionsFor(runtime, readConfig)))
     },
     update: async (payload) => {
-      requireConfirm(payload, 'SVN update')
-      const cwd = sessionCwd(ctx, payload)
-      return serialMutation(cwd, () => svn.update(cwd, { signal: runtime.signal, svnExecutable: readConfig().svnExecutable }))
+      const { cwd, provider } = await resolve(payload)
+      requireConfirm(payload, `${provider.toUpperCase()} update`)
+      return serialMutation(cwd, provider, () => provider === 'git'
+        ? git.update(cwd, { signal: runtime.signal })
+        : svn.update(cwd, optionsFor(runtime, readConfig)))
+    },
+    push: async (payload) => {
+      const { cwd, provider } = await resolve({ ...payload, provider: 'git' })
+      if (provider !== 'git') throw new ApiError('Push is only available for Git', 'unsupported', 400)
+      requireConfirm(payload, 'GIT push')
+      return serialMutation(cwd, provider, () => git.push(cwd, { signal: runtime.signal }))
     },
   }
 }
@@ -175,9 +217,9 @@ function buildApi(ctx, runtime, readConfig) {
 export async function apply(ctx) {
   const controller = new AbortController()
   const runtime = { signal: controller.signal, locks: new Map() }
-  ctx.effect(() => () => controller.abort(), 'dsh-svn-manager: cancel active SVN commands')
+  ctx.effect(() => () => controller.abort(), 'dsh-version-control: cancel active version-control commands')
 
-  // ── 持久化设置：命名空间 dsh-svn-manager，svnExecutable 留空 = 自动检测 ──
+  // ── 持久化设置：命名空间 dsh-version-control，svnExecutable 留空 = 自动检测 ──
   let scope = null
   const memConfig = { svnExecutable: '' }
   const readConfig = () => {
@@ -195,7 +237,7 @@ export async function apply(ctx) {
       const z = mod && mod.default ? mod.default : mod
       scope = ctx.settings.register(NS, z.object({ svnExecutable: z.string().default('') }))
     } catch (error) {
-      console.log('[dsh-svn-manager] settings 注册失败，回退内存态:', String((error && error.message) || error))
+      console.log('[dsh-version-control] settings 注册失败，回退内存态:', String((error && error.message) || error))
     }
   }
 
@@ -233,12 +275,12 @@ export async function apply(ctx) {
         if (scope) await scope.update({ svnExecutable: next })
         else Object.assign(memConfig, { svnExecutable: next })
       } catch (error) {
-        console.log('[dsh-svn-manager] config 保存失败:', String((error && error.message) || error))
+        console.log('[dsh-version-control] config 保存失败:', String((error && error.message) || error))
         throw new ApiError('Failed to save configuration', 'config-error', 500)
       }
       svn.resetSvnExecutableResolution()
       const detected = await svn.resolveSvnExecutable(next)
-      console.log('[dsh-svn-manager] svnExecutable ->', next || '(auto)', 'detected:', detected || '(none)')
+      console.log('[dsh-version-control] svnExecutable ->', next || '(auto)', 'detected:', detected || '(none)')
       writeJson(res, 200, {
         ok: true,
         svnExecutable: next,
@@ -283,7 +325,7 @@ export async function apply(ctx) {
     disposers.push(ctx.webServer.register(registerApi))
     disposers.push(ctx.webServer.register({ kind: 'prefix', path: CONFIG_PREFIX, handler: configHandler }))
     return () => { for (const off of disposers) { try { off?.() } catch {} } }
-  }, 'dsh-svn-manager: /svn-manager/api and /svn-manager/config routes')
+  }, 'dsh-version-control: /version-control/api and /version-control/config routes')
 
   void initSettings()
 }

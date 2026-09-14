@@ -1,7 +1,7 @@
 {
-  "name": "dsh-svn-manager",
-  "version": "0.3.0",
-  "description": "DSH better-sidebar plugin for SVN working-copy status, add, revert, commit, update, history, and unified diff",
+  "name": "dsh-version-control",
+  "version": "0.4.0",
+  "description": "Official ui-sidebar-right Git and SVN version control plugin for DSH",
   "type": "module",
   "main": "index.js",
   "exports": {
@@ -15,6 +15,7 @@
     },
     "client": {
       "inject": [
+        "sidebarRightTabs",
         "slots",
         "locale"
       ],
@@ -22,7 +23,7 @@
     }
   },
   "peerDependencies": {
-    "dsh-better-sidebar": ">=0.12.1"
+    "@deepseek-ai/dsh-client-ui-sidebar-right": ">=0.1.5-rc.1"
   },
   "scripts": {
     "test": "node --test"
@@ -31,7 +32,8 @@
     "dsh",
     "deepseek-harness",
     "dsh-plugin",
-    "dsh-better-sidebar",
+    "version-control",
+    "git",
     "svn",
     "subversion"
   ],

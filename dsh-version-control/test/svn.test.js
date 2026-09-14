@@ -7,6 +7,7 @@ import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { tmpdir } from 'node:os'
 import { apply as applyPlugin } from '../index.js'
+import * as git from '../git.js'
 import {
   add,
   commit,
@@ -26,6 +27,7 @@ import {
 
 const hasSvn = spawnSync('svn', ['--version', '--quiet'], { encoding: 'utf8' }).status === 0
 const hasSvnAdmin = spawnSync('svnadmin', ['--version', '--quiet'], { encoding: 'utf8' }).status === 0
+const hasGit = spawnSync('git', ['--version'], { encoding: 'utf8' }).status === 0
 
 function run(command, args, cwd) {
   const result = spawnSync(command, args, { cwd, encoding: 'utf8' })
@@ -99,7 +101,7 @@ test('honors an already-cancelled SVN command signal', async () => {
 })
 
 test('runs an SVN working-copy lifecycle', { skip: !(hasSvn && hasSvnAdmin), timeout: 30_000 }, async () => {
-  const fixture = await mkdtemp(join(tmpdir(), 'dsh-svn-manager-test-'))
+  const fixture = await mkdtemp(join(tmpdir(), 'dsh-version-control-test-'))
   const repo = join(fixture, 'repo')
   const wc = join(fixture, 'wc')
   try {
@@ -168,34 +170,65 @@ test('runs an SVN working-copy lifecycle', { skip: !(hasSvn && hasSvnAdmin), tim
       await route.handler(req, response)
       return { status: response.status, body: response.body ? JSON.parse(response.body) : null }
     }
-    const routedStatus = await invoke('/svn-manager/api/status', '127.0.0.1:3080', 'POST', { sessionId: 'session-1' })
+    const routedStatus = await invoke('/version-control/api/status', '127.0.0.1:3080', 'POST', { sessionId: 'session-1' })
     assert.equal(routedStatus.status, 200)
     assert.equal(routedStatus.body.value.info.isWorkingCopy, true)
-    const rejected = await invoke('/svn-manager/api/status', 'evil.example:3080', 'POST', { sessionId: 'session-1' })
+    const rejected = await invoke('/version-control/api/status', 'evil.example:3080', 'POST', { sessionId: 'session-1' })
     assert.equal(rejected.status, 403)
-    const confirmation = await invoke('/svn-manager/api/revert', '127.0.0.1:3080', 'POST', { sessionId: 'session-1', paths: ['tracked.txt'] })
+    const confirmation = await invoke('/version-control/api/revert', '127.0.0.1:3080', 'POST', { sessionId: 'session-1', paths: ['tracked.txt'] })
     assert.equal(confirmation.status, 400)
     assert.equal(confirmation.body.error.code, 'confirm-required')
 
     // 配置路由：GET 返回当前值与检测结果；POST 保存 svnExecutable
-    const configRead = await invoke('/svn-manager/config', '127.0.0.1:3080', 'GET')
+    const configRead = await invoke('/version-control/config', '127.0.0.1:3080', 'GET')
     assert.equal(configRead.status, 200)
     assert.equal(configRead.body.ok, true)
     assert.equal(typeof configRead.body.svnExecutable, 'string')
     assert.equal(typeof configRead.body.platform, 'string')
-    const configWrite = await invoke('/svn-manager/config', '127.0.0.1:3080', 'POST', { svnExecutable: 'svn.exe' })
+    const configWrite = await invoke('/version-control/config', '127.0.0.1:3080', 'POST', { svnExecutable: 'svn.exe' })
     assert.equal(configWrite.status, 200)
     assert.equal(configWrite.body.ok, true)
     assert.equal(configWrite.body.svnExecutable, 'svn.exe')
-    const configReadBack = await invoke('/svn-manager/config', '127.0.0.1:3080', 'GET')
+    const configReadBack = await invoke('/version-control/config', '127.0.0.1:3080', 'GET')
     assert.equal(configReadBack.body.svnExecutable, 'svn.exe')
     // 恢复默认，避免影响后续环境无关断言
-    await invoke('/svn-manager/config', '127.0.0.1:3080', 'POST', { svnExecutable: '' })
+    await invoke('/version-control/config', '127.0.0.1:3080', 'POST', { svnExecutable: '' })
 
     await revert(wc, ['tracked.txt', 'new @ file.txt'])
     snapshot = await status(wc)
     assert.equal(snapshot.entries.find((entry) => entry.path === 'tracked.txt'), undefined)
     assert.equal(snapshot.entries.find((entry) => entry.path === 'new @ file.txt')?.item, 'unversioned')
+  } finally {
+    await rm(fixture, { recursive: true, force: true })
+  }
+})
+
+test('runs a Git working-tree lifecycle', { skip: !hasGit, timeout: 30_000 }, async () => {
+  const fixture = await mkdtemp(join(tmpdir(), 'dsh-version-control-git-test-'))
+  try {
+    run('git', ['init'], fixture)
+    run('git', ['config', 'user.email', 'test@example.com'], fixture)
+    run('git', ['config', 'user.name', 'Version Control Test'], fixture)
+    await writeFile(join(fixture, 'tracked.txt'), 'one\n', 'utf8')
+    await git.add(fixture, ['tracked.txt'])
+    await git.commit(fixture, 'initial')
+    await appendFile(join(fixture, 'tracked.txt'), 'two\n', 'utf8')
+    await writeFile(join(fixture, 'new.txt'), 'new\n', 'utf8')
+
+    const snapshot = await git.status(fixture)
+    assert.equal(snapshot.info.isWorkingCopy, true)
+    assert.equal(typeof snapshot.info.branch, 'string')
+    assert.equal(snapshot.entries.find((entry) => entry.path === 'tracked.txt')?.item, 'modified')
+    assert.equal(snapshot.entries.find((entry) => entry.path === 'new.txt')?.item, 'unversioned')
+
+    const patch = await git.diff(fixture, {})
+    assert.match(patch.diff, /tracked\.txt/)
+    assert.match(patch.diff, /\+two/)
+    const rows = await git.log(fixture, { limit: 10 })
+    assert.equal(rows.some((entry) => entry.message === 'initial'), true)
+
+    await git.commit(fixture, 'second')
+    assert.deepEqual((await git.status(fixture)).entries, [])
   } finally {
     await rm(fixture, { recursive: true, force: true })
   }

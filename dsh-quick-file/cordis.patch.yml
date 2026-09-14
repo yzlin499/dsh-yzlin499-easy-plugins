@@ -1,6 +1,7 @@
-# dsh bundle layer: mount the quick-file @-mention input source.
-# Client registers an '@' InputTriggerSource into the built-in input-trigger
-# pipeline (dsh-client-ui-input-trigger); Host serves workspace file lists.
+# Disable the shipped local provider and add its Everything-backed replacement.
+- id: file-reference-local
+  name: '@deepseek-ai/dsh-file-reference-local'
+  disabled: true
 - insert:
     - id: quick-file
       name: dsh-quick-file

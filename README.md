@@ -21,12 +21,10 @@ Issue——我帮你想想。
 
 | 插件 | 截图 | 用途 | 安装命令 | 开发状态 |
 |---|---|---|---|---|
-| [dsh-oc-usage](dsh-oc-usage/README.md) | <img src="dsh-oc-usage/screenshot.png" width="150" alt="dsh-oc-usage 截图"> | OpenCode 用量悬浮窗：右上角可拖拽悬浮窗，显示 opencode.ai Go 订阅 5h/7d/30d 用量 + 重置倒计时，5 分钟自动刷新 | `dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-oc-usage"` | 序列化还没做完 |
 | [dsh-mcp-compat](dsh-mcp-compat/README.md) | — | 标准 MCP 配置兼容：自动读取 `.mcp.json` / `opencode.json` / `.cursor/mcp.json` / `.codex/config.toml`（项目级 + 用户级），把每个 MCP 服务器挂载为 dsh-mcp-client 实例，工具以 `mcp__<名>__*` 出现 | `dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-mcp-compat"` | 没那么稳定 |
-| [dsh-quick-file](dsh-quick-file/README.md) | <img src="dsh-quick-file/screenshot.png" width="150" alt="dsh-quick-file 截图"> | @ 快速输入文件：输入框打 `@` 弹出工作区文件列表，回车/点击即把文件路径插入输入框（复用内置输入触发管道）；支持配置 Everything HTTP Server 搜索（比递归扫描更快），忽略目录可自定义 | `dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-quick-file"` | |
-| [dsh-svn-manager](dsh-svn-manager/README.md) | — | SVN 侧边栏管理：通过 DSH-better-sidebar 查看工作副本状态、纳管/还原、提交、更新、历史和独立差异 Tab；遵循 SVN 原生语义，不伪造 Git staging | `dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-svn-manager"` | 新增 |
+| [dsh-quick-file](dsh-quick-file/README.md) | <img src="dsh-quick-file/screenshot.png" width="150" alt="dsh-quick-file 截图"> | 官方原生 @ 文件搜索的 Everything 后端：保留文件/会话混合候选、目录下钻和标准引用格式，关键词搜索走 Everything，失败回退官方扫描 | `dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-quick-file"` | |
+| [dsh-version-control](dsh-version-control/README.md) | — | 统一版本控制：接入官方 ui-sidebar-right，支持 Git 与 SVN 的变更、历史、差异、提交和更新操作 | `dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-version-control"` | 新增 |
 | [dsh-yzlin499-plugins-manager](dsh-yzlin499-plugins-manager/README.md) | <img src="dsh-yzlin499-plugins-manager/screenshot.png" width="150" alt="插件管理器截图"> | 插件管理：设置页列出本集合全部插件，一键启用/停用（走 dsh CLI，批量开关后重启生效）；只管理本项目插件 | `dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-yzlin499-plugins-manager"` | |
-| [dsh-workspace-openmenu](dsh-workspace-openmenu/README.md) | <img src="dsh-workspace-openmenu/screenshot.png" width="150" alt="工作区快捷打开截图"> | 工作区快捷打开：会话头部右上角（session log 左侧）「打开为」按钮，二级菜单在工作区位置打开 pwsh / cmd / 资源管理器 / vscode | `dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-workspace-openmenu"` | |
 | [dsh-workspace-auto-approval](dsh-workspace-auto-approval/README.md) | <img src="dsh-workspace-auto-approval/screenshot.png" width="150" alt="工作区自动审核截图"> | 工作区自动审核：新增第四种权限模式，自动放行工作区内操作、工作区外只读访问和网络读取；复杂命令使用当前会话模型进行极简无工具审核，其余回落下游审批链 | `dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-workspace-auto-approval"` | 新增 |
 | [dsh-win-notify](dsh-win-notify/README.md) | — | Windows 原生吐司通知：权限申请 / 发起提问 / 运行停止时弹右下角通知，网页挂后台也能第一时间知道；支持仅后台通知模式 | `dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-win-notify"` | |
 
@@ -40,7 +38,7 @@ Issue——我帮你想想。
 1. 选择要装的插件，按上方表格的安装命令执行，例如：
 
    ```powershell
-   dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-oc-usage"
+   dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-mcp-compat"
    ```
 
 2. **重启 DSH Web**，插件自动加载。

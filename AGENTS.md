@@ -39,8 +39,8 @@
 
    ```yaml
    - insert:
-       - id: oc-usage          # 组合树里的行 key
-         name: dsh-oc-usage    # 包名，其 main 即 Host 半侧
+       - id: mcp-compat       # 组合树里的行 key
+         name: dsh-mcp-compat  # 包名，其 main 即 Host 半侧
    ```
 
 3. **`index.js`（Host 半侧）**：`export const name` + `export const inject`（硬依赖服务）
@@ -60,8 +60,8 @@
 ## 常用命令
 
 ```powershell
-dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-oc-usage"   # 单个安装（可换包名/路径）
-dsh plugin --profile web remove dsh-oc-usage   # 单个卸载
+dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-mcp-compat"   # 单个安装（可换包名/路径）
+dsh plugin --profile web remove dsh-mcp-compat   # 单个卸载
 ```
 
 > `github:...#path:/dsh-xxx` 是 pnpm 的 git 依赖子目录语法：无需克隆仓库，直接以

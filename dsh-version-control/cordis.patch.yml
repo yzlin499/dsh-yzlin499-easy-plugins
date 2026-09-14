@@ -1,0 +1,4 @@
+# Mount the version-control Host API and official ui-sidebar-right client tabs.
+- insert:
+    - id: version-control
+      name: dsh-version-control

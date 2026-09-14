@@ -220,11 +220,19 @@ export async function apply(ctx) {
       const shim = await ctx.subprocess.resolveExecutable('dsh').catch(() => null)
       if (node && shim) {
         const binDir = dirname(shim)
-        const candidates = [
-          join(binDir, '..', '@deepseek-ai', 'dsh', 'lib', 'bin.js'),
-          join(binDir, '..', 'dsh', 'lib', 'bin.js'),
+        // npm 全局 shim 位于 <prefix>，本地/pnpm shim 通常位于
+        // <project>/node_modules/.bin；两种布局的真实包都在某个 node_modules 根下。
+        const packageRoots = [
+          join(binDir, 'node_modules'),
+          join(binDir, '..', 'node_modules'),
+          join(binDir, '..'),
+          join(DSH_HOME, 'node_modules'),
         ]
-        for (const script of candidates) {
+        const candidates = packageRoots.flatMap((root) => [
+          join(root, '@deepseek-ai', 'dsh', 'lib', 'bin.js'),
+          join(root, 'dsh', 'lib', 'bin.js'),
+        ])
+        for (const script of [...new Set(candidates)]) {
           if (existsSync(script)) {
             dshBin = { node, script }
             return dshBin
@@ -247,7 +255,7 @@ export async function apply(ctx) {
   /** 跑一条 dsh 命令，返回 exitCode + 合并输出 */
   async function runDsh(args) {
     const dsh = await resolveDsh()
-    if (!dsh) return { exitCode: 1, output: '无法解析 dsh CLI（node 或 dsh bin.js 未找到）' }
+    if (!dsh) return { exitCode: 1, output: '无法启动 DSH CLI。管理器会自动使用当前 DSH 安装，无需配置路径；请重启 DSH Web 后重试。' }
     const argv = dsh.script ? [dsh.node, dsh.script, ...args] : [dsh.bin, ...args]
     const handle = ctx.subprocess.spawn({
       argv,

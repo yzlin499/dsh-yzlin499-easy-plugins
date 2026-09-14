@@ -78,11 +78,13 @@ export const inject = ['settings', 'webServer', /* 其它依赖 */]
 export function apply(ctx) {
   const NS = 'dsh-quick-file'
   let scope = null
-  let mem = { depth: 3, max: 50 }         // settings 不可用时的内存回退
+  let mem = { maxResults: 20, maxEntries: 50000, everythingUrl: 'http://127.0.0.1:8074', excludedDirectories: 'node_modules,.git' }         // settings 不可用时的内存回退
   try {
     scope = ctx.settings.register(NS, z.object({
-      depth: z.natural().min(1).max(10),  // 注意：schemastery 用 z.natural()，没有 z.number().integer()
-      max: z.natural().min(10).max(200),
+      everythingUrl: z.string().default('http://127.0.0.1:8074'),
+      maxResults: z.natural().min(1).max(200),
+      maxEntries: z.natural().min(1).max(200000),
+      excludedDirectories: z.string().default('node_modules,.git'),
     }))
   } catch (e) {
     console.log(`[插件] settings 注册失败，回退内存态:`, e?.message)
@@ -92,7 +94,7 @@ export function apply(ctx) {
     if (scope) {
       try {
         const v = scope.get()
-        if (v && v.depth != null) return { depth: v.depth, max: v.max }
+        if (v && v.maxResults != null) return { maxResults: v.maxResults, maxEntries: v.maxEntries, everythingUrl: v.everythingUrl, excludedDirectories: v.excludedDirectories }
       } catch {}
     }
     return { ...mem }
@@ -121,12 +123,12 @@ export function apply(ctx) {
 const inject = ['slots']                  // 不需要 settingsScope！
 
 function SettingsCard() {
-  const [cfg, setCfg] = React.useState({ depth: 3, max: 50, status: '' })
+  const [cfg, setCfg] = React.useState({ maxResults: 20, maxEntries: 50000, everythingUrl: 'http://127.0.0.1:8074', excludedDirectories: 'node_modules,.git', status: '' })
 
   React.useEffect(() => {
     fetch('/quick-file/config')           // GET 读
       .then(r => r.json())
-      .then(d => setCfg(s => ({ ...s, depth: d.depth, max: d.max })))
+      .then(d => setCfg(s => ({ ...s, maxResults: d.maxResults, maxEntries: d.maxEntries, everythingUrl: d.everythingUrl, excludedDirectories: d.excludedDirectories })))
       .catch(() => setCfg(s => ({ ...s, status: '读取失败' })))
   }, [])
 
@@ -134,7 +136,7 @@ function SettingsCard() {
     fetch('/quick-file/config', {         // POST 写（走插件路由 → Host scope.update）
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ depth: Number(cfg.depth), max: Number(cfg.max) }),
+      body: JSON.stringify({ maxResults: Number(cfg.maxResults), maxEntries: Number(cfg.maxEntries), everythingUrl: cfg.everythingUrl, excludedDirectories: cfg.excludedDirectories }),
     })
       .then(r => r.json())
       .then(d => setCfg(s => ({ ...s, status: d.ok ? '已保存' : (d.error || '保存失败') })))
@@ -176,12 +178,7 @@ Get-Content ~/.dsh/settings.yaml
 # 且其它官方段（ui-theme、locale…）及注释原样保留（官方 diff 写入的表现）
 ```
 
-## 5. 特殊红线（Cookie 等敏感配置）
-oc-usage 的 Cookie 遵循「只存进程内存、不落盘、不回显」红线，与 settings 无关：
-- `config-get` 只回 `cookieSet: true/false`，不回显值
-- `config-set` 收到新 Cookie 更新 `state.cookie`（进程内），重启即失
-
-## 6. 现状与展望
+## 5. 现状与展望
 
 - **0.1.0-rc.7 起**：官方已移除 WEB_SETTINGS_NAMESPACES 白名单，`settings.describe`
   返回所有已注册命名空间，`settingsScope` 对第三方命名空间可用。
