@@ -1,0 +1,5 @@
+# dsh-ctx-menu —— 只往组合树里 insert 自己一行。
+# 不 patch / 不替换任何他人配置行（插件契约 C2：只追加，不影响别的插件）。
+- insert:
+    - id: ctx-menu
+      name: dsh-ctx-menu

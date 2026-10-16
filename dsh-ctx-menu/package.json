@@ -1,0 +1,29 @@
+{
+  "name": "dsh-ctx-menu",
+  "version": "0.1.12",
+  "description": "右键增强：侧栏行右键直接开官方菜单；正文文件行右键给出打开、打开方式、定位、复制、另存等动作。",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "check": "node scripts/check.mjs",
+    "test": "node --test \"test/*.test.mjs\""
+  },
+  "dsh": {
+    "client": {
+      "inject": [
+        "slots",
+        "locale"
+      ],
+      "platform": "web"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "license": "MIT"
+}

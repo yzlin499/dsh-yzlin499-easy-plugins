@@ -1,0 +1,69 @@
+{
+  "target": "0.2.0-rc.2",
+  "note": "本文件是锚点契约的单一真相源。selectors 必须与 client.js 里 @anchors-begin/@anchors-end 之间的对象逐字一致（test/anchors-parity.test.mjs 会校验）；asarExpect 由 scripts/check.mjs 断言。",
+  "selectors": {
+    "sessionRow": "[role=\"treeitem\"][data-row-key^=\"session:\"]",
+    "workspaceRow": "[role=\"treeitem\"][data-row-key^=\"workspace:\"]",
+    "changedFiles": "[data-changed-files]",
+    "changedFileRow": "[data-changed-files] button[aria-describedby]",
+    "presentedFile": "[data-presented-file]",
+    "reviewFile": "[data-review-file]",
+    "fileMention": "button[class*=\"fileMention\"]",
+    "editable": "input, textarea, [contenteditable=\"\"], [contenteditable=\"true\"]",
+    "skip": ".xterm, [data-document-preview], [role=\"menu\"], [data-shell-overlay]"
+  },
+  "asarExpect": [
+    {
+      "id": "sidebar-rows",
+      "file": "dsh/node_modules/@deepseek-ai/dsh-client-ui-workspace/lib/client.js",
+      "contains": ["data-row-key", "session:${", "workspace:${", "rowActions"]
+    },
+    {
+      "id": "file-rows",
+      "file": "dsh/node_modules/@deepseek-ai/dsh-client-ui-deliverables/lib/client.js",
+      "contains": ["data-changed-files", "aria-describedby", "data-presented-file", "data-review-file", "dsh-resource://file/"]
+    },
+    {
+      "id": "menu-primitives",
+      "file": "dsh/node_modules/@deepseek-ai/dsh-client-ui-primitives/lib/index.js",
+      "contains": ["MenuItemButton", "getAnchorRect", "writeClipboard"]
+    },
+    {
+      "id": "shell-menu-contract",
+      "file": "lib/main.js",
+      "contains": ["selectionText.length > 0", "items.length > 0", "isEditable"],
+      "why": "C1 的前提：外壳只在「可编辑域」或「有选中文本」时弹菜单。上游一改，本插件必须重新评估接管规则。"
+    },
+    {
+      "id": "platform-seeds",
+      "filePrefix": "dsh/node_modules/@deepseek-ai/dsh-web-frontend/dist/assets/index-",
+      "contains": ["@deepseek-ai/dsh-client-ui-primitives", "@deepseek-ai/dsh-client-ui-slots", "react-dom/client"],
+      "why": "客户端半侧直接 require 这三个名字：菜单组件来自 primitives，槽声明来自 slots，自建菜单 root 依赖 react-dom/client。它们必须在平台种子表里，否则 require 会抛 missed the module table。"
+    },
+    {
+      "id": "composer-dock-slot",
+      "file": "dsh/node_modules/@deepseek-ai/dsh-client-ui-conversation/lib/client.js",
+      "contains": ["conversation.composer.dock", "sessionId"]
+    },
+    {
+      "id": "markdown-file-mention",
+      "file": "dsh/node_modules/@deepseek-ai/dsh-client-ui-primitives/lib/index.js",
+      "contains": ["MarkdownFileLink", "fileMention", "fileLink", "parseFileLink", "inlineCode", "fileMentions"],
+      "why": "正文文件提及 chip 有两个变体，都由 primitives 的 markdown 渲染器产出，且**都带本地类名 fileMention**：(a) markdown 链接 → MarkdownFileLink：class=fileMention+fileLink，title=工作区相对路径；(b) 行内代码被 chat 的 fileMentions 解析成 chip → inlineCode 分支：class=fileMention（无 fileLink），title=绝对路径，另有 aria-label。因此锚点取 fileMention（比 fileLink 更宽）。"
+    }
+  ],
+  "contextmenuBaseline": [
+    "dsh/node_modules/@deepseek-ai/dsh-client-ui-sidebar-terminal/lib/client.terminal.js",
+    "dsh/node_modules/@deepseek-ai/dsh-client-ui-sidebar-documentpreview/lib/client.pdf.js",
+    "dsh/node_modules/@deepseek-ai/dsh-client-ui-sidebar-documentpreview/lib/client.excel.js",
+    "dsh/node_modules/@deepseek-ai/dsh-client-ui-trajectory/lib/client.js",
+    "dsh/node_modules/@deepseek-ai/dsh-client-ui-primitives/lib/index.js",
+    "dsh/node_modules/@deepseek-ai/dsh-web-frontend/dist/assets/index-5SrrfWpU.js",
+    "dsh/node_modules/@deepseek-ai/dsh-web-frontend/dist/assets/langs/css-CLj8gQPS.js",
+    "dsh/node_modules/@deepseek-ai/dsh-web-frontend/dist/assets/vendor-CCJJTK99.js",
+    "dsh/node_modules/@mixmark-io/domino/lib/htmlelts.js",
+    "dsh/node_modules/@mixmark-io/domino/lib/Document.js",
+    "lib/main.js",
+    "lib/welcome/welcome.js"
+  ]
+}
