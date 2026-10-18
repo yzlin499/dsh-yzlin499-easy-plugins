@@ -1,7 +1,0 @@
-# Disable the shipped local provider and add its Everything-backed replacement.
-- id: file-reference-local
-  name: '@deepseek-ai/dsh-file-reference-local'
-  disabled: true
-- insert:
-    - id: quick-file
-      name: dsh-quick-file

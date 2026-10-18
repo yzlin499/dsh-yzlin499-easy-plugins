@@ -1,30 +1,31 @@
 # DSH 插件安装 / 卸载
 
-本仓库下的每个插件包（`dsh-*/`）都可用同一套命令安装/卸载，安装一次永久生效，重启不丢。
+本仓库下的每个插件包（`dsh-*/`）都可用同一套命令安装 / 卸载，安装一次永久生效，重启不丢。
 
 **无需克隆仓库**：pnpm 支持从 GitHub 仓库的子目录直接安装（语法 `#path:/子目录`），
 一条命令即从 GitHub 拉取并安装指定插件。
 
-## 已包含的插件
+## 可用插件
 
 | 插件 | 用途 | 安装命令 |
 |---|---|---|
-| `dsh-mcp-compat` | 自动读取 `.mcp.json` / `opencode.json` 等标准 MCP 配置并连接 | `dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-mcp-compat"` |
-| `dsh-quick-file` | 官方原生 @ 文件搜索的 Everything 后端 | `dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-quick-file"` |
-| `dsh-version-control` | 官方 ui-sidebar-right 侧边栏中的 Git / SVN 版本控制 | `dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-version-control"` |
+| `dsh-mcp-compat` | 自动读取 `.mcp.json` / `opencode.json` / `.cursor/mcp.json` / `.codex/config.toml` 等标准 MCP 配置并连接 | `dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-mcp-compat"` |
+| `dsh-version-control` | 官方 `ui-sidebar-right` 侧边栏里的 Git / SVN 版本控制 | `dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-version-control"` |
+| `dsh-ctx-menu` | 右键增强：侧栏行复用官方菜单，正文文件行给自定义动作 | `dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-ctx-menu"` |
 | `dsh-win-notify` | Windows 原生吐司通知（权限申请 / 提问 / 运行结束） | `dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-win-notify"` |
-| `dsh-workspace-auto-approval` | 工作区自动审批模式 | `dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-workspace-auto-approval"` |
-| `dsh-yzlin499-plugins-manager` | 插件管理（设置页开关本集合插件，走 dsh CLI） | `dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-yzlin499-plugins-manager"` |
+
+> 各插件的具体用法见插件自身的 `README.md` / `README_EN.md`，不在这里重复。
+> 已下线的插件（工作区自动审批、Everything 文件搜索、插件管理器）见根 [README.md](../README.md)「已下线」。
 
 ## 安装
 
 > 命令中的 `web` 是你的 DSH 实例名，按实际情况调整；若 `dsh` 不在 PATH 中，
 > 在命令前加 `npx @deepseek-ai/dsh` 前缀。
 
-选择要装的插件，按上表的安装命令执行（一次一个，命令即上表；例如）：
+选择要装的插件，按上表命令执行（一次一个；也见根 README 的整段命令块）：
 
 ```powershell
-dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-mcp-compat"
+dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-ctx-menu"
 ```
 
 安装完成后**重启 DSH Web**，完成。
@@ -33,12 +34,23 @@ dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/ds
 
 ```powershell
 dsh plugin --profile web remove dsh-mcp-compat
-dsh plugin --profile web remove dsh-quick-file
 dsh plugin --profile web remove dsh-version-control
+dsh plugin --profile web remove dsh-ctx-menu
 dsh plugin --profile web remove dsh-win-notify
-dsh plugin --profile web remove dsh-workspace-auto-approval
-dsh plugin --profile web remove dsh-yzlin499-plugins-manager
 ```
+
+## 本地联调（改插件代码时）
+
+改完代码要重启 DSH 才能看到效果，但不必每次先 push 到 GitHub。把 profile 里该依赖
+换成 pnpm 的 `link:` 协议、指向本地插件目录即可：
+
+```json
+// ~/.dsh/profiles/<profile>/package.json
+"dsh-ctx-menu": "link:E:/User/WorkPath/dsh-yzlin499-easy-plugins/dsh-ctx-menu"
+```
+
+之后重启 DSH 就加载本地最新代码。`link:` 只适合自己调试，对外分发仍用上面的 GitHub 直装命令
+（否则别人装到的会是你本地路径的别名）。
 
 ## 常见问题
 
@@ -48,6 +60,9 @@ dsh plugin --profile web remove dsh-yzlin499-plugins-manager
 - **`Ignored build scripts` 提示**：极少数带构建脚本的依赖会被 pnpm 拦截；按 dsh 提示
   把打印的 key 加入 `~/.dsh/profiles/<profile>/pnpm-workspace.yaml` 的 `allowBuilds`
   段后重跑。（本仓库插件均为纯 JS、无构建脚本，一般不会触发。）
+- **装了却没生效**：确认装进了当前正在跑的 profile（`--profile` 别写错），并**重启过**
+  DSH Web；`dsh-win-notify` 等插件还依赖 PowerShell，首次弹通知失败时看 Host 日志里的
+  `[win-notify]` 前缀。
 
 ## 原理（可选看）
 
@@ -55,5 +70,3 @@ dsh plugin --profile web remove dsh-yzlin499-plugins-manager
 **自动写入挂载清单**（`dsh.profile.bundles`），DSH 启动即自动加载，无需改任何配置。
 `github:...#path:/<目录>` 是 pnpm 的 git 依赖子目录语法：不克隆整仓到本地工作区，
 只取其中指定子目录作为包安装。
-
-> 插件的具体用法与插件本身一起维护，不写在本安装文档里（见根目录 README）。

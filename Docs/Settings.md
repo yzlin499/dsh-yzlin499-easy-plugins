@@ -5,6 +5,8 @@
 > 卡片的数据读写可走插件自己的 HTTP 路由（由 Host 转发读写），也可直接使用
 > `settingsScope`——从 0.1.0-rc.7 起官方已移除 WEB_SETTINGS_NAMESPACES 白名单，
 > 第三方命名空间对 Web 侧同样可用（见第 2 节）。
+>
+> 本仓库现成实现：`dsh-win-notify`（开关型，最简单）、`dsh-mcp-compat`（多字段 + 勾选扫描来源）。
 
 ## 1. 官方 settings 是什么
 
@@ -18,6 +20,9 @@ DSH 的配置持久化走 `ctx.settings` 服务（官方 `dsh-settings-file`，`
 ```
 
 官方文档：<https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/master/docs/subsystems/settings.zh.md>
+
+插件侧只需要命名空间 + schemastery schema；读用 `scope.get()`，写用
+`scope.update(patch)` / `replace()` / `mutate()`。
 
 ## 2. 关键坑（历史）：前端 settingsScope 曾对第三方插件不可用
 
@@ -42,12 +47,12 @@ const WEB_SETTINGS_NAMESPACES = [
 
 ```js
 // Host 侧动态诊断：命名空间是否注册成功
-settings.describe().map(d => d.ns)          // 有 dsh-quick-file → Host 侧 OK
+settings.describe().map(d => d.ns)          // 能看到 '<你的插件命名空间>' → Host 侧 OK
 
 // Client 侧诊断：isLoopback 与 snapshot
 const conn = ctx.get('connection')
 conn.isLoopback                              // true = loopback，官方 settings 才可用
-const scope = ctx.settingsScope.bind({ namespace: 'dsh-quick-file' })
+const scope = ctx.settingsScope.bind({ namespace: '<你的插件命名空间>' })
 scope.getSnapshot()                          // load 后正常拿到 value/user/revision
 ```
 
@@ -70,42 +75,59 @@ Host 路由 handler
 
 ### Host 半侧（index.js）
 
+以 `dsh-win-notify` 为蓝本（完整文件见 `dsh-win-notify/index.js`）：
+
 ```js
-import z from './vendor/schemastery.js'   // 或 ctx.loader.import('@deepseek-ai/schemastery')
+export const name = 'win-notify'
+export const inject = ['settings', 'webServer', 'loader']
 
-export const inject = ['settings', 'webServer', /* 其它依赖 */]
+const NS = 'dsh-win-notify'
+const DEFAULTS = { enabled: true, notifyApproval: true, notifyQuestion: true, notifyDone: true, mode: 'always' }
 
-export function apply(ctx) {
-  const NS = 'dsh-quick-file'
+export async function apply(ctx) {
+  // ── 持久化设置（settings 不可用时回退内存态）──
   let scope = null
-  let mem = { maxResults: 20, maxEntries: 50000, everythingUrl: 'http://127.0.0.1:8074', excludedDirectories: 'node_modules,.git' }         // settings 不可用时的内存回退
+  let memConfig = { ...DEFAULTS }
   try {
+    const mod = await ctx.loader.import('@deepseek-ai/schemastery')   // 也可 vendor 相对引入
+    const z = mod && mod.default ? mod.default : mod
     scope = ctx.settings.register(NS, z.object({
-      everythingUrl: z.string().default('http://127.0.0.1:8074'),
-      maxResults: z.natural().min(1).max(200),
-      maxEntries: z.natural().min(1).max(200000),
-      excludedDirectories: z.string().default('node_modules,.git'),
+      enabled: z.boolean().default(true),
+      notifyApproval: z.boolean().default(true),
+      notifyQuestion: z.boolean().default(true),
+      notifyDone: z.boolean().default(true),
+      mode: z.string().default('always'),
     }))
   } catch (e) {
-    console.log(`[插件] settings 注册失败，回退内存态:`, e?.message)
+    console.log('[win-notify] settings 注册失败，回退内存态:', String(e?.message || e))
   }
 
-  const read = () => {
+  const readConfig = () => {
     if (scope) {
       try {
         const v = scope.get()
-        if (v && v.maxResults != null) return { maxResults: v.maxResults, maxEntries: v.maxEntries, everythingUrl: v.everythingUrl, excludedDirectories: v.excludedDirectories }
-      } catch {}
+        if (v && typeof v === 'object') return { ...DEFAULTS, ...v }
+      } catch (e) {
+        console.log('[win-notify] settings 读取失败，回退内存态:', String(e?.message || e))
+      }
     }
-    return { ...mem }
+    return { ...memConfig }
   }
 
   ctx.webServer.register({
     kind: 'prefix',
-    path: '/quick-file/config',
+    path: '/win-notify',                 // 路由前缀；fiber 卸载时自动注销
     handler: async (req, res) => {
-      // GET 读：read()
-      // POST 写：scope ? await scope.update(patch) : Object.assign(mem, patch)
+      const url = new URL(req.url, 'http://localhost')
+      if (url.pathname === '/win-notify/config' && req.method === 'GET') {
+        sendJson(res, readConfig())
+        return
+      }
+      // POST：局部合并后写盘
+      const next = { ...readConfig(), ...patch }
+      if (scope) await scope.update(next)
+      else Object.assign(memConfig, next)   // 内存回退：重启即丢，但功能不炸
+      sendJson(res, { ok: true, ...readConfig() })
     },
   })
 }
@@ -114,8 +136,11 @@ export function apply(ctx) {
 要点：
 - **`z.natural()`** 才是 schemastery 的整数类型（非负整数）；`z.number().integer()` 是
   zod 的 API，在 schemastery 里会抛 `z.number(...).integer is not a function`。
+- `z.string()` 做枚举时自己在路由里校验取值（如 `mode` 只接受 `'always' | 'background'`），
+  别指望 schema 拦。
 - `register` 是 fiber 级副作用，插件卸载自动注销，无需手动清理。
 - `register` 本身**不落盘**，只有 `scope.update()` / `replace()` / `mutate()` 才写文件。
+- **一定要写内存回退**：settings 服务缺失或注册失败时插件仍能跑，只是不持久化。
 
 ### Client 半侧（client.js）
 
@@ -123,26 +148,26 @@ export function apply(ctx) {
 const inject = ['slots']                  // 不需要 settingsScope！
 
 function SettingsCard() {
-  const [cfg, setCfg] = React.useState({ maxResults: 20, maxEntries: 50000, everythingUrl: 'http://127.0.0.1:8074', excludedDirectories: 'node_modules,.git', status: '' })
+  const [cfg, setCfg] = React.useState({ ...DEFAULTS, status: '' })
 
   React.useEffect(() => {
-    fetch('/quick-file/config')           // GET 读
+    fetch('/win-notify/config')           // GET 读
       .then(r => r.json())
-      .then(d => setCfg(s => ({ ...s, maxResults: d.maxResults, maxEntries: d.maxEntries, everythingUrl: d.everythingUrl, excludedDirectories: d.excludedDirectories })))
+      .then(d => setCfg(s => ({ ...s, ...d })))
       .catch(() => setCfg(s => ({ ...s, status: '读取失败' })))
   }, [])
 
   const save = () => {
-    fetch('/quick-file/config', {         // POST 写（走插件路由 → Host scope.update）
+    fetch('/win-notify/config', {         // POST 写（走插件路由 → Host scope.update）
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ maxResults: Number(cfg.maxResults), maxEntries: Number(cfg.maxEntries), everythingUrl: cfg.everythingUrl, excludedDirectories: cfg.excludedDirectories }),
+      body: JSON.stringify(cfg),
     })
       .then(r => r.json())
       .then(d => setCfg(s => ({ ...s, status: d.ok ? '已保存' : (d.error || '保存失败') })))
       .catch(() => setCfg(s => ({ ...s, status: '保存失败' })))
   }
-  // …注册进 ctx.slots.inject('settings.plugin.item', …)
+  // …渲染表单
 }
 ```
 
@@ -159,8 +184,8 @@ function SettingsCard() {
   注册时 `key` 相同的卡片配对渲染。Host 未注册该命名空间的卡片不会被渲染。
 - **注册**：`ctx.slots.inject("settings.plugin.item", () => ctx.slots.register({
   name: "settings.plugin.item", key: "<Host 已注册的命名空间>", id, label }, Component))`；
-  卡片组件自包含、自行拉取/保存配置，**不依赖其它插件（包括管理器）**。
-  keyed entry 不按 `order` 排序（按注册顺序渲染），`id`/`label` 仅作标识。
+  卡片组件自包含、自行拉取 / 保存配置，**不依赖其它插件**。
+  keyed entry 不按 `order` 排序（按注册顺序渲染），`id` / `label` 仅作标识。
 - **卡片外壳对齐官方 PluginCard**：
   - `.pc-card{border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-3);border-radius:12px;overflow:hidden}`
   - 可折叠头部（名称 + 描述 + CSS 边框下箭头 `rotate(45deg)`，展开翻转 225deg），
@@ -168,13 +193,15 @@ function SettingsCard() {
   - 展开区 `.pc-body{border-top:1px solid var(--dsw-alias-border-l2);padding:14px 16px}`
 - **无设置项的插件不加卡片**（避免空卡）。
 
-## 4. 现状落盘验证
+## 4. 落盘验证
 
 ```powershell
 # 读写后检查
 Get-Content ~/.dsh/settings.yaml
-# → dsh-quick-file:
-#     depth: 7
+# → dsh-win-notify:
+#     enabled: true
+#     notifyApproval: true
+#     mode: background
 # 且其它官方段（ui-theme、locale…）及注释原样保留（官方 diff 写入的表现）
 ```
 
