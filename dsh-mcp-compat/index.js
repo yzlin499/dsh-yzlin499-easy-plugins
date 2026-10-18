@@ -16,7 +16,7 @@
 // 变更时自动重扫：配置文件 fs.watch + 新会话事件（session/created）触发。
 // ═══════════════════════════════════════════════════════════════════════════
 import { existsSync, readFileSync, watch } from 'node:fs'
-import { isAbsolute, join, resolve } from 'node:path'
+import { isAbsolute, join, resolve, delimiter } from 'node:path'
 import { connect as tcpConnect, createServer as createTcpServer } from 'node:net'
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
@@ -331,7 +331,7 @@ function parseMcpJson(text, source) {
   return out
 }
 
-// opencode: { "mcp": { name: {type:'local'|'remote', command:[...], environment:{}, url, enabled} } }
+// opencode: { "mcp": { name: {type:'local'|'remote', command:[...], environment:{}, url, headers, enabled} } }
 function parseOpencodeJson(text, source) {
   const out = []
   let obj
@@ -345,7 +345,14 @@ function parseOpencodeJson(text, source) {
   for (const [name, cfg] of Object.entries(mcp)) {
     if (!cfg || typeof cfg !== 'object' || cfg.enabled === false) continue
     if (cfg.url || String(cfg.type || '') === 'remote') {
-      out.push({ name, transport: 'streamable-http', url: String(cfg.url), source })
+      out.push({
+        name,
+        transport: 'streamable-http',
+        url: String(cfg.url),
+        // remote 服务器的鉴权头同样必须透传，否则远端 401（配置写了不生效）
+        headers: cfg.headers && typeof cfg.headers === 'object' ? cfg.headers : undefined,
+        source,
+      })
     } else if (Array.isArray(cfg.command) && cfg.command.length) {
       const cmd = cfg.command.map(String)
       out.push({
@@ -385,6 +392,17 @@ function parseTomlInlineTable(v) {
   }
   return env
 }
+// 收集一个服务器的 HTTP 头：显式 headers/http_headers 优先，
+// bearer_token 兜底补 Authorization（Codex 两种写法等价）。
+function codexHeaders(kv) {
+  const headers = {}
+  if (kv.headers && typeof kv.headers === 'object') {
+    for (const [k, v] of Object.entries(kv.headers)) if (k) headers[k] = String(v)
+  }
+  const hasAuth = Object.keys(headers).some((k) => k.toLowerCase() === 'authorization')
+  if (kv.bearerToken && !hasAuth) headers.Authorization = `Bearer ${kv.bearerToken}`
+  return Object.keys(headers).length ? headers : undefined
+}
 function parseCodexToml(text, source) {
   const out = []
   let current = null
@@ -392,12 +410,16 @@ function parseCodexToml(text, source) {
   let section = null
   const flush = () => {
     if (!current || !kv) return
-    if (kv.url) out.push({ name: current, transport: 'streamable-http', url: kv.url, source })
+    if (kv.url) out.push({ name: current, transport: 'streamable-http', url: kv.url, headers: codexHeaders(kv), source })
     else if (kv.command) out.push({ name: current, transport: 'stdio', command: kv.command, args: kv.args || [], env: kv.env, source })
     current = null
     kv = null
     section = null
   }
+  // 服务器下的子表：末段命中这些名字时归属该服务器（不能 flush）。
+  // 否则 [mcp_servers.X.http_headers] 的 Authorization 会被当未知字段丢弃，
+  // 表现为「配置写了却连不上（401）」。
+  const SUBTABLES = { env: 'env', http_headers: 'headers', headers: 'headers' }
   for (const rawLine of text.split('\n')) {
     const line = rawLine.trim()
     if (!line || line.startsWith('#')) continue
@@ -409,16 +431,20 @@ function parseCodexToml(text, source) {
         continue
       }
       const rest = name.slice('mcp_servers.'.length)
-      if (rest.endsWith('.env')) {
-        const serverName = unquote(rest.slice(0, -'.env'.length))
+      const dot = rest.lastIndexOf('.')
+      const leaf = dot < 0 ? '' : rest.slice(dot + 1)
+      if (SUBTABLES[leaf]) {
+        const serverName = unquote(rest.slice(0, dot))
         if (current !== serverName) {
           flush()
           current = serverName
           kv = {}
         }
-        kv.env ||= {}
-        section = 'env'
-      } else if (rest.includes('.tools.')) {
+        section = SUBTABLES[leaf]
+        if (section === 'env') kv.env ||= {}
+        else kv.headers ||= {}
+      } else if (dot >= 0) {
+        // 其它子表（<server>.tools / <server>.tools.<tool>）与服务器定义无关
         flush()
       } else {
         flush()
@@ -436,13 +462,46 @@ function parseCodexToml(text, source) {
     if (!v) continue
     if (section === 'env') {
       if (k) kv.env[k] = unquote(v)
+    } else if (section === 'headers') {
+      if (k) kv.headers[k] = unquote(v)
     } else if (k === 'command') kv.command = unquote(v)
     else if (k === 'args') kv.args = parseTomlArray(v)
     else if (k === 'env') kv.env = parseTomlInlineTable(v)
+    else if (k === 'headers' || k === 'http_headers') kv.headers = parseTomlInlineTable(v)
+    else if (k === 'bearer_token') kv.bearerToken = unquote(v)
     else if (k === 'url') kv.url = unquote(v)
   }
   flush()
   return out
+}
+
+// ── Windows 裸命令解析（Node spawn(shell:false) 跑不动 npm 的 .cmd shim）──
+// npm 全局安装只生成 <name>(无扩展名的 shell 脚本) / <name>.cmd / <name>.ps1，没有 .exe。
+// 而官方 dsh-mcp-client 底层的 MCP SDK 以 shell:false spawn：
+//   spawn('codegraph')     -> ENOENT（Node 不按 PATHEXT 补 .cmd）
+//   spawn('codegraph.cmd') -> EINVAL（Node 禁止直接 spawn .cmd/.bat）
+// 于是「Claude Code / Codex / opencode 都能用」的 MCP 在 DSH 里静默挂不上。
+// 这里按 Windows 的查找顺序（PATH × PATHEXT）解析：只有最终落到 .cmd/.bat 时
+// 才用 cmd /c 包一层；命中 .exe/.com 或显式路径保持原样，避免多余的 cmd.exe 与引号风险。
+function windowsCommand(command, args, platform = process.platform, env = process.env) {
+  const list = Array.isArray(args) ? args : []
+  if (platform !== 'win32' || typeof command !== 'string' || !command) return { command, args: list }
+  const isShim = (p) => /\.(cmd|bat)$/i.test(p)
+  const wrap = () => ({ command: 'cmd', args: ['/c', command, ...list] })
+  // 命令自带 .cmd/.bat（裸名或显式路径）都要包
+  if (isShim(command)) return wrap()
+  // 显式路径且不是 .cmd/.bat：交给系统按原样执行
+  if (/[\\/]/.test(command)) return { command, args: list }
+  const exts = String(env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean)
+  const dirs = String(env.PATH || '').split(delimiter).filter(Boolean)
+  for (const dir of dirs) {
+    for (const ext of exts) {
+      const full = join(dir, command + ext)
+      if (!existsSync(full)) continue
+      return isShim(full) ? wrap() : { command, args: list }
+    }
+  }
+  return { command, args: list }
 }
 
 // 可扫描的配置源体系：每个 family 对应一类 Agent 的约定，可在设置里按需开启
@@ -468,10 +527,13 @@ const GLOBAL_FILES = [
 ]
 
 // 测试钩子：node 脚本可直接 import 本模块做解析验证
-export { parseMcpJson, parseOpencodeJson, parseCodexToml, collectServers, PROJECT_FILES, GLOBAL_FILES, isWsl, getWslHostIp, wslFallbackUrl, wslTunnelTarget, wslSubnetOf, winPortListeners, winPortProxyHas, winPortProxyLegacyHas, winFirewallHas, hostListenerState }
+export { parseMcpJson, parseOpencodeJson, parseCodexToml, collectServers, windowsCommand, PROJECT_FILES, GLOBAL_FILES, isWsl, getWslHostIp, wslFallbackUrl, wslTunnelTarget, wslSubnetOf, winPortListeners, winPortProxyHas, winPortProxyLegacyHas, winFirewallHas, hostListenerState }
 
 // 支持按启用的 family（配置源体系）过滤。enabled 为空/未传时 = 全部开启（保持原行为）。
-function collectServers(workspacePaths, enabled) {
+// globalStdioCwd：用户级（主目录下）配置里 stdio 服务器的 cwd。用户级条目没有"项目"
+// 概念，但不少 MCP（如 codegraph）的工具集由 cwd 指向的已索引项目决定——固定用主目录
+// 会让这类服务器注册出 0 个工具。默认主目录（保持原行为），由 sync() 传入当前会话工作区。
+function collectServers(workspacePaths, enabled, globalStdioCwd) {
   const enabledSet = !enabled ? null : new Set(enabled)
   const byName = new Map()
   const found = []
@@ -491,7 +553,7 @@ function collectServers(workspacePaths, enabled) {
     byName.set(server.name, server)
     found.push(server)
   }
-  const readAll = (root, list, workspaceRoot) => {
+  const readAll = (root, list, workspaceRoot, stdioCwd) => {
     for (const { file, parse, family } of list) {
       if (enabledSet && !enabledSet.has(family)) continue
       const p = join(root, file)
@@ -500,7 +562,7 @@ function collectServers(workspacePaths, enabled) {
         for (const s of parse(readFileSync(p, 'utf8'), p)) {
           add({
             ...s,
-            ...(s.transport === 'stdio' ? { cwd: root } : {}),
+            ...(s.transport === 'stdio' ? { cwd: stdioCwd || root } : {}),
             ...(workspaceRoot === undefined ? {} : { workspaceRoot }),
           })
         }
@@ -509,8 +571,8 @@ function collectServers(workspacePaths, enabled) {
       }
     }
   }
-  for (const root of workspacePaths) readAll(root, PROJECT_FILES, root)
-  readAll(homedir(), GLOBAL_FILES, undefined)
+  for (const root of workspacePaths) readAll(root, PROJECT_FILES, root, root)
+  readAll(homedir(), GLOBAL_FILES, undefined, globalStdioCwd)
   return found
 }
 
@@ -649,6 +711,11 @@ export async function apply(ctx) {
   // ── 重连支持 ──
   // currentServers：最近一次 sync 挂载的服务器清单（供看门狗/手动重连引用）
   let currentServers = []
+  // activeWorkspaceCwd：最近一次会话/Agent 所在的工作区目录。用户级（~/.codex、
+  // ~/.config/opencode）stdio 服务器没有项目概念，但 Claude Code / Codex / opencode
+  // 都是用「当前项目目录」spawn 它们的；固定主目录会让 codegraph 这类按 cwd 决定
+  // 工具集的服务器注册出 0 个工具，所以这里跟随当前工作区。
+  let activeWorkspaceCwd = null
   // syncing：sync 正在执行时置位，看门狗据此跳过，避免与在途重扫互相踩踏
   let syncing = false
   // healthTimer：自动重连看门狗定时器
@@ -894,6 +961,9 @@ export async function apply(ctx) {
   // 配置本身的变更仍走全量 sync()（fs.watch / session/created / mcp_reconnect）。
   // mode = 'tunnel'  启动同端口透明隧道，挂载原始 loopback URL（Host 头保持本机）；
   // mode = 'rewrite' 把 streamable-http 的 loopback URL 改写为宿主机 IP。
+  // 日志里展示挂载目标：URL 或「命令 + 参数」（Windows 包装后的 cmd /c 也能看出来）
+  const mountLabel = (cfg) => cfg.url || [cfg.command, ...(cfg.args || [])].filter(Boolean).join(' ')
+
   const rebuildCfg = (s, mode) => {
     if (s.transport === 'streamable-http') {
       let url = s.url
@@ -903,7 +973,8 @@ export async function apply(ctx) {
       }
       return { serverName: s.name, transport: s.transport, url, headers: s.headers }
     }
-    return { serverName: s.name, transport: s.transport, command: s.command, args: s.args, env: s.env, cwd: s.cwd }
+    const { command, args } = windowsCommand(s.command, s.args)
+    return { serverName: s.name, transport: s.transport, command, args, env: s.env, cwd: s.cwd }
   }
   // 为一次重连决定 WSL 兼容模式（仅在确认当前连不上时启用，避免惊动健康连接）：
   // 一律先「地址改写」直连宿主机 IP（不占 WSL 端口、不引 wslrelay，宿主机服务
@@ -961,7 +1032,7 @@ export async function apply(ctx) {
           fibers.push(f)
           fiberByName.set(s.name, f)
           mounted.push(f)
-          log('重连', s.name, s.transport, cfg.url || cfg.command, '<-', s.source)
+          log('重连', s.name, s.transport, mountLabel(cfg), s.cwd ? `cwd=${s.cwd}` : '', '<-', s.source)
         } catch (e) {
           log('挂载失败:', s.name, String((e && e.message) || e))
         }
@@ -994,7 +1065,7 @@ export async function apply(ctx) {
         log('workspaceRegistry 不可用:', String((e && e.message) || e))
       }
       const scanners = readScanners()
-      const servers = collectServers(roots, scanners)
+      const servers = collectServers(roots, scanners, globalStdioCwd())
       log('发现', servers.length, '个 MCP 服务器:', servers.map((s) => s.name).join(', ') || '(无)', '（扫描源:', scanners.join('+') || '(未启用)', '）')
       // 清理不再被使用的隧道、失效的兼容状态（保留仍配置的服务器所用隧道）；
       // wslCompat 关闭时全部关闭并复位。
@@ -1027,7 +1098,7 @@ export async function apply(ctx) {
           const f = ctx.plugin(client, cfg)
           fibers.push(f)
           fiberByName.set(s.name, f)
-          log('挂载', s.name, s.transport, cfg.url || cfg.command, '<-', s.source)
+          log('挂载', s.name, s.transport, mountLabel(cfg), s.cwd ? `cwd=${s.cwd}` : '', '<-', s.source)
         } catch (e) {
           log('挂载失败:', s.name, String((e && e.message) || e))
         }
@@ -1068,6 +1139,33 @@ export async function apply(ctx) {
       timer = null
       void sync()
     }, 500)
+  }
+
+  // 用户级 stdio 服务器要用的 cwd：优先「最近一次会话/Agent 的工作区」，
+  // 其次任一在线 Agent 的工作区，最后退回主目录（与旧行为一致）。
+  const globalStdioCwd = () => {
+    if (activeWorkspaceCwd) return activeWorkspaceCwd
+    try {
+      for (const agent of ctx.agents.list()) {
+        const cwd = agent && agent.session && agent.session.header && agent.session.header.cwd
+        if (cwd) return String(cwd)
+      }
+    } catch {}
+    return homedir()
+  }
+  // 记录会话/Agent 的工作区；变化时先撤下用户级 stdio 服务器（避免上一个工作区的
+  // 工具继续暴露给新工作区的会话——那会静默返回别的项目的检索结果），再用新 cwd 重挂载。
+  const noteWorkspaceCwd = (cwd) => {
+    const next = cwd ? String(cwd) : ''
+    if (!next || next === activeWorkspaceCwd) return
+    const first = activeWorkspaceCwd === null
+    activeWorkspaceCwd = next
+    if (!first) log('切换工作区，用户级 stdio 服务器 cwd ->', next, '（先撤下，再按新工作区重挂载）')
+    const names = currentServers.filter((s) => s.transport === 'stdio' && !s.workspaceRoot).map((s) => s.name)
+    void (async () => {
+      if (names.length) await disposeServers(names)
+      scheduleSync()
+    })()
   }
 
   // ── 自动重连看门狗 ──
@@ -1226,10 +1324,17 @@ export async function apply(ctx) {
       ctx.tools.register({
         name: 'mcp_reconnect',
         description: '手动重连 MCP 服务器。当 MCP 服务器（例如 UE 的 MCP）被关闭后再打开，官方客户端的自动重连可能已放弃（工具被注销），调用本工具会强制重新读取配置并重建连接。参数 serverName 省略时重连全部已配置服务器。',
+        // 注意：ctx.tools.register 的 parameters 必须是「object 根」的 JSON Schema
+        // （type: 'object' + properties），而不是 defineTool 的裸属性映射 DSL——
+        // 后者没有顶层 type，会触发 harness 的 "schema must be a JSON Schema of
+        // 'type: "object"'" 校验失败。
         parameters: {
-          serverName: {
-            type: 'string',
-            description: '要重连的 MCP 服务器名；省略则重连全部已配置服务器。'
+          type: 'object',
+          properties: {
+            serverName: {
+              type: 'string',
+              description: '要重连的 MCP 服务器名；省略则重连全部已配置服务器。'
+            }
           }
         },
         output: {
@@ -1299,8 +1404,16 @@ export async function apply(ctx) {
     } catch (e) {
       log('注册 /mcp-reconnect 命令失败:', String((e && e.message) || e))
     }
-    const offSession = ctx.on('session/created', () => scheduleSync(), { global: true })
-    const offAgent = ctx.on('agent/created', ({ agent }) => restrictAgent(agent), { global: true })
+    // 会话/Agent 出现时记录其工作区：用户级 stdio 服务器的 cwd 跟着走
+    // （codegraph 这类按 cwd 注册工具的 MCP 只有 cwd 指向已索引项目才有工具）。
+    const offSession = ctx.on('session/created', (session) => {
+      noteWorkspaceCwd(session && session.header && session.header.cwd)
+      scheduleSync()
+    }, { global: true })
+    const offAgent = ctx.on('agent/created', ({ agent }) => {
+      noteWorkspaceCwd(agent && agent.session && agent.session.header && agent.session.header.cwd)
+      restrictAgent(agent)
+    }, { global: true })
     return () => {
       offSession()
       offAgent()

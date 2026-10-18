@@ -24,8 +24,23 @@ dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/ds
 任何 workspace 根目录（或用户主目录）放入上述任一配置文件即自动生效，无需配置 DSH。
 项目级 MCP 工具只对 `cwd` 属于该 workspace 的 Agent 可见，用户级 MCP 工具全局共享，
 不会在不同项目会话之间串用。项目级 stdio 服务器以 workspace 根目录作为工作目录启动。
+用户级 stdio 服务器以**当前会话所在工作区**作为工作目录启动（与 Claude Code / Codex /
+opencode 用当前项目目录启动 MCP 的行为一致）——不少 MCP（例如 codegraph）的工具集由 `cwd`
+指向的已索引项目决定，固定用用户主目录会让它们注册出 **0 个工具**；切换工作区时插件会
+自动重挂载以刷新工具集。
 配置文件变更（fs.watch）或新会话（`session/created`）自动重扫。stdio 服务器若配置了不存在的
 绝对命令路径，插件只输出一次明确诊断并跳过，不会交给 MCP client 持续重连。
+
+### Windows：裸命令（npm 的 `.cmd` shim）
+
+npm 全局安装只生成 `<name>`（无扩展名的 shell 脚本）/ `<name>.cmd` / `<name>.ps1`，**没有
+`.exe`**；而 Node 的 `spawn(shell: false)` 既不能按裸名找到 `.cmd`（`ENOENT`），也不能直接
+执行 `.cmd`（`EINVAL`）。所以 `command = "codegraph"` / `"npx"` 这类写法在 DSH 里会静默挂不上
+（Claude Code / Codex / opencode 能用是因为它们自己套了 `cmd`）。
+
+插件现在会在挂载前按 Windows 的查找顺序（`PATH` × `PATHEXT`）解析命令，**只有当最终落到
+`.cmd` / `.bat` 时才自动用 `cmd /c` 启动**；命中 `.exe` / `.com` 或显式路径时保持原样，
+避免多余的 `cmd.exe` 层与引号风险。因此上述裸命令写法可直接使用，无需手写 `cmd /c`。
 
 ### 设置：选择要扫描的配置源
 

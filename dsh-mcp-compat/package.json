@@ -20,5 +20,8 @@
       "platform": "web"
     }
   },
-  "license": "MIT"
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test"
+  }
 }

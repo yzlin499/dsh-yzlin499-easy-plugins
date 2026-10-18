@@ -26,10 +26,29 @@ Drop any of the config files above into a workspace root (or the user home) and
 it takes effect automatically — no DSH configuration needed. Project-level MCP
 tools are visible only to agents whose `cwd` belongs to that workspace, while
 user-level MCP tools remain shared globally. Project stdio servers start with the
-workspace root as their working directory. Config file changes (`fs.watch`) or
+workspace root as their working directory; user-level stdio servers start with the
+**workspace of the current session** (matching how Claude Code / Codex / opencode
+spawn MCP servers with the current project directory) — many MCP servers (codegraph,
+for example) decide their tool set from the indexed project at `cwd`, so pinning the
+user home makes them register **zero tools**. Switching workspaces remounts them
+automatically. Config file changes (`fs.watch`) or
 new sessions (`session/created`) trigger a rescan. If a stdio server declares an
 absolute command path that does not exist, the plugin logs one clear diagnostic
 and skips it instead of handing it to the MCP client's reconnect loop.
+
+### Windows: bare commands (npm's `.cmd` shims)
+
+A global npm install only produces `<name>` (an extension-less shell script),
+`<name>.cmd` and `<name>.ps1` — **never an `.exe`**. Node's `spawn(shell: false)`
+can neither find a `.cmd` by bare name (`ENOENT`) nor execute one directly
+(`EINVAL`), so `command = "codegraph"` / `"npx"` silently fails to mount in DSH
+(Claude Code / Codex / opencode work because they wrap it in `cmd` themselves).
+
+The plugin now resolves the command through the Windows lookup order
+(`PATH` × `PATHEXT`) before mounting and wraps it in `cmd /c` **only when it
+resolves to `.cmd` / `.bat`**; a `.exe` / `.com` hit or an explicit path is left
+untouched, avoiding an extra `cmd.exe` layer and quoting risks. Bare commands
+therefore work as written — no manual `cmd /c` needed.
 
 ### Setting: choose which config sources to scan
 
