@@ -65,9 +65,20 @@ test('相对路径 title + POSIX cwd：用正斜杠拼接，等价于官方 reso
   assert.equal(hit.file.path, '/home/me/proj/src/a.ts')
 })
 
-test('相对路径但没有 cwd：不接管（不猜）', () => {
-  assert.equal(gate(makeEvent(linkChip('dsh-ctx-menu/README.md')), makeWindow(), {}, null), null)
-  assert.equal(gate(makeEvent(linkChip('dsh-ctx-menu/README.md')), makeWindow(), {}), null)
+test('相对路径但没有 cwd：仍然接管，但标成 pending 交给异步解析（不静默放行、也不猜）', () => {
+  const withoutCwd = gate(makeEvent(linkChip('dsh-ctx-menu/README.md')), makeWindow(), {}, null)
+  assert.equal(withoutCwd.kind, 'file')
+  assert.equal(withoutCwd.file.pending, true)
+  assert.equal(withoutCwd.file.path, 'dsh-ctx-menu/README.md', '原样保留相对路径，等 cwd 到位再拼')
+  assert.equal(withoutCwd.file.absolute, false)
+
+  const noArg = gate(makeEvent(linkChip('dsh-ctx-menu/README.md')), makeWindow(), {})
+  assert.equal(noArg.file.pending, true)
+
+  // 绝对路径永远不需要 cwd：不受影响
+  const absolute = gate(makeEvent(linkChip('D:\\ws\\a.md')), makeWindow(), {}, null)
+  assert.equal(absolute.file.pending, undefined)
+  assert.equal(absolute.file.path, 'D:\\ws\\a.md')
 })
 
 test('title 不像路径：不接管（图片 chip 没有 title / 普通按钮的说明文字）', () => {

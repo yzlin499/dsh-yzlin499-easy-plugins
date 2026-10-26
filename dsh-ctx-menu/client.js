@@ -331,7 +331,11 @@ window.__ModuleLoader__.load({
         const raw = looksLikeFilePath(title) ? title : firstPathIn(String(mention.getAttribute('aria-label') ?? ''))
         if (raw === null) return null // title/aria-label 都不是路径（例如图片 chip）→ 不猜
         const absolutePath = resolveWithCwd(raw, cwd)
-        if (absolutePath === null) return null // 没有 cwd 无法定位 → 放行原生菜单
+        if (absolutePath === null) {
+          // 相对路径 + 当下没有 cwd：**仍然接管**，标记为 pending 由调用方异步解析后再弹菜单。
+          // 曾经这里直接放行，结果"别的会话/工作区的文件 chip 右键毫无反应"——静默失败最难查。
+          return { path: raw, display: raw, absolute: false, pending: true, source: 'mention' }
+        }
         return { path: absolutePath, display: raw, absolute: true, source: 'mention' }
       }
 
@@ -478,8 +482,10 @@ window.__ModuleLoader__.load({
       }
     }
 
-    /** 会话工作目录（异步版：新路由优先，旧快照兜底）。 */
+    /** 会话工作目录（异步版）：先用手上已有的（useSessions 快照 / handler 解析），再向宿主要，最后回退服务快照。 */
     async function sessionCwdAsync(ctx, sessionId) {
+      const cached = fileContextStore.get().cwd
+      if (typeof cached === 'string' && cached.trim() !== '') return cached
       if (sessionId === null || sessionId === undefined) return null
       const routed = await callRoute('cwd', { query: { sessionId } })
       if (routed.ok === true && typeof routed.data?.cwd === 'string' && routed.data.cwd !== '') return routed.data.cwd
@@ -1097,12 +1103,37 @@ window.__ModuleLoader__.load({
       }
     }
 
-    // ── 会话 id 探针：会话级插槽把 sessionId 作为标准 prop 传下来 ─────────
+    // ── 会话 id / cwd 探针：会话级插槽把 sessionId 与 useSessions 作为标准 prop 传下来 ─────
+    // cwd 用**官方 0.2.1 同款来源**（`useSessions((s) => s.byId[sessionId]?.cwd)`，deliverables/chat 都这么取）。
+    // 早期只读 ctx.sessions.list 快照，别的会话还没进快照时就拿不到 cwd，导致那些会话里的
+    // 相对路径 chip 右键没反应。这里以快照 hook 为首选、服务快照为兜底。
+    function useNoSessions() {
+      React.useState(0) // 保持 hook 调用次数稳定：useSessions 缺失时也不能少调一次
+      return undefined
+    }
+
+    /** 把 useSessions 快照给的 cwd 落到 store（纯函数，便于单测；hook 为空时不覆盖已有值）。 */
+    function syncProbeCwd(hookCwd) {
+      const resolved = typeof hookCwd === 'string' && hookCwd.trim() !== '' ? hookCwd : null
+      const current = fileContextStore.get().cwd
+      if (resolved !== null) {
+        if (resolved !== current) fileContextStore.set({ cwd: resolved })
+        boot.sessionCwdSource = 'useSessions'
+        return
+      }
+      boot.sessionCwdSource = current === null ? 'none' : 'session-service'
+    }
+
     function SessionProbe(props) {
       const sessionId = props?.sessionId ?? null
+      const useSessions = typeof props?.useSessions === 'function' ? props.useSessions : useNoSessions
+      const hookCwd = useSessions((state) => (sessionId === null ? undefined : state?.byId?.[sessionId]?.cwd))
       React.useEffect(() => {
         sessionStore.set(sessionId)
       }, [sessionId])
+      React.useEffect(() => {
+        syncProbeCwd(hookCwd)
+      }, [hookCwd])
       return null
     }
 
@@ -1112,7 +1143,7 @@ window.__ModuleLoader__.load({
     // 为什么要这个：apply() 中途抛异常会让「接管监听器」根本没装，而外部只能看到
     // 「右键没反应」——无法区分「bundle 没加载 / apply 没跑 / 某一步炸了」。
     // 因此把进度写到 window.__DSH_CTX_MENU__，在 DevTools 里敲一行即可定位。
-    const VERSION = '0.2.0'
+    const VERSION = '0.2.1'
     const boot = { version: VERSION, phase: 'factory', errors: [] }
     function mark(phase) {
       boot.phase = phase
@@ -1156,7 +1187,26 @@ window.__ModuleLoader__.load({
         return
       }
       event.preventDefault() // 注意：不 stopPropagation，避免连坐 xterm / pdf.js 的冒泡处理
+      if (hit.file.pending === true) {
+        // 相对路径 + 当下没 cwd：先接管，异步拿到 cwd 再弹菜单（拿不到就明确提示）
+        void openPendingMenu(ctx, hit.file, event.clientX, event.clientY)
+        return
+      }
       openMenu(event.clientX, event.clientY, hit.file)
+    }
+
+    /** 解析待定文件（相对路径）后再弹菜单；失败给出明确提示，而不是静默无反应。 */
+    async function openPendingMenu(ctx, file, x, y) {
+      const cwd = fileContextStore.get().cwd ?? (await sessionCwdAsync(ctx, sessionStore.get()))
+      const absolutePath = resolveWithCwd(file.path, cwd)
+      if (absolutePath === null) {
+        log('cannot resolve relative path — no session cwd:', file.path)
+        boot.lastPendingFailure = { raw: file.path, cwd: cwd ?? null }
+        notify(desktopStore.get().t('noCwd'))
+        return
+      }
+      fileContextStore.set({ cwd })
+      openMenu(x, y, { path: absolutePath, display: file.display, absolute: true, source: file.source })
     }
 
     // ── 菜单挂载：自建 React root，不占用 shell.overlay ────────────────────────
@@ -1320,7 +1370,9 @@ window.__ModuleLoader__.load({
         phase: boot.phase,
         errors: boot.errors,
         sessionId: sessionStore.get(),
-        sessionCwd: currentSessionCwd(ctx),
+        sessionCwd: fileContextStore.get().cwd ?? currentSessionCwd(ctx),
+        sessionCwdSource: boot.sessionCwdSource ?? 'unknown',
+        lastPendingFailure: boot.lastPendingFailure ?? null,
         canOpen: desktopStore.get().canOpen,
         locale: desktopStore.get().locale,
         menuOpen: menuStore.get().open,
@@ -1332,7 +1384,7 @@ window.__ModuleLoader__.load({
     // 仅供 test/ 使用：不参与运行时契约。
     const __internals = { SELECTORS, gate, resolveRow, resolveFile, rowActionsOf, isAbsolutePath, lastSegment, looksLikeFilePath, firstPathIn, resolveWithCwd, sessionFileAddress, encodePath, isAbsoluteWorkspacePath, currentSessionCwd, isEditableTarget, selectionText, readTextPaged, diagnose, describeElement, renderDiagnosticsDom, MenuHost, MenuBoundary, buildItems, appIcon, preferredAppId, pickPreferredApp, idStem, tokensOf, normalizeForMatch, relativeToCwd, menuStore, fileContextStore, makeTranslator,
       // 平台桥（0.2.1 路由 / 0.2.0 远程服务）
-      ROUTES, callRoute, probeDesktop, fetchApps, launchPath, sessionCwdAsync, readTextForCopy, readBytesForSave,
+      ROUTES, callRoute, probeDesktop, fetchApps, launchPath, sessionCwdAsync, readTextForCopy, readBytesForSave, openPendingMenu, SessionProbe, syncProbeCwd, handleContextMenu,
       DICT }
 
     return { name: NS, inject, apply, __internals }

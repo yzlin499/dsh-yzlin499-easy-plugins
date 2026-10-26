@@ -1,6 +1,6 @@
 {
   "name": "dsh-ctx-menu",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "右键增强：侧栏行右键直接开官方菜单；正文文件行右键给出打开、打开方式、定位、复制、另存等动作。",
   "type": "module",
   "main": "index.js",

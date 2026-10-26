@@ -157,8 +157,10 @@ node --test "test/*.test.mjs"   # 91 项单测：门控、锚点、chip 解析�
   插件客户端开放（deliverables 的 `openResource` 是它自己 tab 的 actions，外部拿不到）。服务缺失时该行自动隐藏。
 - **文件提及 chip 的锚点是 CSS-module 类名 `fileMention`**（没有 `data-*` 可用），是全部锚点里最弱的一处；
   上游改名会静默失效——`check.mjs` 会断言打包产物里仍有 `fileMention` / `MenuItemButton` / `MenuSurface`。
-- **相对路径需要会话 cwd**：靠宿主 `/ctx-menu/cwd`（`sessions.get` + `workingDirectory.get`）解析；
-  拿不到就提示「取不到当前工作目录」，而不是猜一个路径。
+- **相对路径需要会话 cwd**：首选**插槽标准 prop `useSessions` 的快照**（`useSessions(s => s.byId[sessionId]?.cwd)`，
+  与官方 deliverables/chat 的取法一致，覆盖其他工作区的会话），其次宿主 `/ctx-menu/cwd`，最后客户端 `sessions` 服务快照。
+  三者都拿不到时，插件**先接管、再异步解析**：解析成功才弹菜单，失败则明确提示「取不到当前工作目录」
+  （而不是让右键静默无反应——0.2.0 曾因此出现"只有当前工作区能右键"的假象）。
 - **打开方式列表依赖桌面端**：宿主 `canOpenWorkspacePath()` 为 false（纯浏览器场景）时，
   打开方式与显示文件位置会隐藏，只留「复制相对路径 / 复制绝对路径 / 复制文件内容 / 另存为…」等纯客户端动作。
 - **会话 id 来自会话级插槽的标准 prop**：探针挂在 `conversation.composer.dock` 上；
