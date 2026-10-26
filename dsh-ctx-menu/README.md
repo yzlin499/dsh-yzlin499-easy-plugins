@@ -91,16 +91,37 @@ session-probe:ok → overlay:ok → styles:ok → ready`；任何一步失败会
 
 ## 依赖
 
-**无任何第三方依赖**：只依赖 DSH 自身的服务（`sidebarRight` / `remote.session` / `remote.workspaceFiles` / `locale`）。
-每个动作各自检查前置服务，缺谁就少哪一项，所以装不装别的插件都不影响。
+**无任何第三方插件依赖**：只依赖 DSH 自带能力，且每个动作各自检查前置条件——缺谁就少哪一项。
+
+| 依赖面 | 具体 | 缺失时 |
+| --- | --- | --- |
+| 宿主服务（宿主半侧） | `webServer`（**硬依赖**，注册路由）+ `sessionController` / `sessions` / `workingDirectory`（软读） | 缺 `webServer` 则宿主半侧不挂载；其余缺失时对应动作返回 `host/unsupported` |
+| 宿主内置模块 | `node:fs`（读文件）、`node:path` | — |
+| 客户端种子模块 | `react`、`react-dom/client`、`@deepseek-ai/dsh-client-ui-primitives`、`@deepseek-ai/dsh-client-store` | 由 DSH Web 前端提供；`check.mjs` 断言官方客户端仍在使用这些模块 id |
+| 客户端服务 | `locale`、`sessions`（会话 id 探针槽）、`sidebarRight`（**仅 0.2.0**，「在 DSH 中打开」用） | 缺 `sidebarRight` 时该行不出现（0.2.1 即如此） |
 
 菜单本身用**官方 `@deepseek-ai/dsh-client-ui-primitives` 的 `Menu`**（`items` + `submenu`）搭建，
 不占用任何插槽、不修改任何他人的配置行。
 
-> 曾短暂依赖过 `dsh-better-sidebar` 的 `openFile`（「在侧边栏打开」那一行），后按要求移除：
-> 与官方 `sidebarRight.openResource` 功能重叠，只保留官方通道。
+> 曾短暂依赖过 `dsh-better-sidebar` 的 `openFile`（「在侧边栏打开」那一行），后按要求移除。
 
 ## 工作原理
+
+0. **两段式架构（0.2.1 起）**：客户端半侧**不能**再直接调用 `remote.session.*`（0.2.1 的客户端 Builtin
+   只剩 `ctx / React / host / styles / console`），所以本插件改由**宿主半侧注册自有路由**代劳：
+
+   ```
+   客户端（client.js）                      宿主（index.js）
+   fetch('ctx-menu/apps?path=…')  ────────▶  GET  /ctx-menu/apps      → sessionController.workspacePathApplications
+   fetch('ctx-menu/open', POST)   ────────▶  POST /ctx-menu/open      → sessionController.openWorkspacePath
+   fetch('ctx-menu/reveal', POST) ────────▶  POST /ctx-menu/reveal    → 同上（action: 'reveal'）
+   fetch('ctx-menu/read?path=…')  ────────▶  GET  /ctx-menu/read      → node:fs（文本 2 MiB / 字节 32 MiB 上限）
+   fetch('ctx-menu/cwd?sessionId=…') ─────▶  GET  /ctx-menu/cwd       → sessions.get + workingDirectory.get
+   fetch('ctx-menu/capabilities') ────────▶  GET  /ctx-menu/capabilities → canOpenWorkspacePath / workspaceDesktop
+   ```
+
+   客户端这层叫「平台桥」：**自有路由优先，0.2.0 的远程服务兜底**，因此同一份代码在 0.2.0 与 0.2.1 上都能工作。
+   路由全部同源、受 `connection.requestRejection` 保护，只接受绝对路径。
 
 1. **接管规则与外壳互补（这是本插件最重要的设计）**：DSH 桌面外壳只在「可编辑域」或「有选中文本」时弹原生菜单，
    而渲染进程 `preventDefault()` 会**抑制**该菜单。因此本插件反过来做——**这两种情形一律放行**，
@@ -126,24 +147,32 @@ session-probe:ok → overlay:ok → styles:ok → ready`；任何一步失败会
 ## 开发
 
 ```bash
-node scripts/check.mjs          # 静态锚点 / 契约自检（读本机 app.asar）
-node --test "test/*.test.mjs"   # 39 项单测：门控规则、锚点解析、相对路径解析、地址构造、分页读取、契约一致性
+node scripts/check.mjs          # 静态自检（读本机 app.asar）：锚点 / 外壳契约 / 宿主服务 / 种子模块 id / 右键基线
+node --test "test/*.test.mjs"   # 91 项单测：门控、锚点、chip 解析、渲染层、平台桥（路由↔远程服务回退）、宿主路由
 ```
 
 ## 已知限制
 
-- **未做实机 UI 全覆盖**：锚点结论来自官方 bundle 源码。已实装验证：侧栏行右键。
-  **文件提及 chip 的锚点是 CSS-module 类名 `fileLink`（没有 `data-*` 可用）**，是全部锚点里最弱的一处；
-  上游改名会静默失效——`check.mjs` 会断言 `primitives` 里仍有 `MarkdownFileLink` / `fileMention` / `fileLink`。
-- **相对路径需要会话 cwd**：文件提及 chip 的 `title` 是工作区相对路径，靠 `sessions.list` 快照里的 `cwd` 解析；
-  拿不到 cwd 就**不接管**（放行原生菜单），而不是猜一个路径。
-- **打开方式列表依赖桌面端**：`session.canOpenWorkspacePath()` 为 false（纯浏览器场景）时，
+- **「在 DSH 中打开」只在 0.2.0 可用**：它依赖客户端服务 `sidebarRight.openResource`，0.2.1 起该服务不再向
+  插件客户端开放（deliverables 的 `openResource` 是它自己 tab 的 actions，外部拿不到）。服务缺失时该行自动隐藏。
+- **文件提及 chip 的锚点是 CSS-module 类名 `fileMention`**（没有 `data-*` 可用），是全部锚点里最弱的一处；
+  上游改名会静默失效——`check.mjs` 会断言打包产物里仍有 `fileMention` / `MenuItemButton` / `MenuSurface`。
+- **相对路径需要会话 cwd**：靠宿主 `/ctx-menu/cwd`（`sessions.get` + `workingDirectory.get`）解析；
+  拿不到就提示「取不到当前工作目录」，而不是猜一个路径。
+- **打开方式列表依赖桌面端**：宿主 `canOpenWorkspacePath()` 为 false（纯浏览器场景）时，
   打开方式与显示文件位置会隐藏，只留「复制相对路径 / 复制绝对路径 / 复制文件内容 / 另存为…」等纯客户端动作。
 - **会话 id 来自会话级插槽的标准 prop**：探针挂在 `conversation.composer.dock` 上；
-  若拿不到，需要会话 id 的动作（预览 / 复制内容 / 另存为）会隐藏，其余照常。
+  若拿不到，需要会话 id 的动作（预览 / 复制相对路径）会隐藏，其余照常。
 - **对比页文件行要求绝对路径**：官方在 `title` 上给了绝对路径才接管，否则放行原生菜单。
-- **M1 未含**：外部终端（`windowsterminal`）、以及「用指定编辑器打开**文件本身**」的固定项
+- **未含**：外部终端（`windowsterminal`）、以及「用指定编辑器打开**文件本身**」的固定项
   （后者在官方路线里只能打开目录；本插件用「打开方式」的关联列表覆盖同一需求）。
+
+## 版本兼容
+
+| 插件版本 | 适配的 DSH | 说明 |
+| --- | --- | --- |
+| 0.2.0 | **0.2.1-rc.3**（新契约）+ 0.2.0-rc.2（回退路径） | 宿主半侧注册 `/ctx-menu/*` 路由；客户端「平台桥」优先走路由、失败回退旧远程服务 |
+| 0.1.x | 0.2.0-rc.2 | 纯客户端实现，直接调 `remote.session` / `remote.workspaceFiles` |
 
 ## License
 

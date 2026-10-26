@@ -80,17 +80,30 @@ Just right-click; there is nothing to configure.
 
 ## Dependencies
 
-**No third-party dependency**: only DSH's own services (`sidebarRight` / `remote.session` / `remote.workspaceFiles` /
-`locale`). Every action checks its own prerequisite, so a missing one simply removes that row and installing or removing
-other plugins never affects this one.
+**No third-party plugin dependency**: only DSH's own capabilities, and every action checks its own prerequisite — a missing
+one simply removes that row.
+
+| Surface | What | When missing |
+| --- | --- | --- |
+| Host services | `webServer` (**hard**, registers routes) + `sessionController` / `sessions` / `workingDirectory` (read softly) | no `webServer` → the host half does not mount; other misses return `host/unsupported` |
+| Host built-ins | `node:fs` (file reads), `node:path` | — |
+| Client seed modules | `react`, `react-dom/client`, `@deepseek-ai/dsh-client-ui-primitives`, `@deepseek-ai/dsh-client-store` | provided by the DSH web frontend; `check.mjs` asserts official clients still use these module ids |
+| Client services | `locale`, `sessions` (session-id probe slot), `sidebarRight` (**0.2.0 only**, for “Open in DSH”) | without `sidebarRight` that row disappears — the 0.2.1 case |
 
 The menu itself is built on the **official `@deepseek-ai/dsh-client-ui-primitives` `Menu`** (`items` + `submenu`), occupies
 no slot, and patches no other plugin's config row.
 
-> It briefly depended on `dsh-better-sidebar`'s `openFile` (the “Open in sidebar” row), removed on request: it overlapped
-> with the official `sidebarRight.openResource`, so only the official path is kept.
+> It briefly depended on `dsh-better-sidebar`'s `openFile` (the “Open in sidebar” row), removed on request.
 
 ## How it works
+
+0. **Two-half architecture (since 0.2.1)**: a plugin client half can no longer call `remote.session.*` (0.2.1's client
+   Builtins are just `ctx / React / host / styles / console`), so this plugin's **host half registers its own routes**:
+   `GET /ctx-menu/{capabilities,apps,cwd,read}` and `POST /ctx-menu/{open,reveal}`, each proxying a host service
+   (`sessionController.workspacePathApplications` / `openWorkspacePath` / `canOpenWorkspacePath`, `sessions.get` +
+   `workingDirectory.get`) or `node:fs` for file reads. The client side is a **platform bridge: own routes first, the 0.2.0
+   remote services as fallback**, so one code base works on both versions. Routes are same-origin, gated by
+   `connection.requestRejection`, and accept absolute paths only.
 
 1. **The takeover rule complements the shell** (the single most important design decision): the DSH desktop shell
    only pops a native menu for editable fields or a non-empty text selection, and a renderer `preventDefault()`
@@ -127,12 +140,13 @@ node --test "test/*.test.mjs"   # 26 unit tests: gate rules, anchor resolution, 
 
 ## Limitations
 
-- **Not fully UI-verified**: anchor conclusions come from the official bundles. Field-verified so far: sidebar rows.
-  **The file-mention chip anchor is a CSS-module class name (`fileLink`) — no `data-*` exists there**, making it the
-  weakest anchor of the set; an upstream rename would fail silently, so `check.mjs` asserts that `primitives` still
-  contains `MarkdownFileLink` / `fileMention` / `fileLink`.
-- **Relative paths need the session cwd**: a mention chip's `title` is workspace-relative and is resolved through the
-  `cwd` in the `sessions.list` snapshot; without it the plugin **backs off** (native menu) instead of guessing.
+- **“Open in DSH” only works on 0.2.0**: it needs the client service `sidebarRight.openResource`, which 0.2.1 no longer
+  exposes to plugin client halves (deliverables' `openResource` is its own tab action). The row hides when it is missing.
+- **The file-mention chip anchor is a CSS-module class name (`fileMention`)** — no `data-*` exists there, making it the
+  weakest anchor of the set; an upstream rename would fail silently, so `check.mjs` asserts the packaged frontend still
+  contains `fileMention` / `MenuItemButton` / `MenuSurface`.
+- **Relative paths need the session cwd**, resolved through the host route `/ctx-menu/cwd` (`sessions.get` +
+  `workingDirectory.get`); without it the plugin reports “working directory unavailable” instead of guessing.
 - **The open-with list needs a desktop host**: when `session.canOpenWorkspacePath()` is false (plain browser),
   open-with and reveal are hidden, leaving the client-only actions.
 - **The session id comes from a session-scoped slot's standard prop** (the probe registers on
@@ -140,6 +154,13 @@ node --test "test/*.test.mjs"   # 26 unit tests: gate rules, anchor resolution, 
 - **Review rows require an absolute path** in `title`; otherwise the native menu is left untouched.
 - **Not in M1**: an external terminal (`windowsterminal`) and fixed “open this file with editor X” rows
   (the official directory-only route cannot open a file; the open-with association list covers the same need here).
+
+## Version compatibility
+
+| Plugin | Works with | Notes |
+| --- | --- | --- |
+| 0.2.0 | **0.2.1-rc.3** (new contract) and 0.2.0-rc.2 (fallback path) | host half registers `/ctx-menu/*`; the client “platform bridge” prefers routes and falls back to the old remote services |
+| 0.1.x | 0.2.0-rc.2 | client-only implementation calling `remote.session` / `remote.workspaceFiles` directly |
 
 ## License
 

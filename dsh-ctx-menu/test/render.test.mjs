@@ -253,12 +253,12 @@ test('buildItems：无桌面（浏览器）→ 只剩客户端动作', () => {
   assert.deepEqual(ids(items), ['open-file', '—', 'copy-relative', 'copy-absolute', 'copy-contents', 'save-as'])
 })
 
-test('buildItems：没有会话 id → 需要会话的动作全部消失，且不产生空分隔线', () => {
+test('buildItems：没有会话 id → 需要会话的动作消失（读内容/另存只依赖绝对路径）', () => {
   const { items } = buildItems(
     { open: true, file, appsState: 'idle', apps: null },
     { ctx: makeCtx(), sessionId: null, desktop: { canOpen: false }, t },
   )
-  assert.deepEqual(ids(items), ['copy-relative', 'copy-absolute'])
+  assert.deepEqual(ids(items), ['copy-relative', 'copy-absolute', 'copy-contents', 'save-as'])
 })
 
 test('relativeToCwd：相对当前工作目录，分隔符统一成正斜杠', () => {

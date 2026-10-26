@@ -6,8 +6,9 @@
 //  2) 侧栏行（会话 / 工作区）不重画菜单：直接对官方 ⋯ 按钮 click()，复用官方同一份菜单与状态。
 //  3) 正文文件行（本轮改动 / 交付卡片 / 对比页）没有官方插槽，才自绘菜单，渲染在官方 `shell.overlay` 槽里，
 //     菜单本体复用官方 primitives 的 Menu / MenuItemButton。
-//  4) 所有打开类动作复用 DSH 已有能力：remote.session.workspacePathApplications（系统关联应用列表）
-//     + remote.session.openWorkspacePath（Host 会在启动前重新校验），因此本插件 M1 不需要宿主路由。
+//  4) 打开类动作：0.2.1 起走**本插件宿主半侧**注册的 /ctx-menu/* 路由（宿主再调
+//     sessionController.workspacePathApplications / openWorkspacePath，Host 会在启动前重新校验）；
+//     0.2.0 上则回退到 remote.session 远程服务。两条路都由「平台桥」统一封装。
 //
 // 唯一需要长期维护的脆弱面是下面 SELECTORS 里的非公开 data-* 锚点，用 scripts/check.mjs 静态钉住。
 
@@ -353,6 +354,175 @@ window.__ModuleLoader__.load({
       }
     }
 
+    // ── 平台桥：0.2.1 自有宿主路由优先，0.2.0 旧远程服务兜底 ────────────────
+    // 0.2.1 起插件客户端半侧拿不到 remote.session / remote.workspaceFiles（客户端 Builtin 只剩
+    // ctx / React / host / styles / console），改由本插件宿主半侧（index.js）注册的 /ctx-menu/*
+    // 路由代劳；旧版本仍然回退到远程服务，因此同一份客户端代码在 0.2.0 与 0.2.1 上都能工作。
+    const ROUTES = {
+      capabilities: 'ctx-menu/capabilities',
+      apps: 'ctx-menu/apps',
+      cwd: 'ctx-menu/cwd',
+      read: 'ctx-menu/read',
+      open: 'ctx-menu/open',
+      reveal: 'ctx-menu/reveal',
+    }
+    /** 宿主路由没挂上（旧版本 / 宿主半侧未加载）——调用方据此回退旧服务。 */
+    const ROUTE_MISSING = 'route/missing'
+
+    async function callRoute(name, options = {}) {
+      let url = ROUTES[name]
+      if (url === undefined) return { ok: false, code: ROUTE_MISSING }
+      if (options.query !== undefined) {
+        const params = new URLSearchParams()
+        for (const [key, value] of Object.entries(options.query)) {
+          if (value !== undefined && value !== null && value !== '') params.set(key, String(value))
+        }
+        const suffix = params.toString()
+        if (suffix !== '') url += '?' + suffix
+      }
+      const init = { method: options.method ?? 'GET' }
+      if (options.body !== undefined) {
+        init.headers = { 'content-type': 'application/json' }
+        init.body = JSON.stringify(options.body)
+      }
+      try {
+        const response = await fetch(url, init)
+        if (response.status === 404) return { ok: false, code: ROUTE_MISSING }
+        let payload = null
+        try {
+          payload = await response.json()
+        } catch {
+          payload = null
+        }
+        if (response.ok !== true) {
+          return { ok: false, code: payload?.code ?? 'route/failed', message: payload?.message, status: response.status }
+        }
+        return { ok: true, data: payload }
+      } catch (error) {
+        log('route call failed:', name, error)
+        return { ok: false, code: 'route/network' }
+      }
+    }
+
+    function legacySessionService(ctx) {
+      try {
+        return ctx?.get?.('remote.session')
+      } catch (error) {
+        return undefined
+      }
+    }
+
+    function legacyFilesService(ctx) {
+      try {
+        return ctx?.get?.('remote.workspaceFiles')
+      } catch (error) {
+        return undefined
+      }
+    }
+
+    /** 桌面能力探测：自有路由优先，0.2.0 的远程服务兜底。 */
+    async function probeDesktop(ctx) {
+      const routed = await callRoute('capabilities')
+      if (routed.ok === true) return { canOpen: routed.data?.canOpen === true }
+      const legacy = legacySessionService(ctx)
+      if (legacy === undefined || typeof legacy.canOpenWorkspacePath !== 'function') return { canOpen: false }
+      try {
+        const result = await legacy.canOpenWorkspacePath()
+        return { canOpen: result?.ok === true && result.value === true }
+      } catch (error) {
+        log('legacy canOpenWorkspacePath failed', error)
+        return { canOpen: false }
+      }
+    }
+
+    /** 该文件的系统关联应用列表。 */
+    async function fetchApps(ctx, path) {
+      const routed = await callRoute('apps', { query: { path } })
+      if (routed.ok === true) {
+        return {
+          ok: true,
+          canOpen: routed.data?.canOpen !== false,
+          apps: Array.isArray(routed.data?.apps) ? routed.data.apps : [],
+        }
+      }
+      const legacy = legacySessionService(ctx)
+      if (legacy === undefined || typeof legacy.workspacePathApplications !== 'function') {
+        return { ok: false, code: routed.code }
+      }
+      try {
+        const result = await legacy.workspacePathApplications({ path })
+        if (result?.ok !== true) return { ok: false, code: 'apps/failed' }
+        return { ok: true, canOpen: true, apps: Array.isArray(result.value) ? result.value : [] }
+      } catch (error) {
+        log('legacy workspacePathApplications failed', error)
+        return { ok: false, code: 'apps/failed' }
+      }
+    }
+
+    /** 启动 / 定位。request 形如 {path, application?} 或 {path, action:'reveal'}。 */
+    async function launchPath(ctx, request) {
+      const reveal = request.action === 'reveal'
+      const routed = await callRoute(reveal ? 'reveal' : 'open', {
+        method: 'POST',
+        body: reveal ? { path: request.path } : request,
+      })
+      if (routed.ok === true) return { ok: true }
+      const legacy = legacySessionService(ctx)
+      if (legacy === undefined || typeof legacy.openWorkspacePath !== 'function') return routed
+      try {
+        const result = await legacy.openWorkspacePath(request)
+        return { ok: result?.ok === true }
+      } catch (error) {
+        log('legacy openWorkspacePath failed', error)
+        return { ok: false, code: 'open/failed' }
+      }
+    }
+
+    /** 会话工作目录（异步版：新路由优先，旧快照兜底）。 */
+    async function sessionCwdAsync(ctx, sessionId) {
+      if (sessionId === null || sessionId === undefined) return null
+      const routed = await callRoute('cwd', { query: { sessionId } })
+      if (routed.ok === true && typeof routed.data?.cwd === 'string' && routed.data.cwd !== '') return routed.data.cwd
+      return currentSessionCwd(ctx)
+    }
+
+    /** 读文件文本（复制内容）：自有路由 → 旧 workspaceFiles 分页读取。 */
+    async function readTextForCopy(ctx, sessionId, path) {
+      const routed = await callRoute('read', { query: { path, mode: 'text' } })
+      if (routed.ok === true && typeof routed.data?.text === 'string') return { ok: true, text: routed.data.text }
+      const files = legacyFilesService(ctx)
+      if (files === undefined || sessionId === null) return { ok: false, code: routed.code }
+      return readTextPaged(files, sessionId, path)
+    }
+
+    /** 读文件字节（另存为）：自有路由 → 旧 readBytes。 */
+    async function readBytesForSave(ctx, sessionId, path) {
+      const query = new URLSearchParams({ path, mode: 'bytes' }).toString()
+      try {
+        const response = await fetch(`${ROUTES.read}?${query}`)
+        if (response.status !== 404) {
+          if (response.ok !== true) {
+            let payload = null
+            try {
+              payload = await response.json()
+            } catch {
+              payload = null
+            }
+            return { ok: false, code: payload?.code ?? 'read/failed' }
+          }
+          const buffer = await response.arrayBuffer()
+          return { ok: true, data: new Uint8Array(buffer) }
+        }
+      } catch (error) {
+        log('route read(bytes) failed:', error)
+      }
+      const files = legacyFilesService(ctx)
+      if (files === undefined || sessionId === null) return { ok: false, code: 'host/unsupported' }
+      const result = await files.readBytes(sessionId, path, {})
+      if (result?.ok !== true) return { ok: false, code: 'read/failed' }
+      return { ok: true, data: result.value?.data }
+    }
+
     // ── 业务动作（全部复用 DSH 公开能力） ────────────────────────────────
     async function readTextPaged(workspaceFiles, sessionId, path) {
       const MAX_LINES = 5000
@@ -682,14 +852,17 @@ window.__ModuleLoader__.load({
       const mid = []
       const tail = []
       const actions = {}
+      // 「在 DSH 中打开」需要 0.2.0 的 sidebarRight 服务；0.2.1 起没有公开的等价入口
+      // （deliverables 的 openResource 是它自己 tab 的 actions，插件拿不到）→ 服务缺失时该行不出现。
       const sidebarRight = ctx.get('sidebarRight')
-      const workspaceFiles = ctx.get('remote.workspaceFiles')
-      const remoteSession = remoteSessionOf(ctx)
-      const desktopReady = remoteSession !== undefined && env.desktop.canOpen === true
+      const desktopReady = env.desktop.canOpen === true
 
-      if (sidebarRight !== undefined && sessionId !== null) {
+      if (sidebarRight !== undefined && typeof sidebarRight.openResource === 'function' && sessionId !== null) {
         head.push({ id: 'open-file', label: t('openFile') })
-        actions['open-file'] = () => sidebarRight.openResource(sessionFileAddress(sessionId, cwd, file.path))
+        actions['open-file'] = async () => {
+          const liveCwd = cwd ?? (await sessionCwdAsync(ctx, sessionId))
+          sidebarRight.openResource(sessionFileAddress(sessionId, liveCwd, file.path))
+        }
       }
 
       if (desktopReady && file.absolute) {
@@ -746,8 +919,9 @@ window.__ModuleLoader__.load({
 
       tail.push({ id: 'copy-relative', label: t('copyRelative') })
       actions['copy-relative'] = async () => {
-        // 相对**当前会话的工作目录**（右键那一刻由 handler 写进 fileContextStore）
-        const relative = relativeToCwd(file.path, cwd)
+        // 相对**当前会话的工作目录**：右键那一刻写入的 cwd；为空时再向宿主要一次（0.2.1 路由）
+        const liveCwd = cwd ?? (await sessionCwdAsync(ctx, sessionId))
+        const relative = relativeToCwd(file.path, liveCwd)
         if (relative === null) {
           notify(t('noCwd'))
           return
@@ -762,12 +936,14 @@ window.__ModuleLoader__.load({
         if (ok === true) notify(t('done'))
       }
 
-      if (sessionId !== null && workspaceFiles !== undefined) {
+      // 读内容 / 另存：0.2.1 走自有宿主路由（宿主 node:fs），0.2.0 回退 remote.workspaceFiles
+      if (file.absolute === true) {
         tail.push({ id: 'copy-contents', label: t('copyContents') })
         actions['copy-contents'] = async () => {
-          const read = await readTextPaged(workspaceFiles, sessionId, file.path)
+          const read = await readTextForCopy(ctx, sessionId, file.path)
           if (read.ok !== true) {
-            notify(read.code === 'workspace-file/not-text' ? t('binary') : t('tooLarge'))
+            const code = String(read.code ?? '')
+            notify(code.includes('not-text') ? t('binary') : t('tooLarge'))
             return
           }
           const ok = await copyText(read.text)
@@ -775,12 +951,12 @@ window.__ModuleLoader__.load({
         }
         tail.push({ id: 'save-as', label: t('saveAs') })
         actions['save-as'] = async () => {
-          const result = await workspaceFiles.readBytes(sessionId, file.path, {})
-          if (result?.ok !== true) {
-            notify(t('tooLarge'))
+          const result = await readBytesForSave(ctx, sessionId, file.path)
+          if (result.ok !== true) {
+            notify(String(result.code ?? '').includes('too-large') ? t('tooLarge') : t('failed'))
             return
           }
-          await saveBytes(result.value?.data, lastSegment(file.path))
+          await saveBytes(result.data, lastSegment(file.path))
         }
       }
 
@@ -798,48 +974,27 @@ window.__ModuleLoader__.load({
       return { items, actions }
     }
 
-    function remoteSessionOf(ctx) {
-      try {
-        return ctx.get('remote.session')
-      } catch (error) {
-        log('remote.session unavailable', error)
-        return undefined
-      }
-    }
-
     async function openWith(ctx, path, application) {
-      const remoteSession = remoteSessionOf(ctx)
-      if (remoteSession === undefined) return
-      try {
-        const result = await remoteSession.openWorkspacePath({ path, application })
-        if (result?.ok !== true) notify(desktopStore.get().t('failed'))
-      } catch (error) {
-        log('openWorkspacePath failed', error)
+      const result = await launchPath(ctx, { path, application })
+      if (result.ok !== true) {
+        log('open with application failed:', result.code, result.message)
         notify(desktopStore.get().t('failed'))
       }
     }
 
     async function openDefault(ctx, path) {
-      const remoteSession = remoteSessionOf(ctx)
-      if (remoteSession === undefined) return
-      try {
-        // 官方 ui-open-in-app 的等价调用：不带 `application` 即"用系统默认关联打开"
-        const result = await remoteSession.openWorkspacePath({ path })
-        if (result?.ok !== true) notify(desktopStore.get().t('failed'))
-      } catch (error) {
-        log('openWorkspacePath(default) failed', error)
+      // 不带 `application` = "用系统默认关联打开"（官方语义）
+      const result = await launchPath(ctx, { path })
+      if (result.ok !== true) {
+        log('open with default app failed:', result.code, result.message)
         notify(desktopStore.get().t('failed'))
       }
     }
 
     async function revealPath(ctx, path) {
-      const remoteSession = remoteSessionOf(ctx)
-      if (remoteSession === undefined) return
-      try {
-        const result = await remoteSession.openWorkspacePath({ path, action: 'reveal' })
-        if (result?.ok !== true) notify(desktopStore.get().t('failed'))
-      } catch (error) {
-        log('reveal failed', error)
+      const result = await launchPath(ctx, { path, action: 'reveal' })
+      if (result.ok !== true) {
+        log('reveal failed:', result.code, result.message)
         notify(desktopStore.get().t('failed'))
       }
     }
@@ -924,16 +1079,20 @@ window.__ModuleLoader__.load({
     async function loadApps(file) {
       if (file.absolute !== true || desktopStore.get().canOpen !== true) return
       const ctx = ctxRef.current
-      const remoteSession = ctx === null ? undefined : remoteSessionOf(ctx)
-      if (remoteSession === undefined) return
+      if (ctx === null) return
       const token = file.path
       menuStore.set((st) => ({ ...st, appsState: 'loading' }))
       try {
-        const result = await remoteSession.workspacePathApplications({ path: file.path })
+        const result = await fetchApps(ctx, file.path)
         if (menuStore.get().file?.path !== token) return // 菜单已换目标：丢弃过期结果
-        menuStore.set((st) => ({ ...st, apps: result?.ok === true ? result.value : [], appsState: 'ready' }))
+        if (result.ok !== true) {
+          log('open-with list unavailable:', result.code)
+          menuStore.set((st) => ({ ...st, apps: [], appsState: 'ready' }))
+          return
+        }
+        menuStore.set((st) => ({ ...st, apps: result.apps, appsState: 'ready' }))
       } catch (error) {
-        log('workspacePathApplications failed', error)
+        log('open-with list failed:', error)
         if (menuStore.get().file?.path === token) menuStore.set((st) => ({ ...st, apps: [], appsState: 'ready' }))
       }
     }
@@ -953,7 +1112,7 @@ window.__ModuleLoader__.load({
     // 为什么要这个：apply() 中途抛异常会让「接管监听器」根本没装，而外部只能看到
     // 「右键没反应」——无法区分「bundle 没加载 / apply 没跑 / 某一步炸了」。
     // 因此把进度写到 window.__DSH_CTX_MENU__，在 DevTools 里敲一行即可定位。
-    const VERSION = '0.1.12'
+    const VERSION = '0.2.0'
     const boot = { version: VERSION, phase: 'factory', errors: [] }
     function mark(phase) {
       boot.phase = phase
@@ -1093,17 +1252,12 @@ window.__ModuleLoader__.load({
       step('desktop-probe', () => {
         ctx.effect(() => {
           let alive = true
-          const remoteSession = remoteSessionOf(ctx)
-          if (remoteSession === undefined) {
-            desktopStore.set((st) => ({ ...st, canOpen: false }))
-            return () => { alive = false }
-          }
-          remoteSession.canOpenWorkspacePath()
+          probeDesktop(ctx)
             .then((result) => {
-              if (alive) desktopStore.set((st) => ({ ...st, canOpen: result?.ok === true && result.value === true }))
+              if (alive) desktopStore.set((st) => ({ ...st, canOpen: result.canOpen === true }))
             })
             .catch((error) => {
-              log('canOpenWorkspacePath failed', error)
+              log('desktop probe failed', error)
               if (alive) desktopStore.set((st) => ({ ...st, canOpen: false }))
             })
           return () => { alive = false }
@@ -1176,7 +1330,10 @@ window.__ModuleLoader__.load({
     }
 
     // 仅供 test/ 使用：不参与运行时契约。
-    const __internals = { SELECTORS, gate, resolveRow, resolveFile, rowActionsOf, isAbsolutePath, lastSegment, looksLikeFilePath, firstPathIn, resolveWithCwd, sessionFileAddress, encodePath, isAbsoluteWorkspacePath, currentSessionCwd, isEditableTarget, selectionText, readTextPaged, diagnose, describeElement, renderDiagnosticsDom, MenuHost, MenuBoundary, buildItems, appIcon, preferredAppId, pickPreferredApp, idStem, tokensOf, normalizeForMatch, relativeToCwd, menuStore, fileContextStore, makeTranslator, DICT }
+    const __internals = { SELECTORS, gate, resolveRow, resolveFile, rowActionsOf, isAbsolutePath, lastSegment, looksLikeFilePath, firstPathIn, resolveWithCwd, sessionFileAddress, encodePath, isAbsoluteWorkspacePath, currentSessionCwd, isEditableTarget, selectionText, readTextPaged, diagnose, describeElement, renderDiagnosticsDom, MenuHost, MenuBoundary, buildItems, appIcon, preferredAppId, pickPreferredApp, idStem, tokensOf, normalizeForMatch, relativeToCwd, menuStore, fileContextStore, makeTranslator,
+      // 平台桥（0.2.1 路由 / 0.2.0 远程服务）
+      ROUTES, callRoute, probeDesktop, fetchApps, launchPath, sessionCwdAsync, readTextForCopy, readBytesForSave,
+      DICT }
 
     return { name: NS, inject, apply, __internals }
   },

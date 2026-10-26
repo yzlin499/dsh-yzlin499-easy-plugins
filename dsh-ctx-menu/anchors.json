@@ -1,6 +1,6 @@
 {
-  "target": "0.2.0-rc.2",
-  "note": "本文件是锚点契约的单一真相源。selectors 必须与 client.js 里 @anchors-begin/@anchors-end 之间的对象逐字一致（test/anchors-parity.test.mjs 会校验）；asarExpect 由 scripts/check.mjs 断言。",
+  "target": "0.2.1-rc.3（客户端半侧新契约：自有宿主路由 + fetch；同时保留 0.2.0 远程服务回退）",
+  "note": "本文件是锚点契约的单一真相源。selectors 必须与 client.js 里 @anchors-begin/@anchors-end 之间的对象逐字一致（test/anchors-parity.test.mjs 会校验）；asarExpect（单文件字面量）与 asarScan（跨文件出现次数）由 scripts/check.mjs 断言。",
   "selectors": {
     "sessionRow": "[role=\"treeitem\"][data-row-key^=\"session:\"]",
     "workspaceRow": "[role=\"treeitem\"][data-row-key^=\"workspace:\"]",
@@ -24,21 +24,10 @@
       "contains": ["data-changed-files", "aria-describedby", "data-presented-file", "data-review-file", "dsh-resource://file/"]
     },
     {
-      "id": "menu-primitives",
-      "file": "dsh/node_modules/@deepseek-ai/dsh-client-ui-primitives/lib/index.js",
-      "contains": ["MenuItemButton", "getAnchorRect", "writeClipboard"]
-    },
-    {
       "id": "shell-menu-contract",
       "file": "lib/main.js",
       "contains": ["selectionText.length > 0", "items.length > 0", "isEditable"],
       "why": "C1 的前提：外壳只在「可编辑域」或「有选中文本」时弹菜单。上游一改，本插件必须重新评估接管规则。"
-    },
-    {
-      "id": "platform-seeds",
-      "filePrefix": "dsh/node_modules/@deepseek-ai/dsh-web-frontend/dist/assets/index-",
-      "contains": ["@deepseek-ai/dsh-client-ui-primitives", "@deepseek-ai/dsh-client-ui-slots", "react-dom/client"],
-      "why": "客户端半侧直接 require 这三个名字：菜单组件来自 primitives，槽声明来自 slots，自建菜单 root 依赖 react-dom/client。它们必须在平台种子表里，否则 require 会抛 missed the module table。"
     },
     {
       "id": "composer-dock-slot",
@@ -46,10 +35,48 @@
       "contains": ["conversation.composer.dock", "sessionId"]
     },
     {
-      "id": "markdown-file-mention",
-      "file": "dsh/node_modules/@deepseek-ai/dsh-client-ui-primitives/lib/index.js",
-      "contains": ["MarkdownFileLink", "fileMention", "fileLink", "parseFileLink", "inlineCode", "fileMentions"],
-      "why": "正文文件提及 chip 有两个变体，都由 primitives 的 markdown 渲染器产出，且**都带本地类名 fileMention**：(a) markdown 链接 → MarkdownFileLink：class=fileMention+fileLink，title=工作区相对路径；(b) 行内代码被 chat 的 fileMentions 解析成 chip → inlineCode 分支：class=fileMention（无 fileLink），title=绝对路径，另有 aria-label。因此锚点取 fileMention（比 fileLink 更宽）。"
+      "id": "host-session-controller",
+      "file": "dsh/node_modules/@deepseek-ai/dsh-api-session-controller/lib/index.js",
+      "contains": ["workspacePathApplications", "openWorkspacePath", "canOpenWorkspacePath", "workspaceDesktop"],
+      "why": "0.2.1 起客户端拿不到 remote.session，改由本插件宿主半侧（index.js）代调这几个宿主方法。它们一旦改名/删除，「在应用中打开」整组动作就会失效——这正是 0.2.0→0.2.1 升级时真实发生过的破坏。"
+    },
+    {
+      "id": "host-webserver-contract",
+      "file": "dsh/node_modules/@deepseek-ai/dsh-host-webserver/lib/index.js",
+      "contains": ["register(route)", "route.handler(req, res)", "kind === \"exact\""],
+      "why": "宿主半侧的 /ctx-menu/* 路由依赖 webServer.register({kind,path,handler}) 以及「handler(req,res) 两参数、query 自己解析」的契约。"
+    },
+    {
+      "id": "menu-primitives-exports",
+      "filePrefix": "dsh/node_modules/@deepseek-ai/dsh-web-frontend/dist/assets/index-",
+      "contains": ["MenuItemButton", "MenuSurface", "fileMention"],
+      "why": "0.2.1 起 primitives 的实现被并入 dsh-web-frontend 产物（不再有 lib/index.js 文件），但模块 id 与组件导出仍在。菜单实体、子菜单容器、正文提及 chip 的本地类名是这三个字面量。"
+    }
+  ],
+  "asarScan": [
+    {
+      "id": "seed-module-ids",
+      "filePrefix": "dsh/node_modules/@deepseek-ai/",
+      "filePattern": "lib/client",
+      "needle": "require(\"@deepseek-ai/dsh-client-ui-primitives\")",
+      "minFiles": 5,
+      "why": "客户端半侧直接 require 这个包 id。种子模块按**运行时 id**提供（不在磁盘上以文件存在），因此只能断言「官方客户端仍在使用该 id」。"
+    },
+    {
+      "id": "seed-module-store",
+      "filePrefix": "dsh/node_modules/@deepseek-ai/",
+      "filePattern": "lib/client",
+      "needle": "require(\"@deepseek-ai/dsh-client-store\")",
+      "minFiles": 5,
+      "why": "同上：持久化 store 的包 id 仍被官方客户端使用。"
+    },
+    {
+      "id": "seed-module-react-dom-client",
+      "filePrefix": "dsh/node_modules/@deepseek-ai/",
+      "filePattern": "lib/client",
+      "needle": "require(\"react-dom/client\")",
+      "minFiles": 1,
+      "why": "自建菜单 root 依赖这个种子模块。"
     }
   ],
   "contextmenuBaseline": [
@@ -64,6 +91,17 @@
     "dsh/node_modules/@mixmark-io/domino/lib/htmlelts.js",
     "dsh/node_modules/@mixmark-io/domino/lib/Document.js",
     "lib/main.js",
-    "lib/welcome/welcome.js"
-  ]
+    "lib/welcome/welcome.js",
+    "dsh/node_modules/@deepseek-ai/dsh-experimental-session-inspector/lib/client.js"
+  ],
+  "contextmenuBaselineWhy": {
+    "dsh/node_modules/@deepseek-ai/dsh-experimental-session-inspector/lib/client.js": "只在它自己的「拾取元素」遮罩激活期间，把 contextmenu 列为 POINTER_ACTIONS 之一来捕获拾取手势；不调用 preventDefault、不是全局接管。而且遮罩铺在 chat 之上时，本插件的锚点在 event.target 上命中不了，会自动放行。"
+  },
+  "contextmenuIgnorePrefix": [
+    "dsh/node_modules/@deepseek-ai/dsh-experimental-inspector/lib/devtools/",
+    "dsh/node_modules/@deepseek-ai/dsh-web-frontend/dist/assets/langs/",
+    "dsh/node_modules/@deepseek-ai/dsh-web-frontend/dist/assets/vendor-",
+    "dsh/node_modules/@deepseek-ai/dsh-web-frontend/dist/assets/index-"
+  ],
+  "contextmenuIgnoreWhy": "dsh-experimental-inspector 的 devtools chunks 是内嵌 Chrome DevTools 前端（在独立文档里，不影响本页的右键）；web-frontend 产物是打包后的整站，命中属于编辑器/滚动容器内部实现。这几类放行，其余新增命中仍需人工重估接管规则。"
 }
