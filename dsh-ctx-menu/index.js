@@ -56,6 +56,7 @@ export const internals = {
   parseCommandExe,
   normalizeRegistryResult,
   displayNameFor,
+  toNativePath,
   encodeAppId,
   decodeAppId,
   extOf,
@@ -118,6 +119,18 @@ function normalizeApp(entry) {
 }
 
 // ── 跨工作区兜底：自己枚举系统关联应用（Windows 注册表） ─────────────────────
+
+/**
+ * 归一成原生分隔符。客户端给的路径可能是**混用**分隔符的
+ * （实测 `I:\...\YunLiu\Source/JXHan/Public/...`）：Windows 通用 API 能忍，
+ * 但 DSH 的合成文件系统按原生分隔符解析，混用会让官方校验/枚举失败。
+ */
+function toNativePath(value) {
+  const text = String(value ?? '').trim()
+  if (text === '') return text
+  const windowsish = /^[A-Za-z]:/.test(text) || text.startsWith('\\\\')
+  return windowsish ? text.replace(/\//g, '\\').replace(/\\{2,}/g, '\\') : text.replace(/\\/g, '/')
+}
 
 /** 扩展名（小写、含点）；拿不到合法扩展名返回 null。 */
 function extOf(path) {
@@ -455,7 +468,7 @@ export function apply(ctx) {
   register(`${PREFIX}/apps`, 'GET apps', async (req, res) => {
     if (rejected(req, res)) return
     if (req.method !== 'GET') return sendMethodNotAllowed(res, 'GET')
-    const path = urlOf(req).searchParams.get('path') ?? ''
+    const path = toNativePath(urlOf(req).searchParams.get('path') ?? '')
     if (!isAbsolute(path)) return sendJson(res, 400, { ok: false, code: 'path/not-absolute' })
     const sc = controller()
     if (sc === undefined || typeof sc.workspacePathApplications !== 'function') {
@@ -502,7 +515,7 @@ export function apply(ctx) {
     if (rejected(req, res)) return
     if (req.method !== 'GET') return sendMethodNotAllowed(res, 'GET')
     const params = urlOf(req).searchParams
-    const path = params.get('path') ?? ''
+    const path = toNativePath(params.get('path') ?? '')
     const mode = params.get('mode') === 'bytes' ? 'bytes' : 'text'
     if (!isAbsolute(path)) return sendJson(res, 400, { ok: false, code: 'path/not-absolute' })
     let info
@@ -554,7 +567,7 @@ export function apply(ctx) {
     if (parsed.error !== undefined) {
       return sendJson(res, parsed.error.status, { ok: false, code: parsed.error.code })
     }
-    const path = typeof parsed.body?.path === 'string' ? parsed.body.path : ''
+    const path = toNativePath(typeof parsed.body?.path === 'string' ? parsed.body.path : '')
     if (!isAbsolute(path)) return sendJson(res, 400, { ok: false, code: 'path/not-absolute' })
     const application = typeof parsed.body?.application === 'string' && parsed.body.application !== '' ? parsed.body.application : undefined
     const result = await invokeOpen(application === undefined ? { path } : { path, application })
@@ -573,7 +586,7 @@ export function apply(ctx) {
     if (parsed.error !== undefined) {
       return sendJson(res, parsed.error.status, { ok: false, code: parsed.error.code })
     }
-    const path = typeof parsed.body?.path === 'string' ? parsed.body.path : ''
+    const path = toNativePath(typeof parsed.body?.path === 'string' ? parsed.body.path : '')
     if (!isAbsolute(path)) return sendJson(res, 400, { ok: false, code: 'path/not-absolute' })
     const result = await invokeOpen({ path, action: 'reveal' })
     if (result.ok === true) return sendJson(res, 200, { ok: true, source: 'host' })

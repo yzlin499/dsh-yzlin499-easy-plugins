@@ -90,6 +90,17 @@ test('title 不像路径：不接管（图片 chip 没有 title / 普通按钮�
   assert.equal(gate(makeEvent(inlineCodeChip({ label: '在侧边栏打开' })), makeWindow(), {}, 'D:\\ws'), null)
 })
 
+test('normalizeToNative：混用分隔符归一（官方给的绝对路径会混用）', () => {
+  const { normalizeToNative } = internals
+  assert.equal(
+    normalizeToNative('I:\\Jx3YL\\YunLiu\\Source/JXHan/Public/AVGASDialog.h'),
+    'I:\\Jx3YL\\YunLiu\\Source\\JXHan\\Public\\AVGASDialog.h',
+  )
+  assert.equal(normalizeToNative('D:/ws//proj/src/a.ts'), 'D:\\ws\\proj\\src\\a.ts', '顺带压掉重复分隔符')
+  assert.equal(normalizeToNative('/home/me/a\\b/c.ts'), '/home/me/a/b/c.ts')
+  assert.equal(normalizeToNative(''), '')
+})
+
 test('firstPathIn：从文案里挑路径', () => {
   assert.equal(firstPathIn('在侧边栏打开 D:\\ws\\a.cpp'), 'D:\\ws\\a.cpp')
   assert.equal(firstPathIn('Open in sidebar /usr/local/a.ts'), '/usr/local/a.ts')

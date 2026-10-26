@@ -244,6 +244,43 @@ test('extOf / appId 编解码', () => {
   assert.equal(internals.decodeAppId('rider'), null, '非 exe: 前缀的 id 不认')
 })
 
+test('toNativePath：混用分隔符归一成原生（实测 I:\\...\\YunLiu\\Source/JXHan/...）', () => {
+  assert.equal(
+    internals.toNativePath('I:\\Jx3YL\\Product\\Client\\YunLiu\\Source/JXHan/Public/AVGASDialog.h'),
+    'I:\\Jx3YL\\Product\\Client\\YunLiu\\Source\\JXHan\\Public\\AVGASDialog.h',
+  )
+  assert.equal(internals.toNativePath('/home/me/a\\b/c.ts'), '/home/me/a/b/c.ts', 'POSIX 反过来归一成 /')
+  assert.equal(internals.toNativePath(''), '')
+})
+
+test('apps / open：混用分隔符的路径先归一化，再交给官方服务', async () => {
+  resetHostInternals()
+  const seen = []
+  const routes = mount({
+    sessionController: {
+      canOpenWorkspacePath: () => true,
+      workspacePathApplications: async (request) => {
+        seen.push(['apps', request.path])
+        return [{ id: 'x', name: 'X', default: true, icon: null }]
+      },
+      openWorkspacePath: async (request) => {
+        seen.push(['open', request.path])
+        return { opened: true }
+      },
+    },
+  })
+  const mixed = 'I:\\Jx3YL\\YunLiu\\Source/JXHan/Public/AVGASDialog.h'
+  const native = 'I:\\Jx3YL\\YunLiu\\Source\\JXHan\\Public\\AVGASDialog.h'
+  await hit(routes, '/ctx-menu/apps', { url: '/ctx-menu/apps?path=' + encodeURIComponent(mixed) })
+  await hit(routes, '/ctx-menu/open', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ path: mixed }),
+  })
+  assert.deepEqual(seen, [['apps', native], ['open', native]])
+  resetHostInternals()
+})
+
 test('displayNameFor：版本信息优先、去掉尾部括注、最后回退 exe 主干', () => {
   const exe = 'C:\\Program Files\\JetBrains\\rider64.exe'
   assert.equal(internals.displayNameFor({ fileDesc: 'JetBrains Rider (GUI launcher)' }, exe), 'JetBrains Rider')

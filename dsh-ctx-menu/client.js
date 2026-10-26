@@ -176,6 +176,19 @@ window.__ModuleLoader__.load({
       return /^[A-Za-z]:[/\\]/.test(value) || String(value).startsWith('\\\\')
     }
 
+    /**
+     * 归一成原生分隔符。官方有些地方给出的绝对路径是**混用**分隔符的
+     * （实测 `I:\...\YunLiu\Source/JXHan/Public/...`），Windows 通用 API 能忍，
+     * 但 DSH 自己的合成文件系统按原生分隔符解析 —— 混用会让官方的路径校验/关联应用枚举失败，
+     * 于是菜单里只剩「没有可用的关联应用」。Windows 风格统一成 `\`，POSIX 统一成 `/`。
+     */
+    function normalizeToNative(value) {
+      const text = String(value ?? '').trim()
+      if (text === '') return text
+      if (isWindowsStylePath(text)) return text.replace(/\//g, '\\').replace(/\\{2,}/g, '\\')
+      return text.replace(/\\/g, '/')
+    }
+
     /** 绝对路径判定（POSIX `/a/b`、Windows 盘符、UNC）——等价官方 isAbsoluteWorkspacePath。 */
     function isAbsoluteWorkspacePath(value) {
       return String(value).startsWith('/') || isWindowsStylePath(value)
@@ -285,7 +298,7 @@ window.__ModuleLoader__.load({
         if (row !== null) {
           const describedBy = row.getAttribute('aria-describedby')
           const holder = describedBy === null ? null : doc?.getElementById?.(describedBy)
-          const path = String(holder?.textContent ?? '').trim()
+          const path = normalizeToNative(String(holder?.textContent ?? '').trim())
           if (path === '') return null
           const display = String(row.firstElementChild?.textContent ?? '').trim() || lastSegment(path)
           return { path, display, absolute: isAbsolutePath(path), source: 'changed' }
@@ -293,7 +306,7 @@ window.__ModuleLoader__.load({
         // 1b) 单文件：整卡只有标题头，路径在卡片内唯一的隐藏 span 里
         if (card.getAttribute('data-single') !== null) {
           const holder = card.querySelector('span[hidden]')
-          const path = String(holder?.textContent ?? '').trim()
+          const path = normalizeToNative(String(holder?.textContent ?? '').trim())
           if (path === '') return null
           return { path, display: lastSegment(path), absolute: isAbsolutePath(path), source: 'changed-single' }
         }
@@ -305,7 +318,7 @@ window.__ModuleLoader__.load({
       if (presented !== null) {
         const candidates = [presented, ...presented.querySelectorAll('[title]')]
         for (const node of candidates) {
-          const value = String(node?.getAttribute?.('title') ?? '').trim()
+          const value = normalizeToNative(String(node?.getAttribute?.('title') ?? '').trim())
           if (value !== '' && isAbsolutePath(value) === true) {
             return { path: value, display: lastSegment(value), absolute: true, source: 'presented' }
           }
@@ -316,7 +329,7 @@ window.__ModuleLoader__.load({
       // 3) 对比（review）页的文件行：data-review-file 是相对路径，title 是绝对路径
       const review = target.closest(selectors.reviewFile)
       if (review !== null) {
-        const path = String(review.getAttribute('title') ?? '').trim()
+        const path = normalizeToNative(String(review.getAttribute('title') ?? '').trim())
         if (path === '' || isAbsolutePath(path) === false) return null // 拿不到绝对路径就不猜
         return { path, display: String(review.getAttribute('data-review-file') ?? '').trim() || lastSegment(path), absolute: true, source: 'review' }
       }
@@ -1143,7 +1156,7 @@ window.__ModuleLoader__.load({
     // 为什么要这个：apply() 中途抛异常会让「接管监听器」根本没装，而外部只能看到
     // 「右键没反应」——无法区分「bundle 没加载 / apply 没跑 / 某一步炸了」。
     // 因此把进度写到 window.__DSH_CTX_MENU__，在 DevTools 里敲一行即可定位。
-    const VERSION = '0.2.2'
+    const VERSION = '0.2.3'
     const boot = { version: VERSION, phase: 'factory', errors: [] }
     function mark(phase) {
       boot.phase = phase
@@ -1382,7 +1395,7 @@ window.__ModuleLoader__.load({
     }
 
     // 仅供 test/ 使用：不参与运行时契约。
-    const __internals = { SELECTORS, gate, resolveRow, resolveFile, rowActionsOf, isAbsolutePath, lastSegment, looksLikeFilePath, firstPathIn, resolveWithCwd, sessionFileAddress, encodePath, isAbsoluteWorkspacePath, currentSessionCwd, isEditableTarget, selectionText, readTextPaged, diagnose, describeElement, renderDiagnosticsDom, MenuHost, MenuBoundary, buildItems, appIcon, preferredAppId, pickPreferredApp, idStem, tokensOf, normalizeForMatch, relativeToCwd, menuStore, fileContextStore, makeTranslator,
+    const __internals = { SELECTORS, gate, resolveRow, resolveFile, rowActionsOf, isAbsolutePath, lastSegment, looksLikeFilePath, firstPathIn, resolveWithCwd, sessionFileAddress, encodePath, isAbsoluteWorkspacePath, currentSessionCwd, isEditableTarget, selectionText, readTextPaged, diagnose, describeElement, renderDiagnosticsDom, MenuHost, MenuBoundary, buildItems, appIcon, preferredAppId, pickPreferredApp, idStem, tokensOf, normalizeForMatch, normalizeToNative, relativeToCwd, menuStore, fileContextStore, makeTranslator,
       // 平台桥（0.2.1 路由 / 0.2.0 远程服务）
       ROUTES, callRoute, probeDesktop, fetchApps, launchPath, sessionCwdAsync, readTextForCopy, readBytesForSave, openPendingMenu, SessionProbe, syncProbeCwd, handleContextMenu,
       DICT }
