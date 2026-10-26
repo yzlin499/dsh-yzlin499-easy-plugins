@@ -1143,7 +1143,7 @@ window.__ModuleLoader__.load({
     // 为什么要这个：apply() 中途抛异常会让「接管监听器」根本没装，而外部只能看到
     // 「右键没反应」——无法区分「bundle 没加载 / apply 没跑 / 某一步炸了」。
     // 因此把进度写到 window.__DSH_CTX_MENU__，在 DevTools 里敲一行即可定位。
-    const VERSION = '0.2.1'
+    const VERSION = '0.2.2'
     const boot = { version: VERSION, phase: 'factory', errors: [] }
     function mark(phase) {
       boot.phase = phase

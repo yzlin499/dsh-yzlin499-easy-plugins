@@ -33,12 +33,12 @@ test('boot 标记：apply 走完后 phase=ready 且无错误', () => {
   void originalAdd
   const ctx = ctxWith((key, callback) => { callback(); return () => {} })
   exports.apply(ctx)
-  assert.equal(fakeWindow.__DSH_CTX_MENU__.version, '0.2.1')
+  assert.equal(fakeWindow.__DSH_CTX_MENU__.version, '0.2.2')
   assert.equal(fakeWindow.__DSH_CTX_MENU__.phase, 'ready')
   assert.deepEqual(fakeWindow.__DSH_CTX_MENU__.errors, [])
   assert.equal(typeof fakeWindow.__DSH_CTX_MENU__.state, 'function')
   const state = fakeWindow.__DSH_CTX_MENU__.state()
-  assert.equal(state.version, '0.2.1')
+  assert.equal(state.version, '0.2.2')
   assert.equal(state.phase, 'ready')
   assert.equal(Array.isArray(state.errors), true)
   void added

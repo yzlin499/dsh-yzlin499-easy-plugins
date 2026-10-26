@@ -123,6 +123,13 @@ session-probe:ok → overlay:ok → styles:ok → ready`；任何一步失败会
    客户端这层叫「平台桥」：**自有路由优先，0.2.0 的远程服务兜底**，因此同一份代码在 0.2.0 与 0.2.1 上都能工作。
    路由全部同源、受 `connection.requestRejection` 保护，只接受绝对路径。
 
+   **跨工作区兜底**：官方 `workspacePathApplications` 只对"能解析进合成文件系统"的路径有效，
+   跨工作区/跨盘符的文件（实测 `I:\Jx3YL\...`）会返回空，菜单里就只剩「没有可用的关联应用」。
+   这时宿主会**自己读 Windows 注册表**枚举（`UserChoice` / `OpenWithProgids` / `OpenWithList`），
+   应用名取**文件版本信息**（`FileDescription`，如 `Code.exe → Visual Studio Code`），默认应用按 `UserChoice` 标注；
+   启动与定位同样有兜底（只允许启动**本次枚举里出现过**的 exe；定位用 `explorer.exe /select,`）。
+   枚举结果按扩展名缓存 5 分钟（首次约 2 秒，期间菜单显示「正在读取打开方式…」）。注册表枚举模式下**没有应用图标**。
+
 1. **接管规则与外壳互补（这是本插件最重要的设计）**：DSH 桌面外壳只在「可编辑域」或「有选中文本」时弹原生菜单，
    而渲染进程 `preventDefault()` 会**抑制**该菜单。因此本插件反过来做——**这两种情形一律放行**，
    只在「外壳本来就不弹」且「确实有可追加动作」时才接管。这样绝不会破坏外壳的「选中文本 → 复制」。

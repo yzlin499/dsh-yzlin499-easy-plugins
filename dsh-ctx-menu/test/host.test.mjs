@@ -6,7 +6,22 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { apply, name, inject } from '../index.js'
+import { apply, name, inject, internals } from '../index.js'
+
+// 单测里绝不真的起进程 / 读注册表：默认全注入为假实现，需要时按用例替换
+const spawnCalls = []
+internals.spawn = (command, args, options) => {
+  spawnCalls.push({ command, args, options })
+  return { on() {}, stdout: { on() {} }, stderr: { on() {} }, kill() {}, unref() {} }
+}
+internals.readRegistry = async () => null
+internals.clearAppCache()
+
+function resetHostInternals({ registry } = {}) {
+  spawnCalls.length = 0
+  internals.readRegistry = registry === undefined ? async () => null : registry
+  internals.clearAppCache()
+}
 
 function makeRes() {
   return {
@@ -195,14 +210,14 @@ test('open / reveal：校验 content-type 与绝对路径，正常时调 session
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ path: 'D:\\ws\\a.md', application: 'rider64.exe' }),
   })
-  assert.deepEqual(open.json, { ok: true })
+  assert.deepEqual(open.json, { ok: true, source: 'host' })
 
   const reveal = await hit(routes, '/ctx-menu/reveal', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ path: 'D:\\ws\\a.md' }),
   })
-  assert.deepEqual(reveal.json, { ok: true })
+  assert.deepEqual(reveal.json, { ok: true, source: 'host' })
 
   assert.deepEqual(seen, [
     { path: 'D:\\ws\\a.md', application: 'rider64.exe' },
@@ -210,13 +225,137 @@ test('open / reveal：校验 content-type 与绝对路径，正常时调 session
   ])
 })
 
-test('open：宿主能力缺失时给出 host/unsupported', async () => {
-  const routes = mount()
+// ── 跨工作区兜底（注册表枚举 / 自己启动） ──────────────────────────────────
+
+test('parseCommandExe：从 shell 命令串里取出 exe（带引号 / 不带引号 / 无 exe）', () => {
+  assert.equal(internals.parseCommandExe('"C:\\Program Files\\Microsoft VS Code\\Code.exe" "%1"'), 'C:\\Program Files\\Microsoft VS Code\\Code.exe')
+  assert.equal(internals.parseCommandExe('C:\\tools\\app.exe %1'), 'C:\\tools\\app.exe')
+  assert.equal(internals.parseCommandExe('rundll32.exe shell32.dll'), 'rundll32.exe')
+  assert.equal(internals.parseCommandExe(''), null)
+  assert.equal(internals.parseCommandExe(null), null)
+})
+
+test('extOf / appId 编解码', () => {
+  assert.equal(internals.extOf('D:\\ws\\a.H'), '.h')
+  assert.equal(internals.extOf('D:\\ws\\noext'), null)
+  assert.equal(internals.extOf('D:\\ws\\a.'), null)
+  assert.equal(internals.encodeAppId('C:\\a\\b.exe'), 'exe:C:\\a\\b.exe')
+  assert.equal(internals.decodeAppId('exe:C:\\a\\b.exe'), 'C:\\a\\b.exe')
+  assert.equal(internals.decodeAppId('rider'), null, '非 exe: 前缀的 id 不认')
+})
+
+test('displayNameFor：版本信息优先、去掉尾部括注、最后回退 exe 主干', () => {
+  const exe = 'C:\\Program Files\\JetBrains\\rider64.exe'
+  assert.equal(internals.displayNameFor({ fileDesc: 'JetBrains Rider (GUI launcher)' }, exe), 'JetBrains Rider')
+  assert.equal(internals.displayNameFor({ fileDesc: 'Visual Studio Code', product: 'other' }, exe), 'Visual Studio Code')
+  assert.equal(internals.displayNameFor({ product: 'JetBrains Rider' }, exe), 'JetBrains Rider')
+  assert.equal(internals.displayNameFor({ friendly: 'Rider' }, exe), 'Rider')
+  assert.equal(internals.displayNameFor({}, exe), 'rider64', '什么都没有就用 exe 主干')
+  assert.equal(internals.displayNameFor({ fileDesc: '   ' }, exe), 'rider64', '空白串不算名字')
+})
+
+test('normalizeRegistryResult：去重、跳过非绝对 exe、默认应用按 UserChoice 标记', () => {
+  const result = internals.normalizeRegistryResult({
+    default: 'VSCode.h',
+    items: [
+      { progId: 'VSCode.h', command: '"C:\\Program Files\\Microsoft VS Code\\Code.exe" "%1"', name: null },
+      { progId: 'Rider.h', command: '"C:\\Program Files\\JetBrains\\rider64.exe" "%1"', name: 'JetBrains Rider' },
+      { progId: 'Dup.h', command: '"C:\\Program Files\\Microsoft VS Code\\Code.exe" "%1"', name: 'duplicate' },
+      { progId: 'Bare.h', exe: 'code.exe' },
+    ],
+  })
+  assert.deepEqual(result.apps.map((app) => app.name), ['Code', 'JetBrains Rider'], '同 exe 去重、裸 exe 名被跳过、无名时回退 exe 主干')
+  assert.equal(result.apps[0].default, true, 'UserChoice 指向的那条标默认')
+  assert.equal(result.apps[1].default, false)
+})
+
+test('apps：官方返回空时回退注册表枚举，并标 source=registry', async () => {
+  resetHostInternals({
+    registry: async () => ({
+      default: 'VSCode.h',
+      items: [
+        { progId: 'VSCode.h', command: '"C:\\Program Files\\Microsoft VS Code\\Code.exe" "%1"' },
+        { progId: 'Rider.h', command: '"C:\\Program Files\\JetBrains\\Rider\\rider64.exe" "%1"', name: 'JetBrains Rider' },
+      ],
+    }),
+  })
+  const routes = mount({ sessionController: { canOpenWorkspacePath: () => true, workspacePathApplications: async () => [] } })
+  const result = await hit(routes, '/ctx-menu/apps', { url: '/ctx-menu/apps?path=' + encodeURIComponent('I:\\Jx3YL\\a.h') })
+  assert.equal(result.status, 200)
+  assert.equal(result.json.source, 'registry')
+  assert.equal(result.json.apps.length, 2)
+  assert.equal(result.json.apps[0].default, true)
+  resetHostInternals()
+})
+
+test('apps：枚举结果有 60s 缓存，不重复起进程', async () => {
+  let reads = 0
+  resetHostInternals({
+    registry: async () => {
+      reads += 1
+      return { default: null, items: [{ progId: 'A.h', command: '"C:\\a\\a.exe" "%1"' }] }
+    },
+  })
+  const routes = mount({ sessionController: { canOpenWorkspacePath: () => true, workspacePathApplications: async () => [] } })
+  const url = '/ctx-menu/apps?path=' + encodeURIComponent('I:\\x\\a.h')
+  await hit(routes, '/ctx-menu/apps', { url })
+  await hit(routes, '/ctx-menu/apps', { url })
+  assert.equal(reads, 1)
+  resetHostInternals()
+})
+
+test('open：官方失败时自己启动，但只允许枚举里出现过的 exe', async () => {
+  const realExe = process.execPath // 真实存在的可执行文件（否则 existsSync 会拒）
+  resetHostInternals({
+    registry: async () => ({ default: null, items: [{ progId: 'Rider.h', command: `"${realExe}" "%1"` }] }),
+  })
+  const routes = mount({ sessionController: { openWorkspacePath: async () => { throw new Error('gateway/denied') } } })
+
+  // 枚举里没有它 → 拒绝，返回官方错误
+  const rejected = await hit(routes, '/ctx-menu/open', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ path: 'I:\\Jx3YL\\a.h', application: 'exe:C:\\evil\\evil.exe' }),
+  })
+  assert.equal(rejected.status, 502)
+  assert.equal(spawnCalls.length, 0, '未列入枚举的可执行文件绝不启动')
+
+  // 枚举里有 → 启动它
+  const ok = await hit(routes, '/ctx-menu/open', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ path: 'I:\\Jx3YL\\a.h', application: internals.encodeAppId(realExe) }),
+  })
+  assert.equal(ok.status, 200)
+  assert.equal(ok.json.source, 'registry')
+  assert.equal(spawnCalls.at(-1).command, realExe)
+  assert.deepEqual(spawnCalls.at(-1).args, ['I:\\Jx3YL\\a.h'])
+  resetHostInternals()
+})
+
+test('open：没有指定应用且官方失败 → 用资源管理器走系统默认', async () => {
+  resetHostInternals()
+  const routes = mount({ sessionController: { openWorkspacePath: async () => { throw new Error('gateway/denied') } } })
   const result = await hit(routes, '/ctx-menu/open', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ path: 'D:\\ws\\a.md' }),
+    body: JSON.stringify({ path: 'I:\\Jx3YL\\a.h' }),
   })
-  assert.equal(result.status, 502)
-  assert.equal(result.json.code, 'host/unsupported')
+  assert.equal(result.status, 200)
+  assert.equal(spawnCalls.at(-1).command, 'explorer.exe')
+  resetHostInternals()
+})
+
+test('reveal：官方失败时用 explorer /select, 兜底', async () => {
+  resetHostInternals()
+  const routes = mount({ sessionController: { openWorkspacePath: async () => { throw new Error('gateway/denied') } } })
+  const result = await hit(routes, '/ctx-menu/reveal', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ path: 'I:\\Jx3YL\\a.h' }),
+  })
+  assert.equal(result.status, 200)
+  assert.equal(spawnCalls.at(-1).command, 'explorer.exe')
+  assert.deepEqual(spawnCalls.at(-1).args, ['/select,', 'I:\\Jx3YL\\a.h'])
+  resetHostInternals()
 })
