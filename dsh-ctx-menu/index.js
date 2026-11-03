@@ -29,9 +29,10 @@
 //   - 定位：explorer.exe /select,
 
 import { spawn } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import { readFile, stat } from 'node:fs/promises'
-import { basename, isAbsolute } from 'node:path'
+import { existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { readFile, stat, writeFile } from 'node:fs/promises'
+import { basename, dirname, isAbsolute, join } from 'node:path'
+import { tmpdir } from 'node:os'
 
 export const name = 'dsh-ctx-menu'
 export const inject = ['webServer']
@@ -40,8 +41,13 @@ const PREFIX = '/ctx-menu'
 const TEXT_MAX_BYTES = 2 * 1024 * 1024
 const BYTES_MAX_BYTES = 32 * 1024 * 1024
 const MAX_BODY_BYTES = 64 * 1024
-/** 关联应用枚举结果的缓存时长（注册表不会秒变；避免每次右键都起一次 PowerShell）。 */
+/** 内存缓存：菜单连开几次不必重复查。 */
 const APP_CACHE_TTL_MS = 300_000
+/** 磁盘缓存（按后缀名，跨重启）：枚举一次 PowerShell 要 2 秒，绝不能反复付这笔钱。 */
+const DISK_TTL_MS = 7 * 24 * 60 * 60 * 1000
+/** 磁盘条目超过这个年龄就在后台悄悄刷新（先用旧值，不阻塞菜单）。 */
+const DISK_REFRESH_MS = 6 * 60 * 60 * 1000
+const CACHE_VERSION = 1
 const REGISTRY_TIMEOUT_MS = 8_000
 
 const log = (...args) => console.log('[dsh-ctx-menu]', ...args)
@@ -61,6 +67,23 @@ export const internals = {
   decodeAppId,
   extOf,
   clearAppCache: () => appCache.clear(),
+  // 缓存层（磁盘 + 内存）供单测直接操作
+  cacheFile: () => defaultCacheFile(),
+  loadDiskCache,
+  enumerateApps,
+  resetCaches: () => {
+    appCache.clear()
+    diskCache.entries.clear()
+    diskCache.loaded = false
+  },
+  flushDiskCache: () => {
+    if (saveTimer !== undefined) {
+      clearTimeout(saveTimer)
+      saveTimer = undefined
+    }
+    dirty = true
+    scheduleSaveDiskCache()
+  },
 }
 
 /** 可选服务读取：缺失/抛错都返回 undefined，让对应能力优雅降级。 */
@@ -338,15 +361,133 @@ function normalizeRegistryResult(raw) {
 
 const appCache = new Map()
 
+/** 磁盘缓存位置：优先 LOCALAPPDATA（Windows 常规缓存位），否则退回系统临时目录。 */
+function defaultCacheFile() {
+  const base = process.env.LOCALAPPDATA || process.env.XDG_CACHE_HOME || tmpdir()
+  return join(base, 'dsh-ctx-menu', 'apps-cache.json')
+}
+
+const diskCache = { loaded: false, entries: new Map() }
+let saveTimer
+let dirty = false
+
+function cacheFilePath() {
+  return typeof internals.cacheFile === 'function' ? internals.cacheFile() : defaultCacheFile()
+}
+
+/** 读磁盘缓存（一次，同步；坏文件当作空，绝不影响功能）。 */
+function loadDiskCache() {
+  if (diskCache.loaded) return diskCache.entries
+  diskCache.loaded = true
+  try {
+    const raw = readFileSync(cacheFilePath(), 'utf8')
+    const parsed = JSON.parse(raw)
+    if (parsed?.version === CACHE_VERSION && parsed.entries !== null && typeof parsed.entries === 'object') {
+      for (const [ext, entry] of Object.entries(parsed.entries)) {
+        if (typeof entry?.at !== 'number' || Array.isArray(entry?.apps) === false) continue
+        diskCache.entries.set(ext, {
+          at: entry.at,
+          apps: entry.apps,
+          byId: new Map(entry.apps.map((app) => [app.id, { id: app.id, name: app.name, exe: decodeAppId(app.id) ?? '' }])),
+        })
+      }
+    }
+  } catch (error) {
+    if (error?.code !== 'ENOENT') log('disk cache read failed:', error?.message ?? error)
+  }
+  return diskCache.entries
+}
+
+/** 写磁盘缓存（合并 1 秒内的多次写入；失败只记日志）。 */
+function scheduleSaveDiskCache() {
+  dirty = true
+  if (saveTimer !== undefined) return
+  saveTimer = setTimeout(() => {
+    saveTimer = undefined
+    if (dirty === false) return
+    dirty = false
+    const entries = {}
+    for (const [ext, entry] of loadDiskCache()) entries[ext] = { at: entry.at, apps: entry.apps }
+    const file = cacheFilePath()
+    void (async () => {
+      try {
+        mkdirSync(dirname(file), { recursive: true })
+        await writeFile(file, JSON.stringify({ version: CACHE_VERSION, entries }, null, 2), 'utf8')
+      } catch (error) {
+        log('disk cache write failed:', error?.message ?? error)
+      }
+    })()
+  }, typeof internals.saveDelayMs === 'number' ? internals.saveDelayMs : 1000)
+  saveTimer.unref?.()
+}
+const isFresh = (at, ttl) => typeof at === 'number' && internals.now() - at < ttl
+
+/**
+ * 按**后缀名**取关联应用，三层缓存：
+ *   ① 内存（5 分钟）→ ② 磁盘（7 天内直接给，超过 6 小时顺手在后台刷新）→ ③ 现场枚举（PowerShell，约 2 秒）
+ * 目标是让菜单几乎不等待：冷启动后第一次也只要读一个 JSON 文件。
+ */
 async function enumerateApps(path) {
   const ext = extOf(path)
   if (ext === null) return null
-  const cached = appCache.get(ext)
-  if (cached !== undefined && internals.now() - cached.at < APP_CACHE_TTL_MS) return cached.value
+
+  const memory = appCache.get(ext)
+  if (memory !== undefined && isFresh(memory.at, APP_CACHE_TTL_MS)) return memory.value
+
+  const entries = loadDiskCache()
+  const disk = entries.get(ext)
+  if (disk !== undefined && isFresh(disk.at, DISK_TTL_MS)) {
+    const value = { apps: disk.apps, byId: disk.byId }
+    appCache.set(ext, { at: internals.now(), value })
+    if (isFresh(disk.at, DISK_REFRESH_MS) === false) void refreshApps(ext)
+    return value
+  }
+
+  return refreshApps(ext)
+}
+
+/** 真正枚举一次并落两级缓存。失败时退回磁盘旧值（有的话）。 */
+async function refreshApps(ext) {
   const raw = await internals.readRegistry(ext)
   const value = normalizeRegistryResult(raw)
-  appCache.set(ext, { at: internals.now(), value })
+  if (value.apps.length === 0) {
+    const stale = loadDiskCache().get(ext)
+    if (stale !== undefined) return { apps: stale.apps, byId: stale.byId }
+  }
+  const at = internals.now()
+  appCache.set(ext, { at, value })
+  loadDiskCache().set(ext, { at, apps: value.apps, byId: value.byId })
+  scheduleSaveDiskCache()
   return value
+}
+
+/** 启动预热：把磁盘里已经知道的扩展名在后台刷新一遍，避免首次右键付 2 秒。 */
+function warmCache() {
+  if (process.platform !== 'win32') return
+  const entries = loadDiskCache()
+  const stale = [...entries.entries()]
+    .filter(([, entry]) => isFresh(entry.at, DISK_TTL_MS) === false || isFresh(entry.at, DISK_REFRESH_MS) === false)
+    .sort((a, b) => b[1].at - a[1].at)
+    .slice(0, 6)
+    .map(([ext]) => ext)
+  // 首次运行（磁盘里什么都没有）：预热几个最常见的源码后缀，让第一次右键也几乎是瞬时的。
+  // 只在空闲时做、且只做 4 个，避免和 DSH 启动抢资源。
+  const seeds = stale.length > 0 ? stale : entries.size === 0 ? ['.md', '.cpp', '.h', '.cs'] : []
+  if (seeds.length === 0) return
+  const timer = setTimeout(() => {
+    void (async () => {
+      for (const ext of seeds) {
+        if (isFresh(appCache.get(ext)?.at, DISK_TTL_MS)) continue
+        try {
+          await refreshApps(ext)
+        } catch (error) {
+          log('warm refresh failed:', ext, error?.message ?? error)
+        }
+      }
+      log('cache warmed:', seeds.join(', '))
+    })()
+  }, 3_000)
+  timer.unref?.()
 }
 
 function spawnDetached(command, args) {
@@ -595,4 +736,6 @@ export function apply(ctx) {
   })
 
   log('host routes mounted:', `${PREFIX}/{capabilities,apps,cwd,read,open,reveal}`)
+  // 后台预热：用磁盘里已知的扩展名（最多 6 个）刷新一遍，让重启后的第一次右键也不必等 PowerShell
+  void warmCache()
 }

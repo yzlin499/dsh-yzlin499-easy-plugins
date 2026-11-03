@@ -15,12 +15,24 @@ internals.spawn = (command, args, options) => {
   return { on() {}, stdout: { on() {} }, stderr: { on() {} }, kill() {}, unref() {} }
 }
 internals.readRegistry = async () => null
-internals.clearAppCache()
+// 磁盘缓存也不许碰用户的真实缓存：指到临时目录，并让写盘立刻发生
+const cacheDir = mkdtempSync(join(tmpdir(), 'ctx-menu-cache-'))
+const cacheFile = join(cacheDir, 'apps-cache.json')
+internals.cacheFile = () => cacheFile
+internals.saveDelayMs = 0
+internals.resetCaches()
 
 function resetHostInternals({ registry } = {}) {
   spawnCalls.length = 0
   internals.readRegistry = registry === undefined ? async () => null : registry
-  internals.clearAppCache()
+  rmSync(cacheFile, { force: true })
+  internals.resetCaches()
+}
+
+/** 等写盘真正落下去（saveDelayMs=0 时定时器立刻触发，但仍要给它一个事件循环）。 */
+const flushDisk = async () => {
+  internals.flushDiskCache()
+  await new Promise((resolve) => setTimeout(resolve, 30))
 }
 
 function makeRes() {
@@ -322,6 +334,31 @@ test('apps：官方返回空时回退注册表枚举，并标 source=registry', 
   assert.equal(result.json.source, 'registry')
   assert.equal(result.json.apps.length, 2)
   assert.equal(result.json.apps[0].default, true)
+  resetHostInternals()
+})
+
+test('apps：枚举结果按后缀名进磁盘缓存，清掉内存后仍不重复查注册表', async () => {
+  let reads = 0
+  resetHostInternals({
+    registry: async () => {
+      reads += 1
+      return { default: 'Rider.h', items: [{ progId: 'Rider.h', exe: 'C:\\JetBrains\\rider64.exe', fileDesc: 'JetBrains Rider' }] }
+    },
+  })
+  const routes = mount({ sessionController: { canOpenWorkspacePath: () => true, workspacePathApplications: async () => [] } })
+  const url = '/ctx-menu/apps?path=' + encodeURIComponent('I:\\x\\cached.h')
+
+  const first = await hit(routes, '/ctx-menu/apps', { url })
+  assert.equal(first.json.apps[0].name, 'JetBrains Rider')
+  assert.equal(reads, 1)
+  await flushDisk()
+
+  // 清掉内存缓存，模拟"五分钟过期 / 重启"→ 应该读磁盘而不是再起 PowerShell
+  internals.clearAppCache()
+  const second = await hit(routes, '/ctx-menu/apps', { url })
+  assert.equal(reads, 1, '磁盘缓存命中时不再查注册表')
+  assert.equal(second.json.apps[0].id, first.json.apps[0].id)
+  assert.equal(second.json.apps[0].default, true, '默认项也随缓存保留')
   resetHostInternals()
 })
 

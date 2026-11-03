@@ -128,7 +128,10 @@ session-probe:ok → overlay:ok → styles:ok → ready`；任何一步失败会
    这时宿主会**自己读 Windows 注册表**枚举（`UserChoice` / `OpenWithProgids` / `OpenWithList`），
    应用名取**文件版本信息**（`FileDescription`，如 `Code.exe → Visual Studio Code`），默认应用按 `UserChoice` 标注；
    启动与定位同样有兜底（只允许启动**本次枚举里出现过**的 exe；定位用 `explorer.exe /select,`）。
-   枚举结果按扩展名缓存 5 分钟（首次约 2 秒，期间菜单显示「正在读取打开方式…」）。注册表枚举模式下**没有应用图标**。
+   **缓存（按后缀名）**：内存 5 分钟 → 磁盘 7 天（`%LOCALAPPDATA%\dsh-ctx-menu\apps-cache.json`）→ 现场枚举。
+   实测冷枚举约 **1.9 秒**（要起一次 PowerShell），命中磁盘缓存 **1 毫秒**，重启后也是毫秒级；
+   磁盘条目超过 6 小时会**先给旧值、后台刷新**；宿主启动 3 秒后还会预热最多 6 个已知后缀
+   （首次安装时预热 `.md / .cpp / .h / .cs` 四个）。注册表枚举模式下**没有应用图标**。
 
 1. **接管规则与外壳互补（这是本插件最重要的设计）**：DSH 桌面外壳只在「可编辑域」或「有选中文本」时弹原生菜单，
    而渲染进程 `preventDefault()` 会**抑制**该菜单。因此本插件反过来做——**这两种情形一律放行**，
