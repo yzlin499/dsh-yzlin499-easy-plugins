@@ -25,3 +25,8 @@ profiles/
 tmp/
 temp/
 *.tmp
+
+# ── 调研过程缓存（GitHub 检索临时产物，不入库）──────────
+_memrepos/
+_topic_repos.json
+
