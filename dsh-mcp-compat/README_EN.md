@@ -12,27 +12,87 @@ dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/ds
 
 Restart DSH Web to activate.
 
-## Supported config sources (priority order, first match wins; project + user level)
+## Supported config sources (project + user level; user level wins on name conflicts)
 
 - `.mcp.json` — Claude Code / Codex / Cursor convention (`mcpServers`; stdio / Streamable HTTP)
 - `opencode.json` / `opencode.jsonc` — opencode convention (`mcp` key, command array / url / enabled)
 - `.cursor/mcp.json` — Cursor convention (same `mcpServers`)
-- `.codex/config.toml` — Codex convention (`[mcp_servers.<name>]`)
-- User home: `~/.mcp.json`, `~/.codex/config.toml`, `~/.config/opencode/opencode.json`
+- `.codex/config.toml` — Codex convention (`[mcp_servers.<name>]`; `enabled = false` is skipped)
+- User home: `~/.mcp.json`, `~/.cursor/mcp.json`, `~/.codex/config.toml`,
+  `~/.config/opencode/opencode.json`
+
+**Name conflicts: user level beats project level.** A server name is mounted only
+once. If some project also defines a server with the same name (e.g. the project of
+the MCP server itself ships an `.mcp.json`), the user-level entry takes the name over
+and the server stays globally available. Otherwise the project entry "hijacks" the
+name into project scope, its tools are visible only inside that project, and every
+other workspace loses the tools of that globally-configured MCP server.
 
 ## Usage
 
 Drop any of the config files above into a workspace root (or the user home) and
 it takes effect automatically — no DSH configuration needed. Project-level MCP
-tools are visible only to agents whose `cwd` belongs to that workspace, while
-user-level MCP tools remain shared globally. Project stdio servers start with the
+tools are visible only to agents whose `cwd` belongs to that workspace (the root
+itself **and any subdirectory** count as belonging, so a session opened in a
+subdirectory keeps its own tools), while user-level MCP tools remain shared
+globally. Project stdio servers start with the
 workspace root as their working directory; user-level stdio servers start with the
 **workspace of the current session** (matching how Claude Code / Codex / opencode
 spawn MCP servers with the current project directory) — many MCP servers (codegraph,
 for example) decide their tool set from the indexed project at `cwd`, so pinning the
 user home makes them register **zero tools**. Switching workspaces remounts them
-automatically. Config file changes (`fs.watch`) or
-new sessions (`session/created`) trigger a rescan. If a stdio server declares an
+automatically. Note there is only **one** mount instance, following the workspace of
+the most recent session: if two sessions from different workspaces are open at the
+same time, that user-level stdio server serves only one of those directories.
+
+### Project servers are mounted only for the ACTIVE workspace
+
+A mounted server is **global**: it shows up in the MCP server / resource list that every
+session sees (denying its tools is not enough) and it spawns an extra stdio process for a
+project you are not even working in. So:
+
+- "Active workspace" = workspaces with a live agent (a session `cwd` is attributed to the
+  longest registered root containing it) ∪ the workspace of the most recent session.
+- Only active workspaces' project-level servers are **mounted**; project servers of other
+  workspaces are neither mounted nor registered, so they never appear in another
+  project's session (e.g. `riderMcp` belongs to YunLiu and is absent — tools included —
+  from a YZLWork session).
+- User-level servers (`~/.codex`, `~/.config/opencode`, `~/.mcp.json`, `~/.cursor`) are
+  always mounted.
+- On a cold start with no session yet, only user-level servers are mounted; opening or
+  creating a session mounts that workspace's project servers within 500ms (usable from
+  the next model step).
+- If sessions from **two different workspaces are in use at the same time**, both sides'
+  project servers are mounted (the limit of a globally-mounted tool registry); the scope
+  restriction below then keeps the tools from being callable across workspaces.
+
+### Scope restrictions are maintained incrementally — no cross-workspace bleed
+
+Scoping is a per-agent `tools.restrict({ deny })` layer listing the project-level tool
+names that belong to **other** workspaces. Rules:
+
+- A rescan never lifts every restriction first and re-applies it at the end. The old
+  implementation did exactly that: for the duration of a rescan every project-level tool
+  was visible to every running session (cross-workspace bleed), and if the rescan was
+  aborted half-way (a newer rescan bumped the generation counter) the restrictions stayed
+  lifted until the next successful rescan.
+- Each agent now remembers the deny signature of its active layer; only a changed
+  signature triggers a rebuild, and the new layer is installed **before** the old one is
+  disposed — the surface only ever gets stricter. Layers are released when the agent
+  dies.
+- When a reconnected server publishes a new tool set, the 15s watchdog notices the
+  changed project-tool name set and re-syncs the restrictions, so freshly appeared tools
+  cannot bypass scoping.
+- An unknown `cwd` (agent not bound to a session yet) is handled conservatively: all
+  project-level tools are denied.
+
+Config file changes (`fs.watch`) or
+new sessions (`session/created`) trigger a rescan. Rescans are **incremental**: servers
+whose configuration did not change keep their live connection, and only added / removed /
+changed servers are rebuilt (`/mcp-reconnect` is the only full rebuild). A full rebuild
+unregisters every `mcp__*` tool before re-registering it, so a running session can see
+**no MCP tools at all** during that window; repeatedly restarting stdio children also
+leaves orphan processes behind on Windows. If a stdio server declares an
 absolute command path that does not exist, the plugin logs one clear diagnostic
 and skips it instead of handing it to the MCP client's reconnect loop.
 

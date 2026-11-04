@@ -11,24 +11,68 @@ dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/ds
 
 重启 DSH Web 后生效。
 
-## 支持的配置来源（按优先级，先出现者胜；项目级 + 用户级）
+## 支持的配置来源（项目级 + 用户级；同名时用户级优先）
 
 - `.mcp.json` —— Claude Code / Codex / Cursor 约定（`mcpServers`；支持 stdio / Streamable HTTP）
 - `opencode.json` / `opencode.jsonc` —— opencode 约定（`mcp` 键，command 数组 / url / enabled）
 - `.cursor/mcp.json` —— Cursor 约定（同 `mcpServers`）
-- `.codex/config.toml` —— Codex 约定（`[mcp_servers.<name>]`）
-- 用户主目录：`~/.mcp.json`、`~/.codex/config.toml`、`~/.config/opencode/opencode.json`
+- `.codex/config.toml` —— Codex 约定（`[mcp_servers.<name>]`；`enabled = false` 会被跳过）
+- 用户主目录：`~/.mcp.json`、`~/.cursor/mcp.json`、`~/.codex/config.toml`、
+  `~/.config/opencode/opencode.json`
+
+**同名服务器的优先级：用户级 > 项目级。** 一个服务器名在多个地方出现时只挂载一次；
+如果某个项目里也定义了同名服务器（例如「MCP 服务器自己的那个项目」里放了 `.mcp.json`），
+用户级条目会接管这个名字，服务器仍保持全局可用。否则该名字会被项目级条目"劫持"成
+项目级作用域，工具只在那个项目里出现——机器上其它工作区的会话就全都取不到这个
+全局 MCP 的工具。
 
 ## 使用
 
 任何 workspace 根目录（或用户主目录）放入上述任一配置文件即自动生效，无需配置 DSH。
-项目级 MCP 工具只对 `cwd` 属于该 workspace 的 Agent 可见，用户级 MCP 工具全局共享，
-不会在不同项目会话之间串用。项目级 stdio 服务器以 workspace 根目录作为工作目录启动。
+项目级 MCP 工具只对 `cwd` 属于该 workspace 的 Agent 可见（workspace 根目录本身**及其子目录**
+都算「属于」，所以从子目录开会话也不会丢自己的工具），用户级 MCP 工具全局共享。
+项目级 stdio 服务器以 workspace 根目录作为工作目录启动。
+
+### 项目级服务器只挂「当前活动工作区」的，不会出现在别的项目里
+
+服务器一旦挂载就是**全局**的：它会出现在 MCP 服务器 / 资源列表里，每个会话都看得到
+（只 deny 工具是不够的），还会白白 spawn 出别的项目的 stdio 进程。所以：
+
+- 判定「活动工作区」= 有在线 agent 的工作区（会话 cwd 归到包含它的最长匹配根）
+  ∪ 最近一次会话所在工作区；
+- 只有活动工作区的项目级服务器会被**挂载**，其它工作区的项目级服务器不挂载、不注册，
+  于是在别的项目的会话里根本看不到（例如 `riderMcp` 只属于 YunLiu，在 YZLWork 的
+  会话里不会出现、也不会有工具）；
+- 用户级（`~/.codex` / `~/.config/opencode` / `~/.mcp.json` / `~/.cursor`）服务器永远挂载；
+- 冷启动还没有任何会话时，只挂用户级服务器；打开/新建会话后 500ms 内补挂该工作区的
+  项目级服务器（下一个模型步骤即可用）；
+- 如果**两个不同工作区的会话同时在用**，两边的项目级服务器都会挂载（这是全局挂载模型的
+  上限），此时靠下面的作用域限制保证工具不跨工作区可调用。
+
+### 作用域限制是「增量维护」的，不会串
+
+判定方式是给 agent 挂一层 `tools.restrict({ deny })`：属于**别的** workspace 的项目级工具名
+进 deny 列表。要点：
+
+- 重扫时**不会先整体撤销再重加**。旧实现是 `clearRestrictions()` → 重算 → 重新挂，
+  这个窗口里所有 workspace 的项目级工具对任何正在跑的会话都可见（跨工作区"串"），
+  而重扫中途被新一代重扫打断（`generation` 变化）会一直停在"无限制"状态，直到下次成功重扫。
+- 现在每个 agent 记住自己当前那层限制的 deny 签名，只有签名变了才「先挂新的、再撤旧的」，
+  任何时刻都不存在放宽窗口；agent 被销毁时自动释放。
+- 服务器重连后补注册了新工具、工具集发生变化时，看门狗（15s）会发现项目级工具名集合变化
+  并补一次限制同步，避免新工具绕过作用域。
+- `cwd` 未知（例如 agent 还没绑定会话）时按最保守处理：禁用全部项目级工具。
+
 用户级 stdio 服务器以**当前会话所在工作区**作为工作目录启动（与 Claude Code / Codex /
 opencode 用当前项目目录启动 MCP 的行为一致）——不少 MCP（例如 codegraph）的工具集由 `cwd`
 指向的已索引项目决定，固定用用户主目录会让它们注册出 **0 个工具**；切换工作区时插件会
-自动重挂载以刷新工具集。
-配置文件变更（fs.watch）或新会话（`session/created`）自动重扫。stdio 服务器若配置了不存在的
+自动重挂载以刷新工具集。注意这里只有**一个**挂载实例、跟随最近一次会话的工作区：
+如果同时开着两个不同工作区的会话，这个用户级 stdio 服务器只会服务其中一个工作区的目录。
+配置文件变更（fs.watch）或新会话（`session/created`）自动重扫。重扫是**增量**的：
+配置没变的服务器沿用现有连接，只重建新增 / 删除 / 改过配置的那些（手动
+`/mcp-reconnect` 才是全量重建）。全量重建会让所有 `mcp__*` 工具先被注销再重新注册，
+重建窗口内正在跑的会话会「一个 MCP 工具都取不到」，反复启停 stdio 子进程还会在 Windows
+上留下孤儿进程。stdio 服务器若配置了不存在的
 绝对命令路径，插件只输出一次明确诊断并跳过，不会交给 MCP client 持续重连。
 
 ### Windows：裸命令（npm 的 `.cmd` shim）

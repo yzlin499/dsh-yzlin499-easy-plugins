@@ -16,7 +16,7 @@
 // 变更时自动重扫：配置文件 fs.watch + 新会话事件（session/created）触发。
 // ═══════════════════════════════════════════════════════════════════════════
 import { existsSync, readFileSync, watch } from 'node:fs'
-import { isAbsolute, join, resolve, delimiter } from 'node:path'
+import { isAbsolute, join, resolve, delimiter, sep } from 'node:path'
 import { connect as tcpConnect, createServer as createTcpServer } from 'node:net'
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
@@ -410,7 +410,11 @@ function parseCodexToml(text, source) {
   let section = null
   const flush = () => {
     if (!current || !kv) return
-    if (kv.url) out.push({ name: current, transport: 'streamable-http', url: kv.url, headers: codexHeaders(kv), source })
+    // Codex 支持 enabled = false 关掉一个服务器；忽略它会把已停用的条目也挂上，
+    // 表现为「明明关了还在启动 / 启动就退出刷日志」。
+    const disabled = kv.enabled !== undefined && String(kv.enabled).trim().toLowerCase() === 'false'
+    if (disabled) log('跳过已禁用的服务器（enabled = false）:', current, '—', source)
+    else if (kv.url) out.push({ name: current, transport: 'streamable-http', url: kv.url, headers: codexHeaders(kv), source })
     else if (kv.command) out.push({ name: current, transport: 'stdio', command: kv.command, args: kv.args || [], env: kv.env, source })
     current = null
     kv = null
@@ -470,6 +474,7 @@ function parseCodexToml(text, source) {
     else if (k === 'headers' || k === 'http_headers') kv.headers = parseTomlInlineTable(v)
     else if (k === 'bearer_token') kv.bearerToken = unquote(v)
     else if (k === 'url') kv.url = unquote(v)
+    else if (k === 'enabled') kv.enabled = unquote(v)
   }
   flush()
   return out
@@ -504,6 +509,54 @@ function windowsCommand(command, args, platform = process.platform, env = proces
   return { command, args: list }
 }
 
+// ── 项目级 MCP 工具的作用域（纯函数，导出供单测）──
+// 路径归一：Windows 上大小写不敏感
+const pathKey = (value) => {
+  const raw = String(value ?? '').trim()
+  if (!raw) return '' // 空/未知路径不能退化成 resolve('')（= 进程 cwd），否则会误判成"同属于某工作区"
+  const normalized = resolve(raw)
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized
+}
+// 会话 cwd 是否属于某个 workspace 根目录（根目录本身或它下面的子目录）。
+// 会话经常从 workspace 的子目录打开；只比相等的话，项目级服务器自己的工具
+// 反倒会被当成"别的 workspace 的"禁掉。
+const cwdInWorkspace = (cwd, root) => {
+  const a = pathKey(cwd)
+  const b = pathKey(root)
+  if (!a || !b) return false
+  if (a === b) return true
+  return a.startsWith(b.endsWith(sep) ? b : b + sep)
+}
+// 某个 agent 应当被禁掉的项目级工具名
+const denyListFor = (tools, cwd) => {
+  if (!tools || !tools.length) return []
+  return tools.filter((tool) => !cwdInWorkspace(cwd, tool.workspaceRoot)).map((tool) => tool.name)
+}
+// 只保留「用户级 + 当前活动 workspace 的项目级」服务器。
+// 为什么要在挂载阶段就过滤，而不只靠后面的 per-agent deny：
+// 服务器一旦挂上就是**全局**的——它会出现在 MCP 服务器/资源列表里（每个会话都看得到），
+// 只是工具被 deny 掉。于是「YunLiu 的项目级 riderMcp」会显示在 YZLWork 的会话里，
+// 看起来就像项目级 MCP 串到别的项目了。另外把不相关项目的 stdio 服务器也一起
+// spawn 出来纯属浪费进程。所以不在活动工作区的项目级服务器**根本不该挂载**。
+const filterServersForWorkspaces = (servers, activeRootKeys) => {
+  const active = new Set(activeRootKeys || [])
+  return (servers || []).filter((s) => !s.workspaceRoot || active.has(pathKey(s.workspaceRoot)))
+}
+// 由若干会话 cwd 反推"活动 workspace 根目录"（每个 cwd 归到包含它的最长匹配根）
+const activeRootKeysFor = (roots, cwds) => {
+  const keys = new Set()
+  for (const cwd of cwds || []) {
+    if (!cwd) continue
+    let best = null
+    for (const root of roots || []) {
+      if (!cwdInWorkspace(cwd, root)) continue
+      if (!best || pathKey(root).length > pathKey(best).length) best = root
+    }
+    if (best) keys.add(pathKey(best))
+  }
+  return keys
+}
+
 // 可扫描的配置源体系：每个 family 对应一类 Agent 的约定，可在设置里按需开启
 const ALL_FAMILIES = ['claude', 'cursor', 'opencode', 'codex']
 const FAMILY_LABELS = {
@@ -522,18 +575,19 @@ const PROJECT_FILES = [
 ]
 const GLOBAL_FILES = [
   { file: '.mcp.json', parse: parseMcpJson, family: 'claude' },
+  { file: '.cursor/mcp.json', parse: parseMcpJson, family: 'cursor' },
   { file: '.codex/config.toml', parse: parseCodexToml, family: 'codex' },
   { file: join('.config', 'opencode', 'opencode.json'), parse: parseOpencodeJson, family: 'opencode' },
 ]
 
 // 测试钩子：node 脚本可直接 import 本模块做解析验证
-export { parseMcpJson, parseOpencodeJson, parseCodexToml, collectServers, windowsCommand, PROJECT_FILES, GLOBAL_FILES, isWsl, getWslHostIp, wslFallbackUrl, wslTunnelTarget, wslSubnetOf, winPortListeners, winPortProxyHas, winPortProxyLegacyHas, winFirewallHas, hostListenerState }
+export { parseMcpJson, parseOpencodeJson, parseCodexToml, collectServers, windowsCommand, pathKey, cwdInWorkspace, denyListFor, filterServersForWorkspaces, activeRootKeysFor, PROJECT_FILES, GLOBAL_FILES, isWsl, getWslHostIp, wslFallbackUrl, wslTunnelTarget, wslSubnetOf, winPortListeners, winPortProxyHas, winPortProxyLegacyHas, winFirewallHas, hostListenerState }
 
 // 支持按启用的 family（配置源体系）过滤。enabled 为空/未传时 = 全部开启（保持原行为）。
 // globalStdioCwd：用户级（主目录下）配置里 stdio 服务器的 cwd。用户级条目没有"项目"
 // 概念，但不少 MCP（如 codegraph）的工具集由 cwd 指向的已索引项目决定——固定用主目录
 // 会让这类服务器注册出 0 个工具。默认主目录（保持原行为），由 sync() 传入当前会话工作区。
-function collectServers(workspacePaths, enabled, globalStdioCwd) {
+function collectServers(workspacePaths, enabled, globalStdioCwd, home = homedir()) {
   const enabledSet = !enabled ? null : new Set(enabled)
   const byName = new Map()
   const found = []
@@ -546,8 +600,27 @@ function collectServers(workspacePaths, enabled, globalStdioCwd) {
       }
       return
     }
-    if (byName.has(server.name)) {
-      log('忽略重复服务器名（保留先出现的）:', server.name, '—', byName.get(server.name).source, '已占用', server.source, '被跳过')
+    const prev = byName.get(server.name)
+    if (prev) {
+      // 同名冲突的优先级：用户级（~/.codex、~/.config/opencode、~/.mcp.json）> 项目级。
+      // 项目级条目一旦抢到名字，服务器就被打上 workspaceRoot，其工具只对 cwd 属于
+      // 那个项目的 Agent 可见；如果全局配置里本来也定义了同名服务器，对整个机器
+      // 生效的那条配置就会被某个项目「劫持」成项目级，在其它工作区里全部取不到
+      // （实测：~/.codex/config.toml 的 yzl-dashboard 被 YZLWork/.mcp.json 抢走，
+      // 除 YZLWork 外的会话都看不到它的工具）。
+      // 因此遇到用户级同名条目时用它替换先出现的项目级条目（保持原有顺序位置）。
+      if (prev.workspaceRoot && !server.workspaceRoot) {
+        const at = found.indexOf(prev)
+        if (at >= 0) found[at] = server
+        byName.set(server.name, server)
+        // 同一个文件既被当作"主目录工作区"的项目级配置读、又被当作用户级配置读，
+        // 这种重复不噪音，静默升级为用户级作用域即可。
+        if (prev.source !== server.source) {
+          log('同名服务器改由用户级配置提供（项目级条目不再劫持全局服务器）:', server.name, '—', prev.source, '=>', server.source)
+        }
+        return
+      }
+      log('忽略重复服务器名（保留先出现的）:', server.name, '—', prev.source, '已占用', server.source, '被跳过')
       return
     }
     byName.set(server.name, server)
@@ -572,7 +645,7 @@ function collectServers(workspacePaths, enabled, globalStdioCwd) {
     }
   }
   for (const root of workspacePaths) readAll(root, PROJECT_FILES, root, root)
-  readAll(homedir(), GLOBAL_FILES, undefined, globalStdioCwd)
+  readAll(home, GLOBAL_FILES, undefined, globalStdioCwd)
   return found
 }
 
@@ -703,8 +776,24 @@ export async function apply(ctx) {
   let fibers = []
   // fiberByName：按服务器名索引 fiber，用于「只重连 down 的那部分」时精准定位并单独 dispose
   const fiberByName = new Map()
+  // fiberSig：每个已挂载服务器的配置签名。重扫时签名没变就沿用现有连接——
+  // 否则每次重扫（新会话 / 配置文件变化）都要把所有 MCP 连接拆了重建：
+  // 重建窗口里所有 mcp__* 工具都不在注册表，正在跑的会话就「取不到」；
+  // 反复启停 stdio 子进程还会在 Windows 上留下一堆孤儿进程。
+  const fiberSig = new Map()
+  // 客户端配置签名：只有真正影响连接形态的字段参与比较
+  const signatureOf = (server, mode) => JSON.stringify([
+    server.transport,
+    server.url || '',
+    server.command || '',
+    server.args || [],
+    server.env || null,
+    server.cwd || '',
+    server.workspaceRoot || '',
+    server.headers || null,
+    mode || '',
+  ])
   let watchers = []
-  let restrictions = []
   let projectTools = []
   let generation = 0
   let timer = null
@@ -880,51 +969,94 @@ export async function apply(ctx) {
     return results
   }
 
-  const pathKey = (value) => {
-    const normalized = resolve(String(value || ''))
-    return process.platform === 'win32' ? normalized.toLowerCase() : normalized
+  // pathKey / cwdInWorkspace / denyListFor 是模块级纯函数（见文件上方），便于单测。
+  // 每个 agent 上**当前生效**的那一层限制（agent -> { key, dispose }）。
+  // 关键：重扫时不再「先全撤、后重加」——那个窗口里任何正在跑的会话都能看到
+  // 别的 workspace 的项目级工具（就是"串"）；而重扫中途 return / 被新一代
+  // 重扫打断时，限制会一直空着，直到下一次重扫成功为止。
+  // 现在只做增量 diff：deny 集合没变的 agent 完全不动，变了才「先加新的、
+  // 再撤旧的」，任何时刻都不存在无限制窗口。
+  const restrictionsByAgent = new Map()
+  const releaseRestriction = (agent) => {
+    const cur = restrictionsByAgent.get(agent)
+    if (!cur) return
+    restrictionsByAgent.delete(agent)
+    try { cur.dispose() } catch {}
   }
   const clearRestrictions = () => {
-    const list = restrictions
-    restrictions = []
-    for (const dispose of list) {
-      try { dispose() } catch {}
-    }
+    for (const agent of [...restrictionsByAgent.keys()]) releaseRestriction(agent)
   }
   const restrictAgent = (agent) => {
-    if (!projectTools.length) return
-    const cwd = agent && agent.session && agent.session.header && agent.session.header.cwd
-    const current = cwd ? pathKey(cwd) : ''
-    const deny = projectTools
-      .filter((tool) => pathKey(tool.workspaceRoot) !== current)
-      .map((tool) => tool.name)
-    if (!deny.length) return
+    if (!agent) return
+    const cwd = agent.session && agent.session.header && agent.session.header.cwd
+    const deny = denyListFor(projectTools, cwd)
+    const cur = restrictionsByAgent.get(agent)
+    if (!deny.length) {
+      releaseRestriction(agent)
+      return
+    }
+    const key = deny.join('\0')
+    if (cur && cur.key === key) return // 已经一致，什么都不做（避免无谓的撤销窗口）
     try {
-      restrictions.push(agent.ctx.tools.restrict({ deny }))
+      // 先挂上新的限制，成功后再撤旧的：两步之间是「两层限制叠加」，只会更严，
+      // 不会短暂放宽。restrict() 抛错（例如工具名已失效）时旧的限制仍在。
+      const dispose = agent.ctx.tools.restrict({ deny })
+      if (cur) {
+        restrictionsByAgent.delete(agent)
+        try { cur.dispose() } catch {}
+      }
+      restrictionsByAgent.set(agent, { key, dispose })
     } catch (e) {
       log('项目 MCP 工具作用域限制失败:', String((e && e.message) || e))
     }
   }
+  // 由当前挂载的服务器清单重算「哪些工具属于项目级」，再把限制同步到每个 agent。
   const refreshRestrictions = (servers) => {
-    clearRestrictions()
     const schemas = ctx.tools.schemas()
-    projectTools = []
-    for (const server of servers) {
+    const next = []
+    for (const server of servers || []) {
       if (!server.workspaceRoot) continue
       const prefix = `mcp__${server.name}__`
       for (const schema of schemas) {
-        if (schema.name.startsWith(prefix)) {
-          projectTools.push({ name: schema.name, workspaceRoot: server.workspaceRoot })
-        }
+        if (schema.name.startsWith(prefix)) next.push({ name: schema.name, workspaceRoot: server.workspaceRoot })
       }
     }
-    for (const agent of ctx.agents.list()) restrictAgent(agent)
+    projectTools = next
+    lastProjectToolKey = next.map((t) => t.name).sort().join('\0')
+    let agents = []
+    try { agents = ctx.agents.list() } catch {}
+    // 已经销毁的 agent 从表里清掉（其限制随 agent 上下文一起消失）
+    for (const agent of [...restrictionsByAgent.keys()]) {
+      if (!agents.includes(agent)) releaseRestriction(agent)
+    }
+    for (const agent of agents) restrictAgent(agent)
+  }
+  // 项目级工具集变化（服务器重连后补注册了工具等）时补一次限制同步。
+  // 看门狗每轮调用；只有工具名集合真的变了才会真正重算，开销可忽略。
+  let lastProjectToolKey = ''
+  const projectToolKeyOf = (servers) => {
+    let schemas = []
+    try { schemas = ctx.tools.schemas() } catch {}
+    const parts = []
+    for (const server of servers || []) {
+      if (!server.workspaceRoot) continue
+      const prefix = `mcp__${server.name}__`
+      for (const schema of schemas) if (schema.name.startsWith(prefix)) parts.push(schema.name)
+    }
+    return parts.sort().join('\0')
+  }
+  const syncRestrictionsIfChanged = (servers) => {
+    const key = projectToolKeyOf(servers)
+    if (key === lastProjectToolKey) return
+    lastProjectToolKey = key
+    refreshRestrictions(servers)
   }
 
   const disposeAll = async () => {
     const list = fibers
     fibers = []
     fiberByName.clear()
+    fiberSig.clear()
     for (const f of list) {
       try {
         if (f && typeof f.dispose === 'function') await f.dispose()
@@ -946,6 +1078,7 @@ export async function apply(ctx) {
       if (f) {
         removed.push(f)
         fiberByName.delete(name)
+        fiberSig.delete(name)
       }
     }
     if (removed.length) fibers = fibers.filter((f) => !removed.includes(f))
@@ -1031,6 +1164,7 @@ export async function apply(ctx) {
           const f = ctx.plugin(client, cfg)
           fibers.push(f)
           fiberByName.set(s.name, f)
+          fiberSig.set(s.name, signatureOf(s, mode))
           mounted.push(f)
           log('重连', s.name, s.transport, mountLabel(cfg), s.cwd ? `cwd=${s.cwd}` : '', '<-', s.source)
         } catch (e) {
@@ -1045,7 +1179,11 @@ export async function apply(ctx) {
     }
   }
 
-  const sync = async () => {
+  // 重扫配置并挂载。默认是**增量**的：配置签名没变的服务器沿用现有连接，
+  // 只重建新增 / 删除 / 改过配置的那些。force=true 才是全量重建（手动
+  // mcp_reconnect、/mcp-reconnect）。全量重建会让所有 mcp__* 工具先被注销
+  // 再重新注册，重建窗口内的会话就「取不到」任何 MCP 工具。
+  const sync = async (force = false) => {
     if (syncing) {
       scheduleSync()
       return
@@ -1053,9 +1191,11 @@ export async function apply(ctx) {
     syncing = true
     const gen = ++generation
     try {
-      clearRestrictions()
-      projectTools = []
-      await disposeAll()
+      // 注意：这里**不能**先 clearRestrictions() / projectTools = []。
+      // 清空后一旦中途 return（新一代重扫打断、client 加载失败…），限制会一直
+      // 空着——所有 workspace 的项目级工具对任何会话都可见（就是"串"），
+      // 而且要等下一次重扫成功才恢复。限制改为在结尾按 diff 更新。
+      if (force) await disposeAll()
       closeWatchers()
 
       let roots = []
@@ -1065,7 +1205,16 @@ export async function apply(ctx) {
         log('workspaceRegistry 不可用:', String((e && e.message) || e))
       }
       const scanners = readScanners()
-      const servers = collectServers(roots, scanners, globalStdioCwd())
+      // 只有「用户级 + 当前活动 workspace 的项目级」服务器会被挂载。
+      // 非活动工作区的项目级服务器不挂载 → 它不会出现在别的项目的会话里
+      // （服务器列表 / 资源列表都是全局可见的，只 deny 工具不够）。
+      const all = collectServers(roots, scanners, globalStdioCwd())
+      const activeRoots = activeWorkspaceRoots(roots)
+      const servers = filterServersForWorkspaces(all, activeRoots)
+      if (servers.length !== all.length) {
+        const skipped = all.filter((s) => !servers.includes(s)).map((s) => s.name)
+        log('跳过不属于当前活动工作区的项目级服务器:', skipped.join(', '), '（活动工作区:', [...activeRoots].join(', ') || '(无)', '）')
+      }
       log('发现', servers.length, '个 MCP 服务器:', servers.map((s) => s.name).join(', ') || '(无)', '（扫描源:', scanners.join('+') || '(未启用)', '）')
       // 清理不再被使用的隧道、失效的兼容状态（保留仍配置的服务器所用隧道）；
       // wslCompat 关闭时全部关闭并复位。
@@ -1080,9 +1229,11 @@ export async function apply(ctx) {
         return
       }
 
+      // 第一遍：定出每个服务器的最终挂载形态（WSL 模式要先等隧道就绪）与签名。
+      const plan = []
       for (const s of servers) {
         if (gen !== generation) return
-        // 已启用 WSL 兼容的服务器，全量重建时保持同样模式（隧道优先，避免退回
+        // 已启用 WSL 兼容的服务器，重建时保持同样模式（隧道优先，避免退回
         // 失败的 loopback 再等下一轮看门狗翻一次）；URL 不再适用则取消兼容模式。
         let mode = wslMode.get(s.name)
         if (mode === 'tunnel' && !wslTunnelTarget(s.url)) mode = null
@@ -1093,23 +1244,42 @@ export async function apply(ctx) {
         }
         if (!mode && wslActive.has(s.name)) wslActive.delete(s.name)
         else if (mode) wslMode.set(s.name, mode)
-        const cfg = rebuildCfg(s, mode)
+        plan.push({ server: s, mode, cfg: rebuildCfg(s, mode), sig: signatureOf(s, mode) })
+      }
+      // 第二遍：撤下「配置已删除」或「配置变了」的连接；配置没动的保持不动。
+      const planned = new Map(plan.map((p) => [p.server.name, p]))
+      const rebuild = []
+      for (const name of [...fiberByName.keys()]) {
+        const p = planned.get(name)
+        if (!p || fiberSig.get(name) !== p.sig) rebuild.push(name)
+      }
+      if (rebuild.length) {
+        await disposeServers(rebuild)
+        log('重建 MCP 服务器（配置新增/变更/移除）:', rebuild.join(', '))
+      }
+      // 第三遍：挂载还没有活连接的服务器。
+      const mounted = []
+      for (const p of plan) {
+        if (gen !== generation) return
+        if (fiberByName.has(p.server.name)) continue // 连接健康且配置未变，沿用
         try {
-          const f = ctx.plugin(client, cfg)
+          const f = ctx.plugin(client, p.cfg)
           fibers.push(f)
-          fiberByName.set(s.name, f)
-          log('挂载', s.name, s.transport, mountLabel(cfg), s.cwd ? `cwd=${s.cwd}` : '', '<-', s.source)
+          fiberByName.set(p.server.name, f)
+          fiberSig.set(p.server.name, p.sig)
+          mounted.push(f)
+          log('挂载', p.server.name, p.server.transport, mountLabel(p.cfg), p.server.cwd ? `cwd=${p.server.cwd}` : '', '<-', p.server.source)
         } catch (e) {
-          log('挂载失败:', s.name, String((e && e.message) || e))
+          log('挂载失败:', p.server.name, String((e && e.message) || e))
         }
       }
 
       // Wait for initial tool synchronization before deriving per-agent visibility.
-      await Promise.allSettled(fibers.map((fiber) => Promise.resolve(fiber)))
+      await Promise.allSettled(mounted.map((fiber) => Promise.resolve(fiber)))
       if (gen !== generation) return
       refreshRestrictions(servers)
       currentServers = servers
-      // 全量重建 = 全新连接机会：复位看门狗失败计数（之后最多再自动试 10 次）
+      // 重扫 = 全新连接机会：复位看门狗失败计数（之后最多再自动试 10 次）
       resetWatchdog(servers.map((s) => s.name))
 
       // 监听已存在的候选配置文件（编译后自动重扫）；只监听当前启用的 family
@@ -1166,6 +1336,19 @@ export async function apply(ctx) {
       if (names.length) await disposeServers(names)
       scheduleSync()
     })()
+  }
+  // 当前「活动」workspace 的根目录集合：有在线 agent 的工作区 + 最近一次会话所在
+  // 工作区（按最长匹配归到某个注册过的根）。只有这些工作区的项目级服务器会被挂载，
+  // 其它项目的项目级服务器既不挂载也不注册，因此不会出现在本项目的会话里。
+  const activeWorkspaceRoots = (roots) => {
+    const cwds = []
+    try {
+      for (const agent of ctx.agents.list()) {
+        cwds.push(agent && agent.session && agent.session.header && agent.session.header.cwd)
+      }
+    } catch {}
+    cwds.push(activeWorkspaceCwd)
+    return activeRootKeysFor(roots, cwds)
   }
 
   // ── 自动重连看门狗 ──
@@ -1285,6 +1468,9 @@ export async function apply(ctx) {
       }
       hostState.set(server.name, st)
     }
+    // 项目级工具集可能在这一轮里变了（服务器重连后补注册工具）：名字集合变了
+    // 就补一次限制同步，否则新出现的工具会绕过作用域限制（跨工作区可调用）。
+    syncRestrictionsIfChanged(currentServers)
     // 只重连 down 的那部分（按名字精准重建），健康服务器不受影响
     if (toReconnect.length) void reconnectServers(toReconnect)
   }
@@ -1362,8 +1548,8 @@ export async function apply(ctx) {
             const restored = currentServers.filter((s) => s.name === target && serversPresent(s)).map((s) => s.name)
             return { ok: true, message: `已重连 MCP 服务器「${target}」。`, reconnected: restored }
           }
-          // 未指定：全量重建（重读配置，处理配置变更）
-          await sync()
+          // 未指定：全量重建（重读配置，并把所有连接强制重建一遍）
+          await sync(true)
           const reconnected = currentServers.map((s) => s.name)
           return { ok: true, message: `已重连全部 MCP 服务器。当前已挂载: ${reconnected.join(', ') || '(无)'}`, reconnected }
         }
@@ -1393,7 +1579,7 @@ export async function apply(ctx) {
               resetWatchdog([target])
               return { kind: 'success', text: `已重连 MCP 服务器「${target}」。` }
             }
-            await sync()
+            await sync(true)
             const mounted = currentServers.map((s) => s.name).join(', ') || '(无)'
             return { kind: 'success', text: `已重连全部 MCP 服务器。当前已挂载: ${mounted}` }
           } catch (e) {

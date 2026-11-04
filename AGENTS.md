@@ -15,7 +15,7 @@
 
 | 目录 / 包名 | 版本 | 一句话 | 有 Client 半侧 | 有测试 |
 |---|---|---|---|---|
-| `dsh-mcp-compat` | 0.8.1 | 读取标准 MCP 配置（`.mcp.json` / `opencode.json` / `.cursor/mcp.json` / `.codex/config.toml`），挂载为 dsh-mcp-client 实例 | 是 | 是 |
+| `dsh-mcp-compat` | 0.9.0 | 读取标准 MCP 配置（`.mcp.json` / `opencode.json` / `.cursor/mcp.json` / `.codex/config.toml`），挂载为 dsh-mcp-client 实例 | 是 | 是 |
 | `dsh-version-control` | 0.4.0 | 接入官方 `ui-sidebar-right` 的 Git / SVN 版本控制面板 | 是 | 是 |
 | `dsh-ctx-menu` | 0.1.12 | 右键增强：侧栏行复用官方菜单，正文文件行给自定义动作 | 是 | 是 + 静态自检 |
 | `dsh-win-notify` | 0.1.0 | Windows 原生吐司通知（权限申请 / 提问 / 运行结束）+ 设置卡片 | 是 | 否 |
