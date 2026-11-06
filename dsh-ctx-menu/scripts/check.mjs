@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 // dsh-ctx-menu 静态自检
 //
-// 目的：把「非公开锚点」「客户端种子模块」「宿主服务契约」钉成断言，DSH 升级后**先失败**，
-// 而不是让插件静默失效。0.2.0 → 0.2.1 的教训：当时只断言了磁盘文件路径，结果官方把实现搬进
-// 打包产物后一路误报，而真正断掉的「remote.session 远程服务消失」却没被抓住。因此现在分两类断言：
-//   - asarExpect：单文件字面量（锚点、外壳契约、宿主服务方法名）
-//   - asarScan  ：跨文件出现次数（客户端 require 的**种子模块 id**，它们不在磁盘上以文件存在）
+// v0.3.0 起本插件**只向官方统一右键贡献动作**（`ctx.contextMenus.register`），
+// 不再自绘菜单、不再劫持 DOM 右键。因此自检对象从「DOM 锚点」改为两类：
+//   1. asarExpect —— 官方统一右键的契约仍在（服务名 / 注册形状 / file 目标 / DOM 绑定）
+//   2. selfCheck  —— 本插件自己的设计前提（不装捕获期右键监听、确实贡献到 file 目标）
 //
 // 做法：直接按字节读 app.asar（无需解包）。
 // asar 头格式：u32@4 = headerSize，u32@12 = jsonSize，
@@ -26,7 +25,6 @@ const defaultAsar = 'C:\\Users\\Administrator\\AppData\\Local\\Programs\\DeepSee
 const argv = process.argv.slice(2)
 const asarIndex = argv.indexOf('--asar')
 const asarPath = asarIndex === -1 ? defaultAsar : argv[asarIndex + 1]
-
 const SCAN_LIMIT = 8 * 1024 * 1024
 
 function openAsar(file) {
@@ -62,7 +60,6 @@ function openAsar(file) {
   }
   return {
     list: () => files.map((entry) => entry.path),
-    sizeOf: (target) => files.find((entry) => entry.path === target)?.size ?? null,
     read,
     close: () => fs.closeSync(fd),
   }
@@ -71,88 +68,45 @@ function openAsar(file) {
 const results = []
 const record = (id, ok, detail) => results.push({ id, ok, detail })
 
+const readLocal = (relativePath) => fs.readFileSync(path.join(pkgRoot, relativePath), 'utf8')
+
+// 1) 官方统一右键契约
 if (fs.existsSync(asarPath) === false) {
   console.error(`[dsh-ctx-menu] check: 找不到 app.asar: ${asarPath}`)
   process.exit(1)
 }
-
 const asar = openAsar(asarPath)
-const allPaths = asar.list()
-
-// 1) 单文件字面量断言
 for (const expectation of contract.asarExpect ?? []) {
-  const candidates = expectation.filePrefix === undefined
-    ? [expectation.file]
-    : allPaths.filter((entry) => entry.startsWith(expectation.filePrefix)).sort()
-  if (candidates.length === 0) {
-    record(expectation.id, false, `找不到文件：${expectation.file ?? expectation.filePrefix + '*'}`)
+  const text = asar.read(expectation.file)
+  if (text === null) {
+    record(expectation.id, false, `读不到官方文件：${expectation.file}`)
     continue
   }
-  let checked = null
-  let missing = null
-  for (const candidate of candidates) {
-    const text = asar.read(candidate)
-    if (text === null) continue
-    const absent = expectation.contains.filter((literal) => text.includes(literal) === false)
-    checked = candidate
-    missing = absent
-    if (absent.length === 0) break
-  }
-  if (checked === null) {
-    record(expectation.id, false, `读不到文件：${candidates[0]}`)
-    continue
-  }
+  const missing = expectation.contains.filter((literal) => text.includes(literal) === false)
   record(
     expectation.id,
     missing.length === 0,
     missing.length === 0
-      ? `${checked}（${expectation.contains.length} 条字面量都在）`
-      : `缺失字面量 ${JSON.stringify(missing)} @ ${checked}`,
+      ? `${expectation.file.split('@deepseek-ai/')[1] ?? expectation.file}（${expectation.contains.length} 条契约字面量都在）`
+      : `缺失契约字面量 ${JSON.stringify(missing)} @ ${expectation.file}`,
   )
 }
-
-// 2) 跨文件扫描断言（种子模块 id 这类「运行时契约」）
-for (const scan of contract.asarScan ?? []) {
-  const candidates = allPaths.filter(
-    (entry) => entry.startsWith(scan.filePrefix) && entry.includes(scan.filePattern) && /\.(js|cjs|mjs)$/.test(entry),
-  )
-  let hits = 0
-  for (const candidate of candidates) {
-    const text = asar.read(candidate)
-    if (text !== null && text.includes(scan.needle)) hits += 1
-  }
-  record(
-    scan.id,
-    hits >= scan.minFiles,
-    `${hits} 个官方客户端文件仍在使用 ${scan.needle}（阈值 ${scan.minFiles}）`,
-  )
-}
-
-// 3) 期望不存在：官方不得新增「自己写的」contextmenu 接管
-{
-  const baseline = new Set(contract.contextmenuBaseline ?? [])
-  const ignore = contract.contextmenuIgnorePrefix ?? []
-  const offenders = []
-  for (const entry of allPaths) {
-    if (/\.(js|cjs|mjs)$/.test(entry) === false) continue
-    if (entry.startsWith('dsh/node_modules/@deepseek-ai/') === false && entry.startsWith('lib/') === false) continue
-    if (ignore.some((prefix) => entry.startsWith(prefix))) continue
-    if (baseline.has(entry)) continue
-    const text = asar.read(entry)
-    if (text === null) continue
-    if (text.includes('contextmenu') === false && text.includes('contextMenu') === false) continue
-    offenders.push(entry)
-  }
-  record(
-    'no-new-official-contextmenu',
-    offenders.length === 0,
-    offenders.length === 0
-      ? '没有新增的官方右键接管文件（已忽略内嵌 DevTools 与整站打包产物）'
-      : `出现了新的 contextmenu 命中文件：${JSON.stringify(offenders.slice(0, 6))}（若官方新增了通用右键，本插件的接管规则需重新评估）`,
-  )
-}
-
 asar.close()
+
+// 2) 本插件自己的设计前提
+for (const check of contract.selfCheck ?? []) {
+  const text = readLocal(check.file)
+  const missing = (check.mustContain ?? []).filter((literal) => text.includes(literal) === false)
+  const present = (check.mustNotContain ?? []).filter((literal) => text.includes(literal))
+  const ok = missing.length === 0 && present.length === 0
+  record(
+    check.id,
+    ok,
+    ok
+      ? `${check.file} 符合设计前提`
+      : `缺失 ${JSON.stringify(missing)}；不该出现 ${JSON.stringify(present)}`,
+  )
+}
 
 let failed = 0
 for (const item of results) {
