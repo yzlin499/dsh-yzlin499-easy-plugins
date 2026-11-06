@@ -91,6 +91,31 @@ for (const expectation of contract.asarExpect ?? []) {
       : `缺失契约字面量 ${JSON.stringify(missing)} @ ${expectation.file}`,
   )
 }
+
+// 1b) 窗口检查：官方某个标记附近**不得**出现某些字面量（用于判断官方是否补绑）
+for (const windowCheck of contract.asarWindow ?? []) {
+  const text = asar.read(windowCheck.file)
+  if (text === null) {
+    record(windowCheck.id, false, `读不到官方文件：${windowCheck.file}`)
+    continue
+  }
+  const markerIndex = text.indexOf(windowCheck.marker)
+  if (markerIndex === -1) {
+    record(windowCheck.id, false, `找不到标记 ${windowCheck.marker} @ ${windowCheck.file}`)
+    continue
+  }
+  const from = Math.max(0, markerIndex - (windowCheck.extendsBefore ?? 0))
+  const to = markerIndex + (windowCheck.extendsAfter ?? 0)
+  const slice = text.slice(from, to)
+  const offenders = (windowCheck.mustNotContain ?? []).filter((literal) => slice.includes(literal))
+  record(
+    windowCheck.id,
+    offenders.length === 0,
+    offenders.length === 0
+      ? `${windowCheck.marker} 附近仍未出现 ${JSON.stringify(windowCheck.mustNotContain)}（桥接仍然必要）`
+      : `${windowCheck.marker} 附近出现了 ${JSON.stringify(offenders)} —— 官方可能已补绑，桥接可以删除`,
+  )
+}
 asar.close()
 
 // 2) 本插件自己的设计前提

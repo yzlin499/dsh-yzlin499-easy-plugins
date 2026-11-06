@@ -24,6 +24,20 @@ copy path, save as / download / copy image. This plugin adds:
 Sidebar session/workspace rows no longer need this plugin — the official unified menu already handles them (v0.3.0 removed
 the earlier row takeover).
 
+## Why a little code is still needed
+
+The shell owns the **menu** and binds right-click on most surfaces — but inside `deliverables` only the *presented file
+card* receives `getTriggerProps`. The rows of the **“N files edited” card** and the review-page file rows have **no target
+bound at all**, so right-clicking them does nothing.
+
+The plugin therefore installs a very thin bridge on exactly those surfaces: resolve `{ sessionId, path }` and call the
+official `contextMenus.open(target, { x, y })`. Menu contents, rendering, keyboard navigation, dismissal and failure
+toasts stay entirely with the shell. Surfaces the shell already binds (presented cards, message chips, file tree, tool
+cards …) are never touched.
+
+The stack is **self-healing**: `scripts/check.mjs` asserts that `contextMenuProps: getTriggerProps(` is still absent
+around `data-changed-files`; when upstream binds it, the sentinel fails and tells us to delete the bridge.
+
 ## Install
 
 ```bash

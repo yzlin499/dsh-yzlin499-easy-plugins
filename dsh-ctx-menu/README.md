@@ -22,6 +22,19 @@ ctx.contextMenus.register({ id, target: 'file', order, resolve: async (value, si
 
 会话行/工作区行的右键**不需要本插件**了——官方统一右键已原生支持（本插件 v0.3.0 删除了此前的行劫持逻辑）。
 
+## 为什么还需要一点点自有代码
+
+官方把**菜单本身**和绝大多数位置的**右键绑定**都做好了，但 `deliverables` 里只给「交付文件卡（presented）」
+绑了 `getTriggerProps`；**「已编辑 N 个文件」卡的每一行、以及 review 页的文件行没有绑定 target**——
+在这些位置右键原本毫无反应。
+
+所以本插件在**这几个位置**装一个极薄的桥：解析出 `{ sessionId, path }` 后**直接调用官方**
+`contextMenus.open(target, { x, y })`。菜单内容、渲染、键盘导航、关闭、失败提示依旧全由官方负责。
+官方已绑定的位置（presented 卡、正文 chip、文件树、工具卡…）一律不插手。
+
+栈是**自愈**的：`scripts/check.mjs` 会检查 `data-changed-files` 附近**仍然没有** `contextMenuProps: getTriggerProps(`；
+一旦官方补绑，自检会失败并提示可以删掉这座桥。
+
 ## 安装
 
 ```bash

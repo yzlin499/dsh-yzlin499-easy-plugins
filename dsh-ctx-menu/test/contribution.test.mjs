@@ -32,8 +32,8 @@ function servicesWith({ cwd = 'D:\\ws\\proj', absolutePath = 'D:\\ws\\proj\\src\
 
 test('导出契约：name / inject / version', () => {
   assert.equal(exports.name, NS)
-  assert.deepEqual(exports.inject, ['contextMenus'], '只硬依赖官方统一右键服务')
-  assert.equal(VERSION, '0.3.0')
+  assert.deepEqual(exports.inject, ['contextMenus', 'slots'], '只硬依赖官方统一右键服务')
+  assert.equal(VERSION, '0.3.1')
 })
 
 test('注册形状：id 唯一、file 目标、order 300（排在官方 100/200 之后）', () => {

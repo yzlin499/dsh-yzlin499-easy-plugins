@@ -1,25 +1,22 @@
-// dsh-ctx-menu — Client half（v0.3.0：复用官方统一右键，只贡献官方缺的动作）
+// dsh-ctx-menu — Client half（v0.3.1：复用官方统一右键 + 补官方漏绑的位置）
 //
-// 背景：新版 DSH 内置了**统一右键**（`@deepseek-ai/dsh-client-ui-context-menu`），
-// 并通过客户端服务 `ctx.contextMenus` 对第三方开放「菜单贡献」：
+// 一、菜单内容：向官方统一右键贡献动作（不自绘菜单）
+//   官方服务 `ctx.contextMenus`（`@deepseek-ai/dsh-client-ui-context-menu`）：
+//     ctx.contextMenus.register({ id, target, order, resolve(value, signal) → action[] })
+//     action = { id, label, icon?, disabled?, danger?, separatorBefore?, failureLabel?,
+//                children?, commandId?, run() }
+//   官方已提供（file 目标）：在侧边栏/浮窗打开、显示文件位置、在 <默认应用> 中打开、复制路径（绝对）、
+//   另存为/下载/复制图片。本插件只补官方缺的：打开方式 ▸ / 复制相对路径 / 复制文件内容（order 300）。
 //
-//   menus.register({ id, target, order, resolve(value, signal) → action[] })
-//   action = { id, label, icon?, disabled?, danger?, separatorBefore?, failureLabel?,
-//              children?, commandId?, run() }
+// 二、触发位置：只补官方**漏绑**的 DOM 面
+//   官方在 deliverables 里只给「交付文件卡（presented）」绑了 getTriggerProps，
+//   「已编辑 N 个文件」卡的每行、以及 review 页的文件行**没有绑 target**（右键无菜单）。
+//   因此本插件在这些位置装一个极薄的桥：解析出 { sessionId, path } 后**直接调用官方**
+//   `contextMenus.open(target, { x, y })` —— 菜单渲染、键盘导航、关闭、失败提示依旧全由官方负责。
+//   官方已绑的位置（presented 卡、正文 chip、文件树、工具卡…）一律**不插手**。
 //
-// 官方已经为这些 DOM 面绑好 target：文件行/交付卡（file）、会话行（session）、
-// 工作区行（workspace）、右侧栏 tab（tab）、文件树（file/directory）、图片（image）…
-// 官方 `open-in-app.file`（order 100）已提供：在侧边栏打开、浮窗打开、显示文件位置、
-// 在 <默认应用> 中打开、复制路径（绝对）；`file-actions.file`（order 200）提供另存为/下载/复制图片。
-//
-// 因此本插件**不再自绘菜单、不再安装捕获期 contextmenu 门控、不再劫持侧栏 ⋯**，
-// 只补官方缺的三项（order 300，排在官方之后）：
-//   1. 打开方式 ▸      系统关联应用列表（官方只给默认应用）
-//   2. 复制相对路径     相对当前会话工作目录
-//   3. 复制文件内容     文本文件正文（分页读取，2 MiB 上限）
-//
-// 依赖全部走 DSH 自带远程服务（`remote.session` / `remote.workspaceFiles` / `sessions`），
-// 因此 Host 半侧无需任何路由。
+// 依赖：客户端服务 contextMenus（硬）、slots（会话 id 探针）；
+// 其余能力走 DSH 自带客户端远程服务（remote.session / remote.workspaceFiles / sessions / locale）。
 
 window.__ModuleLoader__.load({
   id: 'dsh-ctx-menu',
@@ -28,7 +25,7 @@ window.__ModuleLoader__.load({
 
     const NS = 'dsh-ctx-menu'
     const log = (...args) => console.log('[dsh-ctx-menu]', ...args)
-    const VERSION = '0.3.0'
+    const VERSION = '0.3.1'
 
     const DICT = {
       zh: {
@@ -38,7 +35,6 @@ window.__ModuleLoader__.load({
         copied: '已复制',
         defaultSuffix: '（默认）',
         noCwd: '取不到当前会话的工作目录',
-        noApps: '没有可用的关联应用',
         copyFailed: '复制失败',
         binary: '不是文本文件',
         tooLarge: '文件太大',
@@ -50,11 +46,18 @@ window.__ModuleLoader__.load({
         copied: 'Copied',
         defaultSuffix: ' (default)',
         noCwd: 'Session working directory unavailable',
-        noApps: 'No associated apps',
         copyFailed: 'Copy failed',
         binary: 'Not a text file',
         tooLarge: 'File too large',
       },
+    }
+
+    /** 官方**没有**绑定 target 的 DOM 面（我们只在这些位置触发官方菜单）。 */
+    const UNBOUND = {
+      changedRow: '[data-changed-files] button[aria-describedby]',
+      changedCard: '[data-changed-files][data-single]',
+      reviewRow: '[data-review-file]',
+      editable: 'input, textarea, [contenteditable=""], [contenteditable="true"]',
     }
 
     const TEXT_MAX_BYTES = 2 * 1024 * 1024
@@ -62,7 +65,6 @@ window.__ModuleLoader__.load({
 
     // ── 小工具 ───────────────────────────────────────────────────────────
 
-    /** 可选服务读取：缺失或抛错都返回 undefined。 */
     function serviceOf(ctx, key) {
       try {
         return ctx.get(key)
@@ -80,7 +82,8 @@ window.__ModuleLoader__.load({
       return windowsish ? text.replace(/\//g, '\\').replace(/\\{2,}/g, '\\') : text.replace(/\\/g, '/')
     }
 
-    /** 相对当前工作目录；不在其中则退回正斜杠绝对路径；没有 cwd 返回 null。 */
+    const isAbsolutePath = (value) => /^[A-Za-z]:[\\/]/.test(value) || value.startsWith('/') || value.startsWith('\\\\')
+
     function relativeToCwd(path, cwd) {
       const target = String(path ?? '').trim()
       if (target === '') return null
@@ -94,7 +97,6 @@ window.__ModuleLoader__.load({
       return full
     }
 
-    /** 会话工作目录（官方 0.2.x/新版在客户端就是这么取的）。 */
     function sessionCwd(ctx, sessionId) {
       const sessions = serviceOf(ctx, 'sessions')
       const entry = sessions?.list?.getSnapshot?.()?.byId?.[sessionId]
@@ -102,10 +104,6 @@ window.__ModuleLoader__.load({
       return typeof cwd === 'string' && cwd.trim() !== '' ? cwd : null
     }
 
-    /**
-     * 文件绝对路径：官方 `workspaceFiles.stat` 给出 absolutePath（权威），
-     * 拿不到时用 会话 cwd + 相对路径 兜底。
-     */
     async function absolutePathOf(ctx, sessionId, path, signal) {
       const files = serviceOf(ctx, 'remote.workspaceFiles')
       if (files !== undefined && typeof files.stat === 'function') {
@@ -119,14 +117,13 @@ window.__ModuleLoader__.load({
         }
       }
       const relative = normalizeToNative(path)
-      if (/^[A-Za-z]:/.test(relative) === true || relative.startsWith('/') || relative.startsWith('\\\\')) return relative
+      if (isAbsolutePath(relative)) return relative
       const cwd = sessionCwd(ctx, sessionId)
       if (cwd === null) return null
       const separator = cwd.includes('\\') ? '\\' : '/'
       return normalizeToNative(cwd.replace(/[\\/]+$/, '') + separator + relative.replace(/^[\\/]+/, ''))
     }
 
-    /** 系统关联应用（官方只展示默认应用，我们补完整列表）。 */
     async function appsOf(ctx, absolutePath, signal) {
       const remoteSession = serviceOf(ctx, 'remote.session')
       if (remoteSession === undefined || typeof remoteSession.workspacePathApplications !== 'function') return []
@@ -149,7 +146,7 @@ window.__ModuleLoader__.load({
       if (result?.ok !== true) throw new Error('open with application failed')
     }
 
-    async function copyText(ctx, text) {
+    async function copyText(text) {
       try {
         await navigator.clipboard.writeText(text)
         return true
@@ -159,7 +156,6 @@ window.__ModuleLoader__.load({
       }
     }
 
-    /** 分页读取文本（上限 2 MiB / 每页 5000 行）。 */
     async function readText(ctx, sessionId, path, signal) {
       const files = serviceOf(ctx, 'remote.workspaceFiles')
       if (files === undefined || typeof files.read !== 'function') return { ok: false, code: 'host/unsupported' }
@@ -180,10 +176,42 @@ window.__ModuleLoader__.load({
       return { ok: true, text: chunks.join('\n') }
     }
 
+    /**
+     * 从「官方漏绑」的行里取出路径（绝对或工作区相对，官方都接受）：
+     *   1. 改动文件行：按钮的 aria-describedby 指向隐藏 span，内容是官方解析好的绝对路径
+     *   2. 单文件卡：卡内唯一的隐藏 span
+     *   3. review 行：title 是绝对路径，data-review-file 是相对路径
+     * 其余元素一律返回 null（= 交给官方已绑定的处理）。
+     */
+    function pathOfUnboundTarget(target, doc) {
+      if (target === null || typeof target.closest !== 'function') return null
+      const row = target.closest(UNBOUND.changedRow)
+      if (row !== null) {
+        const describedBy = row.getAttribute('aria-describedby')
+        const holder = describedBy === null || doc === undefined ? null : doc.getElementById?.(describedBy)
+        const text = normalizeToNative(String(holder?.textContent ?? '').trim())
+        return text === '' ? null : text
+      }
+      const card = target.closest(UNBOUND.changedCard)
+      if (card !== null) {
+        const holder = card.querySelector?.('span[hidden]')
+        const text = normalizeToNative(String(holder?.textContent ?? '').trim())
+        return text === '' ? null : text
+      }
+      const review = target.closest(UNBOUND.reviewRow)
+      if (review !== null) {
+        const title = normalizeToNative(String(review.getAttribute('title') ?? '').trim())
+        if (title !== '' && isAbsolutePath(title)) return title
+        const relative = normalizeToNative(String(review.getAttribute('data-review-file') ?? '').trim())
+        return relative === '' ? null : relative
+      }
+      return null
+    }
+
     // ── 插件体 ───────────────────────────────────────────────────────────
 
-    // contextMenus 是硬依赖（没有官方统一右键时本插件没有意义）；其余服务在 resolve 时软读。
-    const inject = ['contextMenus']
+    // contextMenus：没有官方统一右键时本插件没有意义；slots：用来拿会话 id。
+    const inject = ['contextMenus', 'slots']
 
     function apply(ctx) {
       const menus = serviceOf(ctx, 'contextMenus')
@@ -191,6 +219,14 @@ window.__ModuleLoader__.load({
         log('contextMenus service unavailable — 官方统一右键未就位，本插件无事可做')
         return
       }
+
+      const boot = { version: VERSION, phase: 'apply', lastOpen: null, sessionId: null }
+      try {
+        window.__DSH_CTX_MENU__ = boot
+      } catch {
+        /* 非浏览器环境忽略 */
+      }
+
       const localeOf = serviceOf(ctx, 'locale')
       let dict = DICT.zh
       const readLocale = () => {
@@ -203,12 +239,13 @@ window.__ModuleLoader__.load({
       }
       const t = (key) => (typeof dict[key] === 'string' ? dict[key] : key)
 
+      // ① 菜单内容：file 目标、order 300（官方 open-in-app=100、file-actions=200）
       ctx.effect(
         () =>
           menus.register({
             id: `${NS}.file`,
             target: 'file',
-            order: 300, // 官方 open-in-app.file = 100、file-actions.file = 200，我们排最后
+            order: 300,
             resolve: async (target, signal) => {
               const sessionId = target?.sessionId
               const rawPath = target?.path
@@ -217,7 +254,6 @@ window.__ModuleLoader__.load({
               signal?.throwIfAborted?.()
               const actions = []
 
-              // 1) 打开方式 ▸（官方只给默认应用）
               if (absolutePath !== null) {
                 const apps = await appsOf(ctx, absolutePath, signal)
                 signal?.throwIfAborted?.()
@@ -237,7 +273,6 @@ window.__ModuleLoader__.load({
                 }
               }
 
-              // 2) 复制相对路径（官方 copyPath 只给绝对路径）
               const cwd = sessionCwd(ctx, sessionId)
               const relative = relativeToCwd(absolutePath ?? normalizeToNative(rawPath), cwd)
               actions.push({
@@ -248,12 +283,11 @@ window.__ModuleLoader__.load({
                 separatorBefore: true,
                 failureLabel: t('copyFailed'),
                 run: async () => {
-                  if (relative === null || (await copyText(ctx, relative)) === false) throw new Error('copy failed')
+                  if (relative === null || (await copyText(relative)) === false) throw new Error('copy failed')
                   menus.notify(t('copied'), true)
                 },
               })
 
-              // 3) 复制文件内容（官方另有「另存为/下载」，但没有复制正文）
               if (absolutePath !== null) {
                 actions.push({
                   id: 'copyContents',
@@ -266,7 +300,7 @@ window.__ModuleLoader__.load({
                       menus.notify(String(read.code ?? '').includes('not-text') ? t('binary') : t('tooLarge'), false)
                       return
                     }
-                    if ((await copyText(ctx, read.text)) === false) throw new Error('copy failed')
+                    if ((await copyText(read.text)) === false) throw new Error('copy failed')
                     menus.notify(t('copied'), true)
                   },
                 })
@@ -278,7 +312,63 @@ window.__ModuleLoader__.load({
         `${NS}: file menu contributions`,
       )
 
-      log(`contribution registered (v${VERSION}): file target, order 300`)
+      // ② 会话 id 探针：会话级插槽把 sessionId 作为标准 prop 传下来
+      const session = { id: null }
+      const slots = serviceOf(ctx, "slots")
+      function SessionProbe(props) {
+        const sessionId = props?.sessionId ?? null
+        React.useEffect(() => {
+          session.id = sessionId
+          boot.sessionId = sessionId
+        }, [sessionId])
+        return null
+      }
+      if (slots !== undefined && typeof slots.inject === "function") {
+        ctx.effect(
+          () =>
+            slots.inject("conversation.composer.dock", () =>
+              slots.register({ name: "conversation.composer.dock", id: NS + ".session", order: 999 }, SessionProbe),
+            ),
+          `${NS}: session probe`,
+        )
+      }
+
+      // ③ 桥：只在官方漏绑的位置触发官方菜单（不自绘、不 stopPropagation）
+      const handleContextMenu = (event) => {
+        if (event?.button !== 2 || event.defaultPrevented === true) return
+        if (event.altKey === true) return // Alt+右键留给用户/排查工（本插件不占用）
+        const doc = window.document
+        const target = event.target
+        if (target === null || typeof target.closest !== 'function') return
+        if (target.closest(UNBOUND.editable) !== null) return // 可编辑域交给外壳
+        const selection = window.getSelection?.()?.toString?.() ?? ''
+        if (selection !== '') return // 有选中文本时保留外壳的「复制」
+        const path = pathOfUnboundTarget(target, doc)
+        if (path === null) return // 官方已绑定的位置：一律不插手
+        const sessionId = session.id
+        if (sessionId === null) {
+          log('session id unknown — skip bridging this row')
+          return
+        }
+        event.preventDefault()
+        boot.lastOpen = { sessionId, path, at: Date.now() }
+        try {
+          menus.open({ kind: 'file', value: { sessionId, path } }, { x: event.clientX ?? 0, y: event.clientY ?? 0 })
+        } catch (error) {
+          log('open official menu failed:', error?.message ?? error)
+        }
+      }
+
+      ctx.effect(() => {
+        document.addEventListener('contextmenu', handleContextMenu, true)
+        return () => document.removeEventListener('contextmenu', handleContextMenu, true)
+      }, `${NS}: unbound-row bridge`)
+
+      // 仅测试用：暴露内部实现
+      boot.handleContextMenu = handleContextMenu
+      boot.pathOfUnboundTarget = pathOfUnboundTarget
+
+      log(`ready (v${VERSION})：贡献 file 目标 order 300；桥接改动文件行 / review 行`)
     }
 
     // 仅供 test/ 使用：不参与运行时契约。
@@ -286,13 +376,15 @@ window.__ModuleLoader__.load({
       NS,
       VERSION,
       DICT,
+      UNBOUND,
       normalizeToNative,
+      isAbsolutePath,
       relativeToCwd,
       sessionCwd,
       absolutePathOf,
       appsOf,
       readText,
-      copyText,
+      pathOfUnboundTarget,
       serviceOf,
     }
 

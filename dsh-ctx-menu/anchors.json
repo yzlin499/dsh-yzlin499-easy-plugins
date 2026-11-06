@@ -1,6 +1,6 @@
 {
   "target": "0.2.x 新版：官方统一右键（@deepseek-ai/dsh-client-ui-context-menu + ctx.contextMenus 服务）",
-  "note": "v0.3.0 起本插件不再自绘菜单、不再安装捕获期 contextmenu 门控，只向官方统一右键贡献动作。因此断言对象从「DOM 锚点」变成「官方菜单契约」：服务名、注册形状、file 目标，以及官方为哪些 DOM 面绑定了 target。",
+  "note": "v0.3.x：菜单内容 = 向官方 contextMenus 贡献动作（不自绘）；触发 = 只在官方**漏绑**的 DOM 面调用官方 contextMenus.open。因此断言分三类：官方契约、官方绑定现状（正反两面）、本插件设计前提。",
   "asarExpect": [
     {
       "id": "context-menu-service",
@@ -9,28 +9,28 @@
         "ctx.provide(\"contextMenus\"",
         "register(input)",
         "resolve(target, signal)",
-        "menuEntries(actions",
+        "open: (target, point)",
         "getTriggerProps(target"
       ],
-      "why": "官方统一右键的对外契约：客户端服务名 contextMenus；register({id,target,order,resolve}) 注册动作；resolve(value,signal) 返回动作描述符；菜单由 menuEntries 渲染；DOM 通过 getTriggerProps 绑定 target。任何一条消失，本插件的贡献就失效。"
+      "why": "官方统一右键的对外契约：服务名 contextMenus；register 注册动作；resolve 给出动作；open(target, point) 供程序化打开（本插件桥接改动文件行时用它）；getTriggerProps 供官方组件绑定 DOM。"
     },
     {
       "id": "file-target-providers",
       "file": "dsh/node_modules/@deepseek-ai/dsh-client-ui-open-in-app/lib/client.js",
       "contains": ["target: \"file\"", "workspacePathApplications", "openWorkspacePath"],
-      "why": "证明 file 目标是官方在用的 target，且客户端仍能拿到关联应用/启动两个远程方法（我们补「打开方式」子菜单依赖它们）。"
+      "why": "file 目标是官方在用的 target，且客户端仍能拿到关联应用/启动两个远程方法（我们补「打开方式」子菜单依赖它们）。"
     },
     {
       "id": "file-actions-provider",
       "file": "dsh/node_modules/@deepseek-ai/dsh-client-ui-file-actions/lib/client.js",
       "contains": ["target: \"file\"", "workspaceFiles.stat", "saveAs"],
-      "why": "官方已经提供另存为/下载/复制图片——本插件不要重复贡献这些动作。"
+      "why": "官方已提供另存为/下载/复制图片——本插件不要重复贡献这些动作。"
     },
     {
-      "id": "file-target-bound-in-dom",
+      "id": "presented-files-bound",
       "file": "dsh/node_modules/@deepseek-ai/dsh-client-ui-deliverables/lib/client.js",
-      "contains": ["getTriggerProps(", "kind: \"file\"", "data-changed-files"],
-      "why": "改动文件行/交付卡片必须已经绑定到 file 目标；否则官方的统一右键不会在这些行上弹出，本插件也就无从贡献。"
+      "contains": ["data-presented-files-row", "contextMenuProps: getTriggerProps(", "kind: \"file\""],
+      "why": "交付文件卡（presented）已由官方绑定 file 目标；这条同时证明官方绑定写在 contextMenuProps: getTriggerProps({kind:\"file\"…}) 这一形式里——下面用它来判断改动文件卡是否也已绑定。"
     },
     {
       "id": "session-target-bound-in-dom",
@@ -45,18 +45,41 @@
       "why": "官方客户端的 inject 列表就是「第三方 client 半侧可用的服务白名单」：remote.session / remote.workspaceFiles / contextMenus 都在，本插件才敢只用它们、不建宿主路由。"
     }
   ],
-  "selfCheck": [
+  "asarWindow": [
     {
-      "id": "no-capture-contextmenu",
-      "file": "client.js",
-      "mustNotContain": ["addEventListener('contextmenu'", "addEventListener(\"contextmenu\""],
-      "why": "v0.3.0 的设计前提：不装 document 级捕获右键监听，避免与外挂/终端/官方菜单抢事件。"
-    },
+      "id": "changed-files-still-unbound",
+      "file": "dsh/node_modules/@deepseek-ai/dsh-client-ui-deliverables/lib/client.js",
+      "marker": "data-changed-files",
+      "extendsBefore": 6000,
+      "extendsAfter": 6000,
+      "mustNotContain": ["contextMenuProps: getTriggerProps("],
+      "why": "官方只在 presented 卡上绑了 getTriggerProps，改动文件卡没绑——这正是本插件桥接存在的原因。一旦官方给改动文件行也绑上 target（窗口内出现 contextMenuProps: getTriggerProps(），说明桥已多余，这里会先失败提醒我们删掉。"
+    }
+  ],
+  "selfCheck": [
     {
       "id": "contributing-to-official-menu",
       "file": "client.js",
       "mustContain": ["serviceOf(ctx, 'contextMenus')", "menus.register", "target: 'file'", "order: 300"],
-      "why": "本插件的全部价值就是这条贡献：向官方 contextMenus 服务注册 file 目标、order 300（排官方 100/200 之后）。"
+      "why": "本插件的价值之一：向官方 contextMenus 注册 file 目标、order 300（排官方 100/200 之后）。"
+    },
+    {
+      "id": "bridge-only-triggers-official",
+      "file": "client.js",
+      "mustContain": ["handleContextMenu", "menus.open(", "data-changed-files", "data-review-file"],
+      "why": "本插件的价值之二：在官方漏绑的位置（改动文件行 / review 行）只做「触发」——调用官方 menus.open，而不是自己弹菜单。"
+    },
+    {
+      "id": "never-renders-own-menu",
+      "file": "client.js",
+      "mustNotContain": ["dsh-client-ui-primitives", "MenuHost", "MenuItemButton", "createRoot("],
+      "why": "设计红线：不再自绘菜单、不再自建 React root —— 菜单观感/键盘/关闭/失败提示全交给官方。"
+    },
+    {
+      "id": "no-host-routes",
+      "file": "index.js",
+      "mustNotContain": ["webServer.register"],
+      "why": "v0.3.0 起宿主半侧不注册任何路由（能力全走官方客户端远程服务），零新增攻击面。"
     }
   ]
 }
