@@ -70,6 +70,21 @@ dsh plugin --profile web remove dsh-ctx-menu
 4. The DOM surfaces that carry these actions are bound by the shell (deliverables / chat / sidebar-files / tool / reference …),
    so the actions appear on message file chips, changed-file rows, delivered-file cards and the file tree.
 
+## Performance (why it adds no extra stall)
+
+The shell's `MenuRegistry` gives **each provider** a `resolutionTimeoutMs` budget (default **1000 ms**) and aborts a
+provider that misses it; the menu opens only after every provider settles. The official providers themselves call
+`workspaceFiles.stat` + `workspacePathApplications` on **every** right-click with no cache (OS association enumeration is
+slow on Windows), so a ~1 s stall usually means that budget got hit.
+
+This plugin therefore keeps its own share off the critical path:
+
+1. **absolute-path fast path** — changed-file rows already carry an absolute path, so no `stat` RPC;
+2. **associations cached per extension for 5 minutes**, with in-flight dedupe;
+3. **relative-path resolution cached for 30 s**;
+4. **350 ms hard budget** — if the enumeration is not back by then, only the copy actions are contributed; the fetch keeps
+   running in the background and warms the cache, so the submenu appears on the next open.
+
 ## Development
 
 ```bash

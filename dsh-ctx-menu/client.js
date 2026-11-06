@@ -25,7 +25,7 @@ window.__ModuleLoader__.load({
 
     const NS = 'dsh-ctx-menu'
     const log = (...args) => console.log('[dsh-ctx-menu]', ...args)
-    const VERSION = '0.3.1'
+    const VERSION = '0.3.2'
 
     const DICT = {
       zh: {
@@ -61,6 +61,12 @@ window.__ModuleLoader__.load({
     }
 
     const TEXT_MAX_BYTES = 2 * 1024 * 1024
+    /** 关联应用按扩展名缓存 5 分钟：官方每次右键都会重新枚举（慢），我们不重复付这笔钱。 */
+    const APP_CACHE_TTL_MS = 5 * 60 * 1000
+    const PATH_CACHE_TTL_MS = 30 * 1000
+    /** 我们自己的 resolve 预算（官方总预算是 1000ms，见 MenuRegistry.timeoutMs）。 */
+    const DEFAULT_BUDGET_MS = 350
+    const APPS_FETCH_TIMEOUT_MS = 10 * 1000
     const MAX_LINES = 5000
 
     // ── 小工具 ───────────────────────────────────────────────────────────
@@ -176,6 +182,87 @@ window.__ModuleLoader__.load({
       return { ok: true, text: chunks.join('\n') }
     }
 
+    // ── 性能层：缓存 + 硬预算 ─────────────────────────────────────────────
+    // 背景：官方 MenuRegistry 给每个 provider 的 resolve 只有 timeoutMs（默认 1000ms）预算，
+    // 超时即中止该 provider 并提示失败。官方自己的 open-in-app 每次右键都要
+    // stat + workspacePathApplications（无缓存），已经吃掉大半预算；我们不能再加压。
+    const appCache = new Map() // ext → { at, apps }
+    const appInflight = new Map() // ext → Promise<apps>
+    const pathCache = new Map() // sessionId|path → { at, value }
+
+    const nowMs = () => Date.now()
+    const budgetOf = () => (typeof __internals.budgetMs === 'number' ? __internals.budgetMs : DEFAULT_BUDGET_MS)
+
+    function extOfPath(value) {
+      const text = String(value ?? "").replace(/\\/g, "/")
+      const name = text.slice(text.lastIndexOf("/") + 1)
+      const dot = name.lastIndexOf(".")
+      if (dot <= 0) return null
+      const ext = name.slice(dot).toLowerCase()
+      return /^\.[a-z0-9]{1,16}$/.test(ext) ? ext : null
+    }
+
+    /** 超时即返回兜底值（不取消底层任务——它继续跑并写缓存，下次右键就命中）。 */
+    function within(ms, promise, fallback) {
+      return new Promise((resolve) => {
+        let settled = false
+        const timer = setTimeout(() => {
+          if (settled) return
+          settled = true
+          resolve(fallback)
+        }, ms)
+        promise
+          .then((value) => {
+            if (settled) return
+            settled = true
+            clearTimeout(timer)
+            resolve(value)
+          })
+          .catch(() => {
+            if (settled) return
+            settled = true
+            clearTimeout(timer)
+            resolve(fallback)
+          })
+      })
+    }
+
+    /** 关联应用：按扩展名缓存 + 同扩展名并发去重；用**自己的** signal，避免被菜单的单次中止污染缓存。 */
+    function appsCached(ctx, absolutePath) {
+      const ext = extOfPath(absolutePath)
+      if (ext === null) return Promise.resolve([])
+      const cached = appCache.get(ext)
+      if (cached !== undefined && nowMs() - cached.at < APP_CACHE_TTL_MS) return Promise.resolve(cached.apps)
+      const inflight = appInflight.get(ext)
+      if (inflight !== undefined) return inflight
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), APPS_FETCH_TIMEOUT_MS)
+      const promise = appsOf(ctx, absolutePath, controller.signal)
+        .then((apps) => {
+          if (apps.length > 0) appCache.set(ext, { at: nowMs(), apps })
+          return apps
+        })
+        .catch(() => [])
+        .finally(() => {
+          clearTimeout(timer)
+          appInflight.delete(ext)
+        })
+      appInflight.set(ext, promise)
+      return promise
+    }
+
+    /** 绝对路径：已是绝对路径时**直接返回（不发 RPC）**；否则查 stat 并缓存 30 秒。 */
+    async function pathCached(ctx, sessionId, rawPath, signal) {
+      const normalized = normalizeToNative(rawPath)
+      if (isAbsolutePath(normalized)) return normalized
+      const key = String(sessionId) + "|" + normalized
+      const cached = pathCache.get(key)
+      if (cached !== undefined && nowMs() - cached.at < PATH_CACHE_TTL_MS) return cached.value
+      const value = await absolutePathOf(ctx, sessionId, rawPath, signal)
+      pathCache.set(key, { at: nowMs(), value })
+      return value
+    }
+
     /**
      * 从「官方漏绑」的行里取出路径（绝对或工作区相对，官方都接受）：
      *   1. 改动文件行：按钮的 aria-describedby 指向隐藏 span，内容是官方解析好的绝对路径
@@ -250,12 +337,12 @@ window.__ModuleLoader__.load({
               const sessionId = target?.sessionId
               const rawPath = target?.path
               if (typeof rawPath !== 'string' || rawPath === '') return []
-              const absolutePath = await absolutePathOf(ctx, sessionId, rawPath, signal)
+              const absolutePath = await within(budgetOf(), pathCached(ctx, sessionId, rawPath, signal), null)
               signal?.throwIfAborted?.()
               const actions = []
 
               if (absolutePath !== null) {
-                const apps = await appsOf(ctx, absolutePath, signal)
+                const apps = await within(budgetOf(), appsCached(ctx, absolutePath), [])
                 signal?.throwIfAborted?.()
                 if (apps.length > 1) {
                   const ordered = [...apps].sort((a, b) => Number(b.default === true) - Number(a.default === true))
@@ -386,6 +473,16 @@ window.__ModuleLoader__.load({
       readText,
       pathOfUnboundTarget,
       serviceOf,
+      extOfPath,
+      within,
+      appsCached,
+      pathCached,
+      budgetMs: DEFAULT_BUDGET_MS,
+      clearCaches: () => {
+        appCache.clear()
+        appInflight.clear()
+        pathCache.clear()
+      },
     }
 
     return { name: NS, inject, apply, __internals }

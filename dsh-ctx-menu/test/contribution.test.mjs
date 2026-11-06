@@ -9,6 +9,7 @@ const { NS, VERSION, DICT } = internals
 
 /** 装好插件并取出 file 目标贡献。 */
 function mountFileProvider(services) {
+  internals.clearCaches() // 缓存是模块级的：每个用例都要从冷态开始
   const ctx = makeCtx(services)
   exports.apply(ctx)
   const provider = ctx.providers.find((entry) => entry.target === 'file')
@@ -33,7 +34,7 @@ function servicesWith({ cwd = 'D:\\ws\\proj', absolutePath = 'D:\\ws\\proj\\src\
 test('导出契约：name / inject / version', () => {
   assert.equal(exports.name, NS)
   assert.deepEqual(exports.inject, ['contextMenus', 'slots'], '只硬依赖官方统一右键服务')
-  assert.equal(VERSION, '0.3.1')
+  assert.equal(VERSION, '0.3.2')
 })
 
 test('注册形状：id 唯一、file 目标、order 300（排在官方 100/200 之后）', () => {

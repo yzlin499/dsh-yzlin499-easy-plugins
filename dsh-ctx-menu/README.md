@@ -67,6 +67,21 @@ dsh plugin --profile web remove dsh-ctx-menu
 4. 承载这些动作的 DOM 面由官方绑定（deliverables / chat / sidebar-files / tool / reference …），
    所以正文 chip、改动文件行、交付卡片、文件树里的右键都能看到本插件的动作。
 
+## 性能（为什么不再额外卡顿）
+
+官方 `MenuRegistry` 给**每个 provider** 的 `resolve` 只有 `resolutionTimeoutMs`（默认 **1000ms**）预算，
+超时就中止该 provider；而菜单要等所有 provider 结束后才弹出。官方自己每次右键都会
+`workspaceFiles.stat` + `workspacePathApplications`（**无缓存**，Windows 上枚举关联应用较慢），
+所以「卡约 1 秒」通常是撞这个上限。
+
+本插件因此对自己的那部分做了四件事，**绝不叠加到官方预算上**：
+
+1. **绝对路径直通**：改动文件行给的已是绝对路径 → 不再发 `stat` RPC；
+2. **关联应用按扩展名缓存 5 分钟** + 同扩展名并发去重（官方是每次重查，我们不重复付）；
+3. **相对路径解析缓存 30 秒**；
+4. **350ms 硬预算**：枚举没在预算内回来就先只给「复制相对路径 / 复制文件内容」，
+   后台继续跑并写缓存 → 下一次右键子菜单直接出现。
+
 ## 开发
 
 ```bash
