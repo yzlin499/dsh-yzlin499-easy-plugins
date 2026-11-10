@@ -1,0 +1,8 @@
+# dsh bundle layer: mount the recent-TPS plugin.
+# - id: recent-tps —— the row key in the composed tree
+#   name: dsh-recent-tps —— the package whose `main` (index.js) is the host half
+# `dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-recent-tps"` installs it and auto-registers
+# this patch as a bundle layer (dsh.bundle.patch), so DSH mounts it on boot.
+- insert:
+    - id: recent-tps
+      name: dsh-recent-tps

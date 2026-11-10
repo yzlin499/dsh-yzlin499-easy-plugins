@@ -1,0 +1,40 @@
+{
+  "name": "dsh-recent-tps",
+  "version": "0.1.0",
+  "description": "Adds a \"last 30s speed\" row to the DSH session-statistics panel under the composer, while keeping every official row, label and style identical.",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\""
+  },
+  "dsh": {
+    "client": {
+      "inject": [
+        "slots",
+        "locale"
+      ],
+      "platform": "web"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "dsh-plugin",
+    "tps",
+    "tokens-per-second",
+    "status-bar",
+    "session-stats"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}

@@ -13,6 +13,7 @@
 | `dsh-version-control` | 官方 `ui-sidebar-right` 侧边栏里的 Git / SVN 版本控制 | `dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-version-control"` |
 | `dsh-ctx-menu` | 右键增强：侧栏行复用官方菜单，正文文件行给自定义动作 | `dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-ctx-menu"` |
 | `dsh-win-notify` | Windows 原生吐司通知（权限申请 / 提问 / 运行结束） | `dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-win-notify"` |
+| `dsh-recent-tps` | 会话统计面板加一行「最近 30 秒速度」（官方读数与样式原样保留） | `dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-recent-tps"` |
 
 > 各插件的具体用法见插件自身的 `README.md` / `README_EN.md`，不在这里重复。
 > 已下线的插件（工作区自动审批、Everything 文件搜索、插件管理器）见根 [README.md](../README.md)「已下线」。
@@ -37,6 +38,7 @@ dsh plugin --profile web remove dsh-mcp-compat
 dsh plugin --profile web remove dsh-version-control
 dsh plugin --profile web remove dsh-ctx-menu
 dsh plugin --profile web remove dsh-win-notify
+dsh plugin --profile web remove dsh-recent-tps
 ```
 
 ## 本地联调（改插件代码时）

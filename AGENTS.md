@@ -19,6 +19,7 @@
 | `dsh-version-control` | 0.4.0 | 接入官方 `ui-sidebar-right` 的 Git / SVN 版本控制面板 | 是 | 是 |
 | `dsh-ctx-menu` | 0.3.2 | 向 DSH 官方统一右键（`ctx.contextMenus`）贡献官方缺的动作：打开方式子菜单 / 复制相对路径 / 复制文件内容 | 是 | 是 + 静态自检 |
 | `dsh-win-notify` | 0.1.0 | Windows 原生吐司通知（权限申请 / 提问 / 运行结束）+ 设置卡片 | 是 | 否 |
+| `dsh-recent-tps` | 0.1.0 | 会话统计面板加一行「最近 30 秒速度」（同 id 顶替官方 `activity` 读数） | 是 | 是 |
 
 ## 仓库结构
 
@@ -80,7 +81,7 @@
 ## 常用命令
 
 ```powershell
-# 安装 / 卸载（可换包名：dsh-mcp-compat、dsh-version-control、dsh-ctx-menu、dsh-win-notify）
+# 安装 / 卸载（可换包名：dsh-mcp-compat、dsh-version-control、dsh-ctx-menu、dsh-win-notify、dsh-recent-tps）
 dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-ctx-menu"
 dsh plugin --profile web remove dsh-ctx-menu
 
