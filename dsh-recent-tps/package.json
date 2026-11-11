@@ -1,6 +1,6 @@
 {
   "name": "dsh-recent-tps",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Adds a \"last 30s speed\" row to the DSH session-statistics panel under the composer, while keeping every official row, label and style identical.",
   "type": "module",
   "main": "index.js",

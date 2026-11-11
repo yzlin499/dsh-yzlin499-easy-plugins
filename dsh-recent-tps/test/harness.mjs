@@ -143,3 +143,16 @@ export function bindInject(face) {
   }
   return props
 }
+
+/** 内存版 localStorage（测试采样历史恢复）。 */
+export function installLocalStorage() {
+  const data = new Map()
+  const storage = {
+    getItem: (key) => (data.has(key) ? data.get(key) : null),
+    setItem: (key, value) => { data.set(key, String(value)) },
+    removeItem: (key) => { data.delete(key) },
+    clear: () => data.clear(),
+  }
+  globalThis.localStorage = storage
+  return storage
+}

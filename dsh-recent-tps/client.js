@@ -17,22 +17,28 @@
 //   官方改面板时这里会滞后 —— 这是「面板里加东西」的固有代价，README 里写清楚了。
 //
 // 二、「最近 30 秒速度」怎么算
-//   官方「输出速度（TPS）」= Σ 输出 token ÷ Σ 解码耗时（整段）。
-//   新行同口径，只把范围收到 30 秒，并且**锚定在最后一个已结算的 step 上**：
-//     窗口 = [最后一个已结算 step 的 completedTime - 30s, 该 completedTime]
-//     取每个已结算 step 的解码区间 [firstTokenTime, completedTime] 与窗口求交，
-//     token 按重叠比例分摊，窗口速度 = Σ(重叠 token) ÷ Σ(重叠毫秒) × 1000。
-//   这样它只随「新的 step 结算」而变：生成停下来之后读数**原样保持**，
-//   不会跟着墙上时钟衰减、更不会变成「—」（那是实时量才有的行为）。
-//   完全没有可用解码区间时（provider 不报 usage 等）才显示「—」。
+//   官方「输出速度（TPS）」= Σ 输出 token ÷ Σ 解码耗时（**整段会话**，来自 `sessionStats`
+//   投影，host 侧折叠）。本行**完全用同一个口径**，只把范围收到最近 30 秒。
 //
-//   实现上不挂任何定时器：锚点来自 `legacy.nodes` 里最大的 completedTime，
-//   没有新节点就没有新渲染，天然静止。
+//   为什么不能直接算 Chat 节点的每步解码区间：
+//   节点的 `timing.firstTokenTime` 只来自**瞬时**的 `assistant/live-chunk`（或者重连时
+//   当前 attempt 的 baseline）。会话从磁盘回放（刷新页面 / 打开历史会话）时，这些瞬时事件
+//   不存在，于是每个节点的 `firstTokenTime` 都是 `null` —— 那样算出来永远是「—」。
+//
+//   所以改成**对官方投影采样**：
+//   `sessionStats` 的 `decodeTokens` / `decodeMs` 是单调累计值，一定拿得到、口径也一定对。
+//   每个 step 结算时记一笔 `{t, tokens, ms}`（投影不变就不记），然后
+//     30 秒速度 = (最后一次采样 - 30 秒前那次采样) 的 Δtoken ÷ Δ解码毫秒
+//   窗口右端锚定在**最后一个采样点**上，而不是「现在」：
+//   · 没有新 step 结算 → 采样不变 → 读数**原样保持**（不衰减、不跳、不会变「—」）；
+//   · 真算不出来（Δms 为 0）时**沿用上一次有效读数**；
+//   · 冷启动还没有任何采样时，退回「整段速度」（和官方那行同值），下一次 step 结算就换成窗口值。
+//   每个会话的采样与最近读数会写进 localStorage，所以**刷新页面后立刻就有值**。
 //
 // 三、数据来源（插槽标准注入面，不碰私有 API / 别人 DOM）
-//   · `useProjection('sessionStats')` —— 官方整段统计（轮/步/耗时/token），缺失时用
-//     `useChat(s => s.legacy.nodes)` 折叠兜底（与官方 deriveStats 逐项同口径）。
-//   · `useChat(s => s.legacy.nodes)` —— 已结算 step 的 timing / usage，用来算 30 秒窗口。
+//   · `useProjection('sessionStats')` —— 官方整段统计，四行官方读数与 30 秒采样都用它；
+//     缺失时用 `useChat(s => s.legacy.nodes)` 折叠兜底（与官方 deriveStats 逐项同口径）。
+//   · 插槽标准 prop `sessionId` —— 采样历史按会话隔离。
 //   · `configForms` 只读一个字段：`ui-chat.performanceUsage`（简洁 / 详细），
 //     保证官方「简洁模式只显示速度」的行为不被破坏。
 // ═══════════════════════════════════════════════════════════════════════════
@@ -43,11 +49,16 @@ window.__ModuleLoader__.load({
     const ReactDOM = require('react-dom')
 
     const NS = 'dsh-recent-tps'
-    const VERSION = '0.1.1'
+    const VERSION = '0.1.2'
     const log = (...args) => console.log('[recent-tps]', ...args)
 
     /** 统计窗口：最近 30 秒（想换窗口改这一处） */
     const WINDOW_MS = 30 * 1000
+    /** 采样历史只留最近 2 分钟（够算 30 秒窗口，又不涨内存） */
+    const SAMPLE_KEEP_MS = 120 * 1000
+    /** localStorage 里最多保留多少个会话的最近读数 */
+    const MAX_SESSIONS = 24
+    const STORAGE_KEY = 'dsh-recent-tps:v1'
     /** 官方 ui-chat 的性能与用量档位（compact 只显示速度，没有对话框） */
     const DEFAULT_MODE = 'detailed'
 
@@ -291,25 +302,139 @@ window.__ModuleLoader__.load({
       React.createElement('circle', { cx: 8, cy: 12.2, r: 1.05, fill: 'currentColor' }))
     }
 
-    // ── 面板锚定 ─────────────────────────────────────────────────────────
+    // ── 30 秒窗口：对官方投影采样 ───────────────────────────────────────
     /**
-     * 最后一个已结算 step 的完成时刻（窗口右端）。
-     * 返回 null 表示这个会话还没有任何带完成时间的 assistant 节点。
-     * @param nodes - `legacy.nodes`
-     * @returns 锚点毫秒，或 null
+     * 每个会话的采样历史 + 最近一次有效读数。
+     * 采样点来自官方 `sessionStats` 投影的累计计数器（`decodeTokens` / `decodeMs`），
+     * 所以 30 秒速度 = Δtoken ÷ Δ解码毫秒，口径与官方「输出速度（TPS）」完全一致。
+     * @type {Map<string, {samples: {t: number, tokens: number, ms: number}[], tps: number|null}>}
      */
-    function lastDecodeEnd(nodes) {
-      const list = Array.isArray(nodes) ? nodes : EMPTY_NODES
-      let end = Number.NEGATIVE_INFINITY
-      for (const node of list) {
-        if (!isRecord(node) || node.kind !== 'assistant') continue
-        const timing = node.timing
-        if (!isRecord(timing)) continue
-        const completedTime = timing.completedTime
-        if (typeof completedTime !== 'number' || !Number.isFinite(completedTime)) continue
-        if (completedTime > end) end = completedTime
+    const histories = new Map()
+    let storageLoaded = false
+    let persistTimer = null
+
+    function isSample(value) {
+      return isRecord(value)
+        && typeof value.t === 'number' && Number.isFinite(value.t)
+        && typeof value.tokens === 'number' && Number.isFinite(value.tokens)
+        && typeof value.ms === 'number' && Number.isFinite(value.ms)
+    }
+
+    /** 整段口径的读数（还没有任何采样历史时的兜底，与官方那行同值） */
+    function sessionAverage(stats) {
+      if (!isRecord(stats)) return null
+      const tokens = stats.decodeTokens
+      const ms = stats.decodeMs
+      if (typeof tokens !== 'number' || typeof ms !== 'number' || !(ms > 0)) return null
+      return tokens / (ms / 1000)
+    }
+
+    /**
+     * 窗口内的速度：窗口 = [最后一个采样点 - 30s, 最后一个采样点]。
+     * 锚在最后一个采样点上（而不是「现在」），所以没有新 step 结算时读数恒定。
+     * @param samples - 按时间升序的采样
+     * @returns tok/s，或 null（样本不足 / Δms 为 0）
+     */
+    function windowTps(samples) {
+      if (!Array.isArray(samples) || samples.length < 2) return null
+      const anchor = samples[samples.length - 1]
+      const from = anchor.t - WINDOW_MS
+      let base = samples[0]
+      for (const sample of samples) {
+        if (sample.t > from) break
+        base = sample
       }
-      return Number.isFinite(end) ? end : null
+      const tokens = anchor.tokens - base.tokens
+      const ms = anchor.ms - base.ms
+      if (!(ms > 0) || !(tokens > 0)) return null
+      return tokens / (ms / 1000)
+    }
+
+    /**
+     * 记一笔采样。投影没变化就不记、也不动读数；算不出窗口速度时**沿用上一次有效读数**，
+     * 冷启动没有任何历史时退回整段速度 —— 保证这一行永远有值。
+     * @param history - 该会话当前的历史
+     * @param stats - `sessionStats` 投影（或折叠兜底）
+     * @param now - 采样时刻
+     * @returns 新的历史对象（不可变）
+     */
+    function recordSample(history, stats, now) {
+      const current = isRecord(history) && Array.isArray(history.samples) ? history : { samples: [], tps: null }
+      if (!isRecord(stats)) return current
+      const tokens = stats.decodeTokens
+      const ms = stats.decodeMs
+      if (typeof tokens !== 'number' || typeof ms !== 'number') return current
+      if (!Number.isFinite(tokens) || !Number.isFinite(ms)) return current
+      const last = current.samples[current.samples.length - 1]
+      if (last !== undefined && last.tokens === tokens && last.ms === ms) return current
+      const samples = [...current.samples, { t: now, tokens, ms }]
+      while (samples.length > 2 && now - samples[0].t > SAMPLE_KEEP_MS) samples.shift()
+      const tps = windowTps(samples) ?? (typeof current.tps === 'number' ? current.tps : sessionAverage(stats))
+      return { samples, tps }
+    }
+
+    function lastSampleTime(history) {
+      const samples = isRecord(history) && Array.isArray(history.samples) ? history.samples : EMPTY_NODES
+      return samples.length === 0 ? 0 : samples[samples.length - 1].t
+    }
+
+    function loadHistories() {
+      if (storageLoaded) return
+      storageLoaded = true
+      if (typeof localStorage === 'undefined') return
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY)
+        if (raw === null) return
+        const parsed = JSON.parse(raw)
+        if (!isRecord(parsed)) return
+        for (const [sessionId, entry] of Object.entries(parsed)) {
+          if (!isRecord(entry) || !Array.isArray(entry.samples)) continue
+          const samples = entry.samples.filter(isSample).sort((a, b) => a.t - b.t).slice(-200)
+          if (samples.length === 0) continue
+          histories.set(sessionId, {
+            samples,
+            tps: typeof entry.tps === 'number' && Number.isFinite(entry.tps) ? entry.tps : null,
+          })
+        }
+      } catch (error) {
+        log('读取本地缓存失败:', String((error && error.message) || error))
+      }
+    }
+
+    function schedulePersist() {
+      if (typeof localStorage === 'undefined' || persistTimer !== null) return
+      persistTimer = setTimeout(() => {
+        persistTimer = null
+        try {
+          const entries = [...histories.entries()]
+            .sort((a, b) => lastSampleTime(b[1]) - lastSampleTime(a[1]))
+            .slice(0, MAX_SESSIONS)
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(Object.fromEntries(entries)))
+        } catch (error) {
+          log('写入本地缓存失败:', String((error && error.message) || error))
+        }
+      }, 2000)
+    }
+
+    /** 取（并初始化）某个会话的历史 */
+    function historyFor(sessionId) {
+      loadHistories()
+      const key = typeof sessionId === 'string' ? sessionId : ''
+      const existing = histories.get(key)
+      if (existing !== undefined) return existing
+      const created = { samples: [], tps: null }
+      histories.set(key, created)
+      return created
+    }
+
+    /** 仅供 test/ 使用：清空模块级缓存 */
+    function resetHistories() {
+      histories.clear()
+      storageLoaded = false
+      if (persistTimer !== null) {
+        clearTimeout(persistTimer)
+        persistTimer = null
+      }
     }
 
     const MEASURE_STYLE = { visibility: 'hidden', left: 0, top: 0 }
@@ -370,7 +495,7 @@ window.__ModuleLoader__.load({
 
     // ── 读数（替换官方 activity 条目）──────────────────────────────────────
     function ActivityPill(props) {
-      const { useChat, useProjection, useLabels, usePerformanceUsage } = props
+      const { useChat, useProjection, useLabels, usePerformanceUsage, sessionId } = props
       const nodes = useChat(selectNodes)
       const projected = useProjection('sessionStats')
       const labels = useLabels(selectSelf)
@@ -381,11 +506,20 @@ window.__ModuleLoader__.load({
         () => (isRecord(projected) ? projected : foldStats(nodes)),
         [projected, nodes],
       )
-      // 锚定在最后一个已结算 step 上：没有新 step 结算就永远保持同一个读数。
-      const recent = React.useMemo(() => {
-        const anchor = lastDecodeEnd(nodes)
-        return anchor === null ? null : rollingSpeed(nodes, anchor, WINDOW_MS)
-      }, [nodes])
+
+      // 30 秒速度：每次投影变化记一笔采样（不挂定时器），读数锚在最后一个采样点上。
+      // 初值直接取该会话上次的读数（localStorage），刷新页面后不会先闪一下「—」。
+      const [recentTps, setRecentTps] = React.useState(() => {
+        const saved = historyFor(sessionId).tps
+        return typeof saved === 'number' && Number.isFinite(saved) ? saved : null
+      })
+      React.useEffect(() => {
+        const key = typeof sessionId === 'string' ? sessionId : ''
+        const next = recordSample(historyFor(sessionId), stats, Date.now())
+        histories.set(key, next)
+        schedulePersist()
+        setRecentTps((previous) => (Object.is(previous, next.tps) ? previous : next.tps))
+      }, [sessionId, stats])
 
       const steps = typeof stats.steps === 'number' ? stats.steps : 0
       if (steps === 0) return null
@@ -394,8 +528,9 @@ window.__ModuleLoader__.load({
       const sessionTps = typeof stats.decodeMs === 'number' && stats.decodeMs > 0
         ? translate(labels, 'tokensPerSecond', { tps: formatTokensPerSecond((stats.decodeTokens ?? 0) / (stats.decodeMs / 1000)) })
         : null
-      const recentTps = recent === null ? null : translate(labels, 'tokensPerSecond', { tps: formatTokensPerSecond(recent.tps) })
-      const recentText = recentTps ?? labels.none
+      const recentText = recentTps === null
+        ? labels.none
+        : translate(labels, 'tokensPerSecond', { tps: formatTokensPerSecond(recentTps) })
       const fullReading = sessionTps === null ? counts : `${counts} · ${sessionTps}`
 
       // 简洁模式：与官方一致，只显示整段速度（悬停给出最近 30 秒）
@@ -522,9 +657,12 @@ window.__ModuleLoader__.load({
       formatTokensPerSecond,
       formatDuration,
       stepReading,
-      lastDecodeEnd,
-      rollingSpeed,
       foldStats,
+      sessionAverage,
+      windowTps,
+      recordSample,
+      historyFor,
+      resetHistories,
       createStore,
     }
 

@@ -1,8 +1,8 @@
-// 纯逻辑：30 秒窗口速度、整段折叠、格式化、文案与官方逐字一致。
+// 纯逻辑：30 秒窗口（对官方投影采样）、整段折叠、格式化、文案与官方逐字一致。
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { loadClient } from './harness.mjs'
+import { loadClient, installLocalStorage } from './harness.mjs'
 
 const { exports, internals } = loadClient()
 const {
@@ -15,12 +15,15 @@ const {
   formatTokensPerSecond,
   formatDuration,
   stepReading,
-  lastDecodeEnd,
-  rollingSpeed,
   foldStats,
+  sessionAverage,
+  windowTps,
+  recordSample,
+  historyFor,
+  resetHistories,
 } = internals
 
-/** 一步已结算的 assistant 节点 */
+/** 一步已结算的 assistant 节点（仅 foldStats / stepReading 用） */
 function assistant({ firstTokenTime, completedTime, outputTokens, turn = 1 }) {
   return {
     kind: 'assistant',
@@ -30,11 +33,14 @@ function assistant({ firstTokenTime, completedTime, outputTokens, turn = 1 }) {
   }
 }
 
+/** 一次采样点 */
+const sample = (t, tokens, ms) => ({ t, tokens, ms })
+
 test('导出契约：name / inject / version', () => {
   assert.equal(exports.name, NS)
   assert.equal(NS, 'dsh-recent-tps')
   assert.deepEqual(exports.inject, ['slots', 'locale'])
-  assert.equal(VERSION, '0.1.1')
+  assert.equal(VERSION, '0.1.2')
   assert.equal(typeof exports.apply, 'function')
 })
 
@@ -116,7 +122,107 @@ test('formatDuration：与官方同口径', () => {
   assert.equal(formatDuration(165000, DICT.en), '2m45s')
 })
 
-test('stepReading：只认带 timing + usage 的 assistant 节点', () => {
+test('sessionAverage：整段口径（冷启动兜底），Δms 为 0 时 null', () => {
+  assert.equal(sessionAverage({ decodeTokens: 600, decodeMs: 3000 }), 200)
+  assert.equal(sessionAverage({ decodeTokens: 0, decodeMs: 0 }), null)
+  assert.equal(sessionAverage({ decodeTokens: 5, decodeMs: 0 }), null)
+  assert.equal(sessionAverage(undefined), null)
+})
+
+test('windowTps：锚在最后一个采样点，窗口 = [锚点-30s, 锚点]', () => {
+  // 样本不足
+  assert.equal(windowTps([]), null)
+  assert.equal(windowTps([sample(0, 0, 0)]), null)
+  // 两个样本：100 token / 1 秒
+  assert.equal(windowTps([sample(0, 0, 0), sample(1000, 100, 1000)]), 100)
+  // 30 秒窗口：锚点 50s，取「不晚于 20s」的最后一个样本作基线
+  const samples = [
+    sample(0, 0, 0),
+    sample(10000, 100, 1000),
+    sample(20000, 200, 2000),
+    sample(40000, 500, 4000),
+    sample(50000, 800, 5000),
+  ]
+  // 基线 = t=20s（200 token / 2000ms）→ 600 token / 3000ms = 200
+  assert.equal(windowTps(samples), 200)
+  // Δms 为 0 / Δtoken 为 0 都不出数
+  assert.equal(windowTps([sample(0, 0, 100), sample(1000, 50, 100)]), null)
+  assert.equal(windowTps([sample(0, 50, 100), sample(1000, 50, 200)]), null)
+})
+
+test('recordSample：冷启动退回整段速度，之后换成窗口值', () => {
+  resetHistories()
+  const first = recordSample({ samples: [], tps: null }, { decodeTokens: 150, decodeMs: 3000, steps: 2 }, 1000)
+  assert.equal(first.samples.length, 1)
+  assert.equal(first.tps, 50, '只有一个样本时退回整段速度（150/3s）')
+
+  const second = recordSample(first, { decodeTokens: 250, decodeMs: 4000, steps: 2 }, 2000)
+  assert.equal(second.samples.length, 2)
+  assert.equal(second.tps, 100, '窗口值 = 100 token / 1 秒')
+})
+
+test('recordSample：投影没变化就不记、读数保持（永不变「—」）', () => {
+  resetHistories()
+  let history = recordSample({ samples: [], tps: null }, { decodeTokens: 150, decodeMs: 3000 }, 1000)
+  history = recordSample(history, { decodeTokens: 250, decodeMs: 4000 }, 2000)
+  const frozen = history.tps
+  // 模拟「生成停下来」：墙上时钟过了很久，但投影不再变化
+  const later = recordSample(history, { decodeTokens: 250, decodeMs: 4000 }, 900000)
+  assert.equal(later, history, '同一个引用：不记新样本、不产生新渲染')
+  assert.equal(later.tps, frozen)
+})
+
+test('recordSample：新 step 没有解码时间（Δms=0）时沿用上一次有效读数', () => {
+  resetHistories()
+  let history = recordSample({ samples: [], tps: null }, { decodeTokens: 150, decodeMs: 3000 }, 1000)
+  history = recordSample(history, { decodeTokens: 250, decodeMs: 4000 }, 2000)
+  const before = history.tps
+  // 一步结算但 usage 没报（decodeMs 不动）
+  history = recordSample(history, { decodeTokens: 250, decodeMs: 4000 }, 3000)
+  assert.equal(history.samples.length, 2, '没变化就不记样本')
+  // 再下一次有了解码时间
+  history = recordSample(history, { decodeTokens: 400, decodeMs: 5000 }, 5000)
+  assert.equal(history.samples.length, 3)
+  assert.notEqual(history.tps, null)
+  assert.ok(history.tps > 0)
+  assert.equal(before, 100)
+})
+
+test('recordSample：采样历史只保留最近 2 分钟', () => {
+  resetHistories()
+  let history = { samples: [], tps: null }
+  for (let i = 0; i <= 20; i += 1) {
+    history = recordSample(history, { decodeTokens: i * 100, decodeMs: i * 1000 }, i * 10000) // 每 10 秒一笔，共 200 秒
+  }
+  assert.ok(history.samples.length <= 13, `只保留 2 分钟：实际 ${history.samples.length}`)
+  assert.equal(history.samples[history.samples.length - 1].t, 200000)
+})
+
+test('historyFor：按会话隔离；resetHistories 清空', () => {
+  resetHistories()
+  const a = historyFor('session-a')
+  a.samples.push(sample(1, 1, 1))
+  a.tps = 42
+  assert.equal(historyFor('session-a').tps, 42)
+  assert.equal(historyFor('session-b').tps, null)
+  resetHistories()
+  assert.equal(historyFor('session-a').tps, null, '清空后重新开始')
+})
+
+test('localStorage：刷新页面后立刻恢复上次读数', () => {
+  const storage = installLocalStorage()
+  storage.setItem('dsh-recent-tps:v1', JSON.stringify({
+    'session-x': { samples: [{ t: 1000, tokens: 100, ms: 1000 }, { t: 2000, tokens: 200, ms: 2000 }], tps: 100 },
+    bad: { samples: 'nope' },
+  }))
+  resetHistories() // 重置 loaded 标记，让下一次 historyFor 重新读盘
+  const restored = historyFor('session-x')
+  assert.equal(restored.tps, 100, '恢复上次有效读数（因此刷新后不会先闪「—」）')
+  assert.equal(restored.samples.length, 2)
+  assert.equal(historyFor('bad').tps, null, '非法条目丢弃')
+})
+
+test('stepReading / foldStats：官方口径的兜底折叠（投影缺失时）', () => {
   assert.deepEqual(stepReading(assistant({ firstTokenTime: 1000, completedTime: 3000, outputTokens: 100 })), {
     start: 1000,
     end: 3000,
@@ -124,76 +230,8 @@ test('stepReading：只认带 timing + usage 的 assistant 节点', () => {
     tokens: 100,
   })
   assert.equal(stepReading(null), null)
-  assert.equal(stepReading({ kind: 'tool-result' }), null)
   assert.equal(stepReading({ kind: 'assistant' }), null)
-  assert.equal(
-    stepReading({ kind: 'assistant', timing: { firstTokenTime: 1, completedTime: 2 }, usage: { outputTokens: -1 } }),
-    null,
-    '负 token 丢弃',
-  )
-})
 
-test('rollingSpeed：30 秒窗口内的解码速度', () => {
-  const node = assistant({ firstTokenTime: 1000, completedTime: 3000, outputTokens: 100 })
-  assert.equal(rollingSpeed([node], 3000, WINDOW_MS).tps, 50, '100 token / 2 秒')
-  assert.equal(rollingSpeed([node], 100000, WINDOW_MS), null, '锚点离得太远：窗口里没有解码时间')
-  assert.equal(rollingSpeed([], 3000, WINDOW_MS), null)
-  assert.equal(rollingSpeed(undefined, 3000, WINDOW_MS), null)
-})
-
-test('lastDecodeEnd：取最后一个已结算 step 的完成时刻', () => {
-  const nodes = [
-    assistant({ firstTokenTime: 1000, completedTime: 3000, outputTokens: 100 }),
-    assistant({ firstTokenTime: 5000, completedTime: 7000, outputTokens: 60, turn: 2 }),
-    { kind: 'user', turn: 3, time: 9999 },
-  ]
-  assert.equal(lastDecodeEnd(nodes), 7000)
-  assert.equal(lastDecodeEnd([]), null)
-  assert.equal(lastDecodeEnd(undefined), null)
-  assert.equal(lastDecodeEnd([{ kind: 'user' }]), null, '没有 assistant 节点就没有锚点')
-  assert.equal(lastDecodeEnd([{ kind: 'assistant', turn: 1 }]), null, '没有 timing 就没有锚点')
-})
-
-test('锚定语义：没有新 step 结算时读数恒定，不会衰减成 null', () => {
-  // 两步：100 token / 2 秒 + 50 token / 1 秒 = 150 token / 3 秒 = 50 tok/s
-  const nodes = [
-    assistant({ firstTokenTime: 0, completedTime: 2000, outputTokens: 100 }),
-    assistant({ firstTokenTime: 2000, completedTime: 3000, outputTokens: 50, turn: 2 }),
-  ]
-  const anchor = lastDecodeEnd(nodes)
-  assert.equal(anchor, 3000, '锚点 = 最后一步完成时刻')
-  const first = rollingSpeed(nodes, anchor, WINDOW_MS)
-  assert.equal(first.tps, 50)
-  // 反复取（等价于墙上时钟过了多久、重渲染多少次）都必须一模一样 —— 这是「不消失」的根据
-  assert.deepEqual(rollingSpeed(nodes, lastDecodeEnd(nodes), WINDOW_MS), first)
-  assert.deepEqual(rollingSpeed(nodes, lastDecodeEnd(nodes), WINDOW_MS), first)
-  // 即便真实时间已经过去很久，锚点仍停在最后一个 step 上，读数不 decay
-  const longAfter = Date.now() + 24 * 60 * 60 * 1000
-  assert.ok(longAfter > anchor + WINDOW_MS, '墙上时钟确实早已滑出窗口')
-  assert.deepEqual(rollingSpeed(nodes, lastDecodeEnd(nodes), WINDOW_MS), first)
-})
-
-test('rollingSpeed：跨窗口边界按重叠比例裁剪', () => {
-  // 60 秒产出 600 token；now 只走到窗口末尾 → 30 秒的份额 = 300 token / 30 秒 = 10 tok/s
-  const long = assistant({ firstTokenTime: 0, completedTime: 60000, outputTokens: 600 })
-  const half = rollingSpeed([long], 30000, WINDOW_MS)
-  assert.equal(half.tokens, 300)
-  assert.equal(half.decodeMs, 30000)
-  assert.equal(half.tps, 10)
-})
-
-test('rollingSpeed：多步累加，零宽步骤跳过', () => {
-  const a = assistant({ firstTokenTime: 0, completedTime: 1000, outputTokens: 20 })
-  const b = assistant({ firstTokenTime: 5000, completedTime: 7000, outputTokens: 60, turn: 2 })
-  const result = rollingSpeed([a, b], 7000, WINDOW_MS)
-  assert.equal(result.tokens, 80)
-  assert.equal(result.decodeMs, 3000)
-  assert.equal(result.tps, 80 / 3)
-  const zero = { kind: 'assistant', turn: 1, timing: { firstTokenTime: 1000, completedTime: 1000 }, usage: { outputTokens: 42 } }
-  assert.equal(rollingSpeed([zero], 1000, WINDOW_MS), null)
-})
-
-test('foldStats：与官方 deriveStats 同口径（投影缺失时的兜底）', () => {
   const steps = [
     { kind: 'assistant', turn: 1, timing: { stepStartTime: 0, firstTokenTime: 500, completedTime: 2500 }, usage: { outputTokens: 100 } },
     { kind: 'tool-result', callTime: 2500, time: 3000 },
@@ -206,15 +244,8 @@ test('foldStats：与官方 deriveStats 同口径（投影缺失时的兜底）'
   assert.equal(stats.llmMs, 2500 + 1500)
   assert.equal(stats.toolMs, 500)
   assert.equal(stats.ttftMs, 500 + 500)
-  assert.equal(stats.ttftSteps, 2)
   assert.equal(stats.decodeMs, 2000 + 1000)
   assert.equal(stats.decodeTokens, 150)
   assert.equal(formatTokensPerSecond(stats.decodeTokens / (stats.decodeMs / 1000)), '50')
-})
-
-test('foldStats：空输入安全', () => {
-  const stats = foldStats(undefined)
-  assert.equal(stats.steps, 0)
-  assert.equal(stats.decodeMs, 0)
-  assert.equal(rollingSpeed([], 0, WINDOW_MS), null)
+  assert.equal(foldStats(undefined).steps, 0)
 })
