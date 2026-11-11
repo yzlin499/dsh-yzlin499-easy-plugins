@@ -17,8 +17,9 @@ Last 30s speed                       195 tok/s   ← the row this plugin adds
 
 "Tokens per second (TPS)" is `Σ output tokens ÷ Σ decode time` over the **whole session**.
 After a two-hour run, a stalled step barely moves that number. The new "Last 30s speed" row uses
-the **same formula** with the range narrowed to the last 30 seconds — it follows generation while
-the model is writing, and decays to `—` once nothing has been decoding for 30 seconds.
+the **same formula** with the range narrowed to the last 30 seconds — and **anchored at the last
+settled step**: it only changes when you actually generate another step, and stays put once
+generation stops (it never decays with the wall clock, and never turns into `—`).
 
 ## Install
 
@@ -45,7 +46,9 @@ No switches, no settings page — it just works. Click the gauge reading
 - **Compact mode** (Settings → General → Performance & usage): the reading shows the whole-session
   speed only, exactly like the official behavior; hovering the tooltip also shows the last-30s
   speed.
-- When the window holds no settled decode time yet, it shows `—` instead of inventing a number.
+- It neither jumps nor decays: **with no new step settling, the reading stays exactly the same**.
+  It shows `—` only when the session has no usable decode interval at all (the provider reports no
+  timing / usage) instead of inventing a number.
 
 ## How it works
 
@@ -65,15 +68,18 @@ and styles are copied item by item from the official build (equivalents of `.hNG
 dictionary verbatim" sentinel, so a DSH change to those strings fails the test first.
 
 **How the 30-second figure is computed**: take every settled step's decode interval
-`[firstTokenTime, completedTime]`, intersect it with `[now-30s, now]`, apportion tokens by the
-overlap, then divide by the decode milliseconds inside the window:
+`[firstTokenTime, completedTime]`, intersect it with `[anchor-30s, anchor]` (**anchor = the last
+settled step's `completedTime`**), apportion tokens by the overlap, then divide by the decode
+milliseconds inside the window:
 
 ```
 window speed = Σ(overlapping tokens) ÷ Σ(overlapping milliseconds) × 1000
 ```
 
 Identical definition to the official whole-session speed (with the window set to the whole session
-the two are equal).
+the two are equal). Anchoring at the last step rather than at "now" is what makes it **hold still**
+after generation stops — no timer is installed at all: no new nodes, no new render, motionless by
+construction.
 
 **Data sources** are all standard injection faces of the slot — no private APIs, no other plugin's
 DOM:
@@ -88,8 +94,9 @@ DOM:
 
 - The 30-second window is computed from **settled** steps: the step currently streaming has not
   settled yet, so the reading lags by at most one step (the official whole-session reading lags the
-  same way).
-- Recomputed once per second while the panel is open; no timer runs while it is closed.
+  same way); conversely, it cannot drift while nothing new settles.
+- No polling while the panel is open: the reading is recomputed from `legacy.nodes` changes, and
+  costs nothing while idle.
 - The override point depends on the official `conversation.composer.dock` id / order contract. If
   that contract changes, the plugin degrades to a no-op (the official reading stays untouched)
   instead of breaking the composer.

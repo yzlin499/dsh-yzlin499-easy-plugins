@@ -15,6 +15,7 @@ const {
   formatTokensPerSecond,
   formatDuration,
   stepReading,
+  lastDecodeEnd,
   rollingSpeed,
   foldStats,
 } = internals
@@ -33,7 +34,7 @@ test('导出契约：name / inject / version', () => {
   assert.equal(exports.name, NS)
   assert.equal(NS, 'dsh-recent-tps')
   assert.deepEqual(exports.inject, ['slots', 'locale'])
-  assert.equal(VERSION, '0.1.0')
+  assert.equal(VERSION, '0.1.1')
   assert.equal(typeof exports.apply, 'function')
 })
 
@@ -135,9 +136,41 @@ test('stepReading：只认带 timing + usage 的 assistant 节点', () => {
 test('rollingSpeed：30 秒窗口内的解码速度', () => {
   const node = assistant({ firstTokenTime: 1000, completedTime: 3000, outputTokens: 100 })
   assert.equal(rollingSpeed([node], 3000, WINDOW_MS).tps, 50, '100 token / 2 秒')
-  assert.equal(rollingSpeed([node], 100000, WINDOW_MS), null, '滑出窗口')
+  assert.equal(rollingSpeed([node], 100000, WINDOW_MS), null, '锚点离得太远：窗口里没有解码时间')
   assert.equal(rollingSpeed([], 3000, WINDOW_MS), null)
   assert.equal(rollingSpeed(undefined, 3000, WINDOW_MS), null)
+})
+
+test('lastDecodeEnd：取最后一个已结算 step 的完成时刻', () => {
+  const nodes = [
+    assistant({ firstTokenTime: 1000, completedTime: 3000, outputTokens: 100 }),
+    assistant({ firstTokenTime: 5000, completedTime: 7000, outputTokens: 60, turn: 2 }),
+    { kind: 'user', turn: 3, time: 9999 },
+  ]
+  assert.equal(lastDecodeEnd(nodes), 7000)
+  assert.equal(lastDecodeEnd([]), null)
+  assert.equal(lastDecodeEnd(undefined), null)
+  assert.equal(lastDecodeEnd([{ kind: 'user' }]), null, '没有 assistant 节点就没有锚点')
+  assert.equal(lastDecodeEnd([{ kind: 'assistant', turn: 1 }]), null, '没有 timing 就没有锚点')
+})
+
+test('锚定语义：没有新 step 结算时读数恒定，不会衰减成 null', () => {
+  // 两步：100 token / 2 秒 + 50 token / 1 秒 = 150 token / 3 秒 = 50 tok/s
+  const nodes = [
+    assistant({ firstTokenTime: 0, completedTime: 2000, outputTokens: 100 }),
+    assistant({ firstTokenTime: 2000, completedTime: 3000, outputTokens: 50, turn: 2 }),
+  ]
+  const anchor = lastDecodeEnd(nodes)
+  assert.equal(anchor, 3000, '锚点 = 最后一步完成时刻')
+  const first = rollingSpeed(nodes, anchor, WINDOW_MS)
+  assert.equal(first.tps, 50)
+  // 反复取（等价于墙上时钟过了多久、重渲染多少次）都必须一模一样 —— 这是「不消失」的根据
+  assert.deepEqual(rollingSpeed(nodes, lastDecodeEnd(nodes), WINDOW_MS), first)
+  assert.deepEqual(rollingSpeed(nodes, lastDecodeEnd(nodes), WINDOW_MS), first)
+  // 即便真实时间已经过去很久，锚点仍停在最后一个 step 上，读数不 decay
+  const longAfter = Date.now() + 24 * 60 * 60 * 1000
+  assert.ok(longAfter > anchor + WINDOW_MS, '墙上时钟确实早已滑出窗口')
+  assert.deepEqual(rollingSpeed(nodes, lastDecodeEnd(nodes), WINDOW_MS), first)
 })
 
 test('rollingSpeed：跨窗口边界按重叠比例裁剪', () => {

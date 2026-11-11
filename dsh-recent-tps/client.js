@@ -18,10 +18,16 @@
 //
 // 二、「最近 30 秒速度」怎么算
 //   官方「输出速度（TPS）」= Σ 输出 token ÷ Σ 解码耗时（整段）。
-//   新行同口径，只把范围收到最近 30 秒：
-//     取每个已结算 step 的解码区间 [firstTokenTime, completedTime] 与窗口 [now-30s, now] 求交，
+//   新行同口径，只把范围收到 30 秒，并且**锚定在最后一个已结算的 step 上**：
+//     窗口 = [最后一个已结算 step 的 completedTime - 30s, 该 completedTime]
+//     取每个已结算 step 的解码区间 [firstTokenTime, completedTime] 与窗口求交，
 //     token 按重叠比例分摊，窗口速度 = Σ(重叠 token) ÷ Σ(重叠毫秒) × 1000。
-//   窗口内没有解码时间时显示「—」（和官方「没数据不给数」一致）。
+//   这样它只随「新的 step 结算」而变：生成停下来之后读数**原样保持**，
+//   不会跟着墙上时钟衰减、更不会变成「—」（那是实时量才有的行为）。
+//   完全没有可用解码区间时（provider 不报 usage 等）才显示「—」。
+//
+//   实现上不挂任何定时器：锚点来自 `legacy.nodes` 里最大的 completedTime，
+//   没有新节点就没有新渲染，天然静止。
 //
 // 三、数据来源（插槽标准注入面，不碰私有 API / 别人 DOM）
 //   · `useProjection('sessionStats')` —— 官方整段统计（轮/步/耗时/token），缺失时用
@@ -37,7 +43,7 @@ window.__ModuleLoader__.load({
     const ReactDOM = require('react-dom')
 
     const NS = 'dsh-recent-tps'
-    const VERSION = '0.1.0'
+    const VERSION = '0.1.1'
     const log = (...args) => console.log('[recent-tps]', ...args)
 
     /** 统计窗口：最近 30 秒（想换窗口改这一处） */
@@ -285,16 +291,25 @@ window.__ModuleLoader__.load({
       React.createElement('circle', { cx: 8, cy: 12.2, r: 1.05, fill: 'currentColor' }))
     }
 
-    // ── 每次渲染都要用的两个 Hook ────────────────────────────────────────
-    /** 面板打开时每秒重算一次 30 秒窗口（关着就完全不空转） */
-    function useNow(active) {
-      const [now, setNow] = React.useState(() => Date.now())
-      React.useEffect(() => {
-        if (!active) return undefined
-        const timer = setInterval(() => setNow(Date.now()), 1000)
-        return () => clearInterval(timer)
-      }, [active])
-      return now
+    // ── 面板锚定 ─────────────────────────────────────────────────────────
+    /**
+     * 最后一个已结算 step 的完成时刻（窗口右端）。
+     * 返回 null 表示这个会话还没有任何带完成时间的 assistant 节点。
+     * @param nodes - `legacy.nodes`
+     * @returns 锚点毫秒，或 null
+     */
+    function lastDecodeEnd(nodes) {
+      const list = Array.isArray(nodes) ? nodes : EMPTY_NODES
+      let end = Number.NEGATIVE_INFINITY
+      for (const node of list) {
+        if (!isRecord(node) || node.kind !== 'assistant') continue
+        const timing = node.timing
+        if (!isRecord(timing)) continue
+        const completedTime = timing.completedTime
+        if (typeof completedTime !== 'number' || !Number.isFinite(completedTime)) continue
+        if (completedTime > end) end = completedTime
+      }
+      return Number.isFinite(end) ? end : null
     }
 
     const MEASURE_STYLE = { visibility: 'hidden', left: 0, top: 0 }
@@ -361,16 +376,16 @@ window.__ModuleLoader__.load({
       const labels = useLabels(selectSelf)
       const mode = usePerformanceUsage(selectSelf)
       const seat = useDialogSeat()
-      const now = useNow(seat.open)
 
       const stats = React.useMemo(
         () => (isRecord(projected) ? projected : foldStats(nodes)),
         [projected, nodes],
       )
-      const recent = React.useMemo(
-        () => rollingSpeed(nodes, now, WINDOW_MS),
-        [nodes, now],
-      )
+      // 锚定在最后一个已结算 step 上：没有新 step 结算就永远保持同一个读数。
+      const recent = React.useMemo(() => {
+        const anchor = lastDecodeEnd(nodes)
+        return anchor === null ? null : rollingSpeed(nodes, anchor, WINDOW_MS)
+      }, [nodes])
 
       const steps = typeof stats.steps === 'number' ? stats.steps : 0
       if (steps === 0) return null
@@ -507,6 +522,7 @@ window.__ModuleLoader__.load({
       formatTokensPerSecond,
       formatDuration,
       stepReading,
+      lastDecodeEnd,
       rollingSpeed,
       foldStats,
       createStore,
