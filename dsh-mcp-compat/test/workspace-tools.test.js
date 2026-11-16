@@ -229,3 +229,34 @@ test('buildUserMessage：id/role/source/content 齐全（恢复校验的硬要�
   assert.notEqual(buildUserMessage('x').id, buildUserMessage('x').id)
 })
 
+
+test('normalizeStore：快捷卡片与上次参数缓存做形状校验', () => {
+  const merged = normalizeStore({
+    shortcuts: [
+      {
+        id: 'sc-1',
+        key: 'i:\\proj',
+        name: '待处理 issue',
+        tool: 'mcp__aireview-mcp__list_issues',
+        fixed: { project_id: 'jxqyxh' },
+        dynamic: [{ name: 'page', type: 'number', integer: true, min: 1, max: 20 }, { name: 'status', type: 'enum', options: ['pending', 1] }],
+      },
+      { id: '', name: 'x', tool: 'mcp__a__b', dynamic: [] }, // 缺 id
+      { id: 'sc-2', name: 'bad tool', tool: 'pwsh', dynamic: [{ name: 'p', type: 'number' }] }, // 非 mcp__
+    ],
+    lastArgs: {
+      'mcp__aireview-mcp__list_issues': { page: 2 },
+      pwsh: { command: 'x' }, // 非 mcp__ 丢弃
+      'mcp__a__b': 'not-an-object',
+    },
+  })
+  assert.equal(merged.shortcuts.length, 1)
+  const card = merged.shortcuts[0]
+  assert.equal(card.name, '待处理 issue')
+  assert.equal(card.dynamic[0].integer, true)
+  assert.equal(card.dynamic[0].min, 1)
+  assert.deepEqual(card.dynamic[1].options, ['pending', '1'])
+  assert.deepEqual(merged.lastArgs, { 'mcp__aireview-mcp__list_issues': { page: 2 } })
+  assert.deepEqual(normalizeStore(undefined).shortcuts, [])
+  assert.deepEqual(normalizeStore(undefined).lastArgs, {})
+})

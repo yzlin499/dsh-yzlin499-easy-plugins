@@ -808,6 +808,10 @@ const STORE_DEFAULTS = () => ({
   // 注入没了，而这些会话的历史里已经有对应工具的调用/结果，模型继续时会发现
   // 工具突然消失（表现为「会话毁了」）。
   sessionTools: [],
+  // 快捷卡片：{ id, key(工作区), name, tool, fixed:{参数:值}, dynamic:[{name,type,integer,min,max,step,default}] }
+  shortcuts: [],
+  // 上次调用参数缓存：toolName -> { 参数: 值 }，表单 / 卡片默认回填
+  lastArgs: {},
   callTemplate: '【MCP 手动调用】{server} / {tool}\n\n**参数**\n```json\n{args}\n```\n\n**结果**\n{result}',
 })
 // 把磁盘上的任意内容归一成合法 store（纯函数，便于单测；坏字段逐项回退默认值）。
@@ -841,6 +845,43 @@ const normalizeStore = (raw) => {
       }))
       .filter((entry) => entry.tools.length > 0)
       .slice(-200)
+  }
+  // 快捷卡片：字段非法整体丢弃（宁可少一张卡，也不要半张坏卡）。
+  if (Array.isArray(raw.shortcuts)) {
+    const types = new Set(['number', 'string', 'boolean', 'enum', 'array', 'object'])
+    base.shortcuts = raw.shortcuts
+      .filter((entry) => entry && typeof entry === 'object'
+        && typeof entry.id === 'string' && entry.id !== ''
+        && typeof entry.tool === 'string' && entry.tool.startsWith('mcp__')
+        && typeof entry.name === 'string' && entry.name !== '')
+      .map((entry) => ({
+        id: entry.id,
+        key: typeof entry.key === 'string' ? entry.key : '',
+        name: String(entry.name).slice(0, 80),
+        tool: entry.tool,
+        fixed: entry.fixed && typeof entry.fixed === 'object' && !Array.isArray(entry.fixed) ? entry.fixed : {},
+        dynamic: (Array.isArray(entry.dynamic) ? entry.dynamic : [])
+          .filter((param) => param && typeof param.name === 'string' && param.name !== '' && types.has(param.type))
+          .map((param) => ({
+            name: param.name,
+            type: param.type,
+            integer: param.type === 'number' ? param.integer === true : undefined,
+            min: param.type === 'number' && Number.isFinite(param.min) ? param.min : undefined,
+            max: param.type === 'number' && Number.isFinite(param.max) ? param.max : undefined,
+            step: param.type === 'number' && Number.isFinite(param.step) && param.step > 0 ? param.step : undefined,
+            options: param.type === 'enum' && Array.isArray(param.options) ? param.options.map((option) => String(option)) : undefined,
+            default: param.default === undefined ? undefined : String(param.default),
+          })),
+      }))
+      .filter((entry) => entry.dynamic.length > 0 || Object.keys(entry.fixed).length > 0)
+      .slice(-100)
+  }
+  // 上次调用参数：只留对象形状，最多 200 个工具
+  if (raw.lastArgs && typeof raw.lastArgs === 'object' && !Array.isArray(raw.lastArgs)) {
+    const entries = Object.entries(raw.lastArgs)
+      .filter(([name, value]) => typeof name === 'string' && name.startsWith('mcp__') && value && typeof value === 'object' && !Array.isArray(value))
+      .slice(-200)
+    base.lastArgs = Object.fromEntries(entries)
   }
   if (typeof raw.callTemplate === 'string' && raw.callTemplate.trim() !== '') base.callTemplate = raw.callTemplate
   return base
@@ -1891,10 +1932,14 @@ export async function apply(ctx) {
         : mergeDeny(denyListFor(projectTools, cwd), workspaceDisabledFor(cwd), known),
     )
     const servers = describeSessionTools(currentServers, schemas, deny, injected, cwd, (name) => fiberByName.has(name))
+    const key = cwd ? workspaceKeyOf(cwd, workspaceRoots()) : ''
     return {
       ok: true,
       session: { sessionId, cwd: cwd || null, live: agent !== null },
       servers,
+      // 快捷卡片只属于创建它的工作区（别的项目的卡片不该出现在这个会话里）
+      shortcuts: (store.shortcuts || []).filter((shortcut) => (shortcut.key || '') === key),
+      lastArgs: store.lastArgs || {},
       totalHidden: servers.reduce((n, server) => n + server.tools.filter((tool) => !tool.injected).length, 0),
       totalInjected: servers.reduce((n, server) => n + server.tools.filter((tool) => tool.injected).length, 0),
     }
@@ -1966,6 +2011,15 @@ export async function apply(ctx) {
       result: contentToText(outcome.content) || (outcome.isError ? '(无输出)' : '(空结果)'),
     })
     // 预览 = 将要写进会话的原文，避免「看到的和发出去的不一样」
+    // 顺手缓存这次参数：下次表单 / 快捷卡片默认回填上次的值
+    try {
+      store.lastArgs = { ...(store.lastArgs || {}), [toolName]: args }
+      const keys = Object.keys(store.lastArgs)
+      if (keys.length > 200) {
+        store.lastArgs = Object.fromEntries(keys.slice(-200).map((name) => [name, store.lastArgs[name]]))
+      }
+      persist()
+    } catch {}
     return { ok: true, isError: outcome.isError === true, preview: rendered, tool: toolName }
   }
   // 用户确认后，把预览文本作为一条 user 消息**交给 agent**（inbox next-turn + 唤醒驱动）。
@@ -2107,6 +2161,83 @@ export async function apply(ctx) {
           persistSessionInjections() // 重启后恢复，避免会话历史里的工具突然失效
           refreshRestrictions(currentServers)
           log('会话临时注入已更新:', sessionId, `注入 ${tools.length} 个工具`)
+          sendJson(res, describeForSession(sessionId))
+          return
+        }
+        if (url.pathname === '/mcp-compat/shortcuts' && req.method === 'POST') {
+          // 快捷卡片：保存 / 删除（按工作区隔离，卡片只出现在创建它的工作区会话里）
+          const a = await readBody(req)
+          const sessionId = String(a.sessionId || '').trim()
+          if (!sessionId) {
+            sendJson(res, { ok: false, error: '缺少 sessionId' }, 400)
+            return
+          }
+          let agent = null
+          try {
+            agent = ctx.agents.list().find((candidate) => candidate && candidate.session && candidate.session.id === sessionId) || null
+          } catch {}
+          const cwd = agent && agent.session && agent.session.header && agent.session.header.cwd
+          const key = cwd ? workspaceKeyOf(cwd, workspaceRoots()) : ''
+          const op = String(a.op || 'list')
+          if (op === 'delete') {
+            const id = String(a.id || '').trim()
+            store.shortcuts = (store.shortcuts || []).filter((shortcut) => shortcut.id !== id)
+            persist()
+            sendJson(res, describeForSession(sessionId))
+            return
+          }
+          if (op === 'save') {
+            const input = a.shortcut && typeof a.shortcut === 'object' ? a.shortcut : {}
+            const tool = String(input.tool || '').trim()
+            const name = String(input.name || '').trim().slice(0, 80)
+            if (!tool.startsWith('mcp__')) {
+              sendJson(res, { ok: false, error: '只支持 MCP 工具（mcp__*）' }, 400)
+              return
+            }
+            if (!name) {
+              sendJson(res, { ok: false, error: '卡片名称不能为空' }, 400)
+              return
+            }
+            const dynamic = (Array.isArray(input.dynamic) ? input.dynamic : [])
+              .filter((param) => param && typeof param.name === 'string' && param.name !== '')
+              .map((param) => {
+                const type = ['number', 'string', 'boolean', 'enum', 'array', 'object'].includes(param.type) ? param.type : 'string'
+                const numeric = type === 'number'
+                return {
+                  name: param.name,
+                  type,
+                  integer: numeric ? param.integer === true : undefined,
+                  min: numeric && Number.isFinite(param.min) ? param.min : undefined,
+                  max: numeric && Number.isFinite(param.max) ? param.max : undefined,
+                  step: numeric && Number.isFinite(param.step) && param.step > 0 ? param.step : undefined,
+                  options: type === 'enum' && Array.isArray(param.options) ? param.options.map((option) => String(option)) : undefined,
+                  default: param.default === undefined || param.default === null ? undefined : String(param.default),
+                }
+              })
+            const fixed = input.fixed && typeof input.fixed === 'object' && !Array.isArray(input.fixed) ? input.fixed : {}
+            if (dynamic.length === 0 && Object.keys(fixed).length === 0) {
+              sendJson(res, { ok: false, error: '卡片至少需要固定参数或动态参数' }, 400)
+              return
+            }
+            const id = String(input.id || '').trim() || `sc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
+            const next = {
+              id,
+              key,
+              name,
+              tool,
+              fixed,
+              dynamic,
+            }
+            // 同 id 覆盖；同工作区同名视为更新，避免卡片重复堆叠
+            store.shortcuts = [
+              ...(store.shortcuts || []).filter((shortcut) => shortcut.id !== id && !(shortcut.key === key && shortcut.name === name)),
+              next,
+            ].slice(-100)
+            persist()
+            log('快捷卡片已保存:', name, '->', tool)
+            sendJson(res, describeForSession(sessionId))
+            return
+          }
           sendJson(res, describeForSession(sessionId))
           return
         }

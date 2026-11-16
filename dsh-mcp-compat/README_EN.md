@@ -340,6 +340,20 @@ or type `/mcp-reconnect unreal` directly in the input box.
 MIT
 
 
+### Shortcut cards (fixed + dynamic arguments)
+
+Some tools you call daily but change one or two arguments each time. Click "New card" on a
+tool in the panel:
+
+- each argument is either **fixed** (baked into the card) or **dynamic** (filled when you run it);
+- numeric dynamic arguments can be marked **integer** and given a **min / max** — with both set
+  the card renders a **slider**;
+- cards are **workspace-scoped**: they only appear in sessions of the workspace that created them;
+- click a card → tweak the dynamic arguments → Run → **review the result** → "Send to session".
+
+The arguments of your last call are cached (store `lastArgs`) and pre-fill both the create-card
+form and the call form. Cards live in `mcp-compat.json` under `shortcuts` (up to 100).
+
 ### Troubleshooting: sessions broken by 0.12.0 ~ 0.12.4
 
 Those versions implemented "Send to session" as `session.append('user/message', …)`
@@ -359,3 +373,4 @@ node scripts/repair-session-ids.cjs
 It scans `<DSH_HOME>/sessions/**/*.jsonl.zstd` and only patches `user/message` events
 that lack an `id` (every other byte is preserved), then drops the matching projection
 cache. Restart DSH afterwards.
+

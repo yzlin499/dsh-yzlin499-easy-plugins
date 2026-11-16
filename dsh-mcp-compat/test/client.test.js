@@ -243,3 +243,19 @@ test('buildArgs：必填缺失/类型非法报错，合法输入按类型转换'
   assert.deepEqual(ok.args, { project: 'p1', count: 3, verbose: true, tags: ['x', 'y'] })
 })
 
+
+test('client：右侧栏 tab 标题槽位与引导页图标都带 MCP 标识', () => {
+  const { exports } = loadClient()
+  const ctx = makeCtx()
+  exports.apply(ctx)
+  const tab = ctx.tabs[0]
+  assert.ok(tab.guide && tab.guide[0], '引导页卡片缺失')
+  assert.equal(typeof tab.guide[0].icon, 'function', '引导页卡片应带图标组件')
+  const title = ctx.slotRegistrations.find((entry) => entry.spec.name === 'sidebar.right.pane.tab.title')
+  assert.ok(title, '没有注册 sidebar.right.pane.tab.title')
+  assert.equal(title.spec.key, 'dsh-mcp-compat')
+  assert.equal(typeof title.component, 'function')
+  // 图标组件本身可调用（假 React 的 createElement 返回 null，这里只验证不抛错）
+  assert.doesNotThrow(() => tab.icon({ size: 14 }))
+})
+

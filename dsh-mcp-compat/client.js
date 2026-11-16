@@ -83,7 +83,24 @@ window.__ModuleLoader__.load({
 			// ── 右侧栏「MCP 管理」面板 ──
 			".mcp-panel{display:flex;flex-direction:column;height:100%;min-height:0;color:var(--dsw-alias-label-primary)}",
 			".mcp-panel-head{display:flex;flex-direction:column;gap:2px;padding:10px 12px;border-bottom:1px solid var(--dsw-alias-border-l2)}",
-			".mcp-panel-title{font-size:13px;font-weight:600}",
+			".mcp-panel-title{font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px}",
+			".mcp-panel-title-icon{flex:none;color:var(--dsw-alias-label-primary)}",
+			".mcp-tab-title{display:inline-flex;align-items:center;gap:5px}",
+			".mcp-tab-title svg{flex:none;color:currentColor;opacity:.9}",
+			// 快捷卡片
+			".mcp-cards{display:flex;flex-wrap:wrap;gap:6px;padding:8px 12px;border-bottom:1px solid var(--dsw-alias-border-l2)}",
+			".mcp-card{display:flex;flex-direction:column;align-items:flex-start;gap:2px;max-width:100%;background:var(--dsw-alias-bg-layer-3);border:1px solid var(--dsw-alias-border-l2);border-radius:10px;padding:7px 10px;cursor:pointer;color:inherit;font:inherit;text-align:left}",
+			".mcp-card:hover{border-color:var(--dsw-alias-border-l1)}",
+			".mcp-card.is-active{border-color:var(--dsw-alias-brand-primary);background:var(--dsw-alias-interactive-bg-hover)}",
+			".mcp-card-name{font-size:12px;font-weight:600;color:var(--dsw-alias-label-primary)}",
+			".mcp-card-tool{font-size:10px;color:var(--dsw-alias-label-tertiary);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+			".mcp-card-form{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border-bottom:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-module-platform)}",
+			".mcp-card-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}",
+			".mcp-slider{flex:1;min-width:110px;accent-color:var(--dsw-alias-brand-primary)}",
+			".mcp-slider-value{font-size:11px;color:var(--dsw-alias-label-secondary);min-width:44px;text-align:right;font-variant-numeric:tabular-nums}",
+			".mcp-mode{margin-left:auto;display:flex;gap:4px}",
+			".mcp-mode .mcp-gate-mini{padding:3px 7px;font-size:10px}",
+			".mcp-mode .mcp-gate-mini.is-on{color:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary)}",
 			".mcp-panel-sub{font-size:10.5px;color:var(--dsw-alias-label-tertiary);line-height:1.4}",
 			".mcp-panel-toolbar{display:flex;gap:6px;padding:8px 12px 0}",
 			".mcp-panel-body{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;padding:8px 12px 12px;display:flex;flex-direction:column;gap:10px}",
@@ -378,6 +395,23 @@ window.__ModuleLoader__.load({
 					discard: "丢弃",
 					invalidArgs: "参数有误：",
 					previewFailed: "调用失败",
+					// 快捷卡片
+					shortcutsTitle: "快捷卡片",
+					shortcutEmpty: "还没有快捷卡片：在工具上点「建卡」，把常用参数固定下来。",
+					createCard: "建卡",
+					cardName: "卡片名称",
+					cardNamePlaceholder: "例如：待处理 issue",
+					cardFixed: "固定",
+					cardDynamic: "动态",
+					cardCreate: "创建卡片",
+					cardDelete: "删除",
+					cardRun: "执行",
+					cardSaved: "卡片已保存",
+					cardNoDynamic: "这张卡片没有动态参数，直接执行即可",
+					cardMin: "最小",
+					cardMax: "最大",
+					cardInteger: "整数",
+					cardExists: "已有同名卡片，保存会覆盖",
 				},
 				en: {
 					menuLabel: "MCP tools…",
@@ -425,6 +459,22 @@ window.__ModuleLoader__.load({
 					discard: "Discard",
 					invalidArgs: "Invalid arguments: ",
 					previewFailed: "Call failed",
+					shortcutsTitle: "Shortcuts",
+					shortcutEmpty: "No shortcuts yet — click \"New card\" on a tool to pin its common arguments.",
+					createCard: "New card",
+					cardName: "Card name",
+					cardNamePlaceholder: "e.g. pending issues",
+					cardFixed: "fixed",
+					cardDynamic: "dynamic",
+					cardCreate: "Create card",
+					cardDelete: "Delete",
+					cardRun: "Run",
+					cardSaved: "Card saved",
+					cardNoDynamic: "This card has no dynamic arguments — just run it",
+					cardMin: "min",
+					cardMax: "max",
+					cardInteger: "integer",
+					cardExists: "A card with this name exists; saving overwrites it",
 				},
 			};
 			const localeOf = (() => {
@@ -831,7 +881,7 @@ window.__ModuleLoader__.load({
 
 			function McpManagerView(props) {
 				const sessionId = props && props.sessionId ? String(props.sessionId) : "";
-				const [data, setData] = react.useState({ loading: true, error: "", servers: [] });
+				const [data, setData] = react.useState({ loading: true, error: "", servers: [], lastArgs: {} });
 				const [busy, setBusy] = react.useState(false);
 				const [status, setStatus] = react.useState("");
 				const [query, setQuery] = react.useState("");
@@ -844,6 +894,12 @@ window.__ModuleLoader__.load({
 				const [rawText, setRawText] = react.useState("{}");
 				// 调用结果预览：确认后才写进会话
 				const [preview, setPreview] = react.useState(null);
+				// 快捷卡片：列表 / 当前展开的卡片 / 动态参数值 / 卡片结果预览 / 建卡草稿
+				const [cards, setCards] = react.useState([]);
+				const [activeCardId, setActiveCardId] = react.useState("");
+				const [cardValues, setCardValues] = react.useState({});
+				const [cardPreview, setCardPreview] = react.useState(null);
+				const [draft, setDraft] = react.useState(null);
 
 				const load = () => {
 					if (!sessionId) {
@@ -853,8 +909,10 @@ window.__ModuleLoader__.load({
 					setData((prev) => ({ ...prev, loading: true, error: "" }));
 					requestJson("/mcp-compat/panel?sessionId=" + encodeURIComponent(sessionId))
 						.then((payload) => {
-							if (payload && payload.ok) setData({ loading: false, error: "", servers: payload.servers || [] });
-							else setData({ loading: false, error: errorText(payload && payload.error), servers: [] });
+							if (payload && payload.ok) {
+								setData({ loading: false, error: "", servers: payload.servers || [], lastArgs: payload.lastArgs || {} });
+								setCards(payload.shortcuts || []);
+							} else setData({ loading: false, error: errorText(payload && payload.error), servers: [] });
 						})
 						.catch((e) => setData({ loading: false, error: String((e && e.message) || t("readFailed")), servers: [] }));
 				};
@@ -986,6 +1044,183 @@ window.__ModuleLoader__.load({
 							: (server.tools || []),
 					}))
 					.filter((server) => server.tools.length > 0);
+				// ── 快捷卡片：固定参数 + 动态参数，点开即调，预览后发送 ──
+				const toolLabel = (name) => String(name || "").replace(/^mcp__/, "").replace(/__/g, " / ");
+				const openCard = (card) => {
+					setActiveCardId(card.id);
+					setCardPreview(null);
+					setDraft(null);
+					const next = {};
+					for (const param of card.dynamic || []) {
+						next[param.name] = param.default !== undefined && param.default !== null
+							? param.default
+							: param.type === "boolean" ? false : "";
+					}
+					setCardValues(next);
+				};
+				const cardArgs = (card) => {
+					const args = { ...(card.fixed || {}) };
+					for (const param of card.dynamic || []) {
+						const raw = cardValues[param.name];
+						if (param.type === "boolean") { args[param.name] = raw === true; continue; }
+						const text = String(raw === undefined || raw === null ? "" : raw).trim();
+						if (text === "") continue;
+						if (param.type === "number") {
+							const value = Number(text);
+							if (Number.isFinite(value)) args[param.name] = param.integer === true ? Math.round(value) : value;
+						} else if (param.type === "array" || param.type === "object") {
+							try { args[param.name] = JSON.parse(text); } catch {}
+						} else {
+							args[param.name] = text;
+						}
+					}
+					return args;
+				};
+				const runCard = (card) => {
+					setBusy(true);
+					setStatus(t("calling"));
+					requestJson("/mcp-compat/panel/call", {
+						method: "POST",
+						headers: { "content-type": "application/json" },
+						body: JSON.stringify({ sessionId, name: card.tool, args: JSON.stringify(cardArgs(card)) }),
+					})
+						.then((payload) => {
+							setBusy(false);
+							if (payload && payload.ok) {
+								setCardPreview({ text: String(payload.preview || ""), isError: payload.isError === true });
+								setStatus("");
+							} else setStatus(errorText(payload && payload.error));
+						})
+						.catch((e) => { setBusy(false); setStatus(String((e && e.message) || t("saveFailed"))); });
+				};
+				const commitCardPreview = () => {
+					if (!cardPreview) return;
+					setBusy(true);
+					requestJson("/mcp-compat/panel/commit", {
+						method: "POST",
+						headers: { "content-type": "application/json" },
+						body: JSON.stringify({ sessionId, text: cardPreview.text }),
+					})
+						.then((payload) => {
+							setBusy(false);
+							if (payload && payload.ok) {
+								setCardPreview(null);
+								setStatus(t("callDone"));
+							} else setStatus(errorText(payload && payload.error));
+						})
+						.catch((e) => { setBusy(false); setStatus(String((e && e.message) || t("saveFailed"))); });
+				};
+				const deleteCard = (card) => {
+					setBusy(true);
+					requestJson("/mcp-compat/shortcuts", {
+						method: "POST",
+						headers: { "content-type": "application/json" },
+						body: JSON.stringify({ sessionId, op: "delete", id: card.id }),
+					})
+						.then((payload) => {
+							setBusy(false);
+							if (payload && payload.ok) {
+								setCards(payload.shortcuts || []);
+								setActiveCardId("");
+								setCardPreview(null);
+							} else setStatus(errorText(payload && payload.error));
+						})
+						.catch((e) => { setBusy(false); setStatus(String((e && e.message) || t("saveFailed"))); });
+				};
+				/** 打开「建卡」面板：每个参数按上次调用值 / 默认值预填，默认全部动态。 */
+				const startDraft = (tool) => {
+					const last = ((data && data.lastArgs) || {})[tool.name] || {};
+					const rows = schemaFields(tool.parameters).map((field) => {
+						const remembered = last[field.name];
+						const seed = remembered !== undefined
+							? (typeof remembered === "object" ? JSON.stringify(remembered) : String(remembered))
+							: field.hasDefault
+								? (field.type === "array" || field.type === "object" ? JSON.stringify(field.defaultValue) : String(field.defaultValue))
+								: field.type === "boolean" ? false : "";
+						return {
+							...field,
+							mode: "dynamic",
+							value: seed,
+							integer: field.type === "number",
+							min: "",
+							max: "",
+						};
+					});
+					setDraft({ tool, name: "", rows, error: "" });
+					setCalling(null);
+					setPreview(null);
+					setCardPreview(null);
+					setActiveCardId("");
+					setStatus("");
+				};
+				const setDraftRow = (index, patch) => {
+					setDraft((prev) => {
+						if (!prev) return prev;
+						const rows = prev.rows.map((row, i) => (i === index ? { ...row, ...patch } : row));
+						return { ...prev, rows };
+					});
+				};
+				const saveDraft = () => {
+					if (!draft) return;
+					const fixed = {};
+					const dynamic = [];
+					for (const row of draft.rows) {
+						const text = String(row.value === undefined || row.value === null ? "" : row.value).trim();
+						if (row.mode === "fixed") {
+							if (text === "") continue;
+							if (row.type === "number") {
+								const value = Number(text);
+								if (Number.isFinite(value)) fixed[row.name] = row.integer === false ? value : Math.round(value);
+							} else if (row.type === "boolean") {
+								fixed[row.name] = row.value === true || text === "true";
+							} else if (row.type === "array" || row.type === "object") {
+								try { fixed[row.name] = JSON.parse(text); } catch {}
+							} else {
+								fixed[row.name] = text;
+							}
+							continue;
+						}
+						dynamic.push({
+							name: row.name,
+							type: row.type,
+							integer: row.type === "number" ? row.integer !== false : undefined,
+							min: row.type === "number" && String(row.min).trim() !== "" && Number.isFinite(Number(row.min)) ? Number(row.min) : undefined,
+							max: row.type === "number" && String(row.max).trim() !== "" && Number.isFinite(Number(row.max)) ? Number(row.max) : undefined,
+							step: row.type === "number" ? (row.integer === false ? 0.1 : 1) : undefined,
+							options: row.type === "enum" ? row.options : undefined,
+							default: text === "" ? undefined : text,
+						});
+					}
+					if (Object.keys(fixed).length === 0 && dynamic.length === 0) {
+						setDraft((prev) => (prev ? { ...prev, error: t("invalidArgs") + t("cardNoDynamic") } : prev));
+						return;
+					}
+					setBusy(true);
+					requestJson("/mcp-compat/shortcuts", {
+						method: "POST",
+						headers: { "content-type": "application/json" },
+						body: JSON.stringify({
+							sessionId,
+							op: "save",
+							shortcut: {
+								name: draft.name.trim() || toolLabel(draft.tool.name),
+								tool: draft.tool.name,
+								fixed,
+								dynamic,
+							},
+						}),
+					})
+						.then((payload) => {
+							setBusy(false);
+							if (payload && payload.ok) {
+								setCards(payload.shortcuts || []);
+								setDraft(null);
+								setStatus(t("cardSaved"));
+							} else setDraft((prev) => (prev ? { ...prev, error: errorText(payload && payload.error) } : prev));
+						})
+						.catch((e) => { setBusy(false); setDraft((prev) => (prev ? { ...prev, error: String((e && e.message) || t("saveFailed")) } : prev)); });
+				};
+
 				const hiddenCount = servers.reduce((n, server) => n + (server.tools || []).filter((tool) => !tool.injected).length, 0);
 				const injectedCount = servers.reduce((n, server) => n + (server.tools || []).filter((tool) => tool.injected).length, 0);
 
@@ -1031,9 +1266,159 @@ window.__ModuleLoader__.load({
 					);
 				};
 
+				/** 卡片里的动态参数控件：数值区间给滑条，其余按类型给输入框。 */
+				const renderCardParam = (param) => {
+					const value = cardValues[param.name];
+					const setValue = (next) => setCardValues((prev) => ({ ...prev, [param.name]: next }));
+					const isSlider = param.type === "number" && Number.isFinite(param.min) && Number.isFinite(param.max);
+					const label = react.createElement("div", { className: "mcp-field-label" },
+						react.createElement("span", null, param.name),
+						react.createElement("span", { className: "mcp-gate-tag" }, param.type === "number" ? (param.integer ? "int" : "float") : param.type),
+					);
+					if (isSlider) {
+						const current = value === "" || value === undefined ? param.min : value;
+						return react.createElement("div", { className: "mcp-field", key: param.name }, label,
+							react.createElement("div", { className: "mcp-card-row" },
+								react.createElement("input", {
+									className: "mcp-slider",
+									type: "range",
+									min: param.min,
+									max: param.max,
+									step: param.step || (param.integer ? 1 : 0.1),
+									value: current,
+									onChange: (event) => setValue(event.target.value),
+								}),
+								react.createElement("span", { className: "mcp-slider-value" }, String(current)),
+							),
+						);
+					}
+					const control = param.type === "boolean"
+						? react.createElement("label", { className: "mcp-check" },
+							react.createElement("input", { type: "checkbox", checked: value === true, onChange: (event) => setValue(event.target.checked) }),
+							react.createElement("span", null, value === true ? "true" : "false"),
+						)
+						: param.type === "enum"
+							? react.createElement("select", { className: "mcp-select", value: value === undefined ? "" : String(value), onChange: (event) => setValue(event.target.value) },
+								react.createElement("option", { value: "" }, "—"),
+								(param.options || []).map((option) => react.createElement("option", { value: option, key: option }, option)),
+							)
+							: react.createElement("input", {
+								className: "mcp-input",
+								type: param.type === "number" ? "number" : "text",
+								value: value === undefined || value === null ? "" : String(value),
+								onChange: (event) => setValue(event.target.value),
+							});
+					return react.createElement("div", { className: "mcp-field", key: param.name }, label, control);
+				};
+
+				const renderCardForm = (card) => react.createElement("div", { className: "mcp-card-form", key: "card-" + card.id },
+					react.createElement("div", { className: "mcp-panel-actions" },
+						react.createElement("span", { className: "mcp-field-label" }, card.name),
+						react.createElement("span", { className: "mcp-gate-tag" }, toolLabel(card.tool)),
+						react.createElement("button", { className: "mcp-gate-mini", onClick: () => runCard(card), disabled: busy }, t("cardRun")),
+						react.createElement("button", { className: "mcp-gate-mini", onClick: () => deleteCard(card), disabled: busy }, t("cardDelete")),
+					),
+					(card.dynamic || []).length === 0
+						? react.createElement("div", { className: "mcp-field-hint" }, t("cardNoDynamic"))
+						: (card.dynamic || []).map(renderCardParam),
+					cardPreview
+						? react.createElement("div", { className: "mcp-field" },
+							react.createElement("div", { className: "mcp-field-label" }, t("previewTitle")),
+							cardPreview.isError ? react.createElement("div", { className: "mcp-field-error" }, t("previewFailed")) : null,
+							react.createElement("pre", { className: "mcp-preview" }, cardPreview.text),
+							react.createElement("div", { className: "mcp-panel-actions" },
+								react.createElement("button", { className: "mcp-gate-mini", onClick: commitCardPreview, disabled: busy }, t("confirmSend")),
+								react.createElement("button", { className: "mcp-gate-mini", onClick: () => setCardPreview(null), disabled: busy }, t("discard")),
+							),
+						)
+						: null,
+				);
+
+				const activeCard = cards.find((card) => card.id === activeCardId) || null;
+
+				const renderDraft = () => react.createElement("div", { className: "mcp-card-form" },
+					react.createElement("div", { className: "mcp-field" },
+						react.createElement("div", { className: "mcp-field-label" }, t("cardName")),
+						react.createElement("input", {
+							className: "mcp-input",
+							value: draft.name,
+							placeholder: t("cardNamePlaceholder"),
+							onChange: (event) => setDraft((prev) => (prev ? { ...prev, name: event.target.value } : prev)),
+						}),
+					),
+					draft.rows.length === 0
+						? react.createElement("div", { className: "mcp-field-hint" }, t("noParams"))
+						: draft.rows.map((row, index) => react.createElement("div", { className: "mcp-field", key: row.name },
+							react.createElement("div", { className: "mcp-field-label" },
+								react.createElement("span", null, row.name),
+								row.required ? react.createElement("span", { className: "mcp-field-req" }, "*") : null,
+								react.createElement("span", { className: "mcp-gate-tag" }, row.type),
+								react.createElement("span", { className: "mcp-mode" },
+									react.createElement("button", {
+										className: "mcp-gate-mini" + (row.mode === "fixed" ? " is-on" : ""),
+										onClick: () => setDraftRow(index, { mode: "fixed" }),
+									}, t("cardFixed")),
+									react.createElement("button", {
+										className: "mcp-gate-mini" + (row.mode === "dynamic" ? " is-on" : ""),
+										onClick: () => setDraftRow(index, { mode: "dynamic" }),
+									}, t("cardDynamic")),
+								),
+							),
+							row.type === "boolean"
+								? react.createElement("label", { className: "mcp-check" },
+									react.createElement("input", {
+										type: "checkbox",
+										checked: row.value === true,
+										onChange: (event) => setDraftRow(index, { value: event.target.checked }),
+									}),
+									react.createElement("span", null, row.value === true ? "true" : "false"),
+								)
+								: react.createElement("input", {
+									className: "mcp-input",
+									type: row.type === "number" ? "number" : "text",
+									value: row.value === undefined || row.value === null ? "" : String(row.value),
+									onChange: (event) => setDraftRow(index, { value: event.target.value }),
+								}),
+							row.type === "number"
+								? react.createElement("div", { className: "mcp-card-row" },
+									react.createElement("label", { className: "mcp-check" },
+										react.createElement("input", {
+											type: "checkbox",
+											checked: row.integer !== false,
+											onChange: (event) => setDraftRow(index, { integer: event.target.checked }),
+										}),
+										react.createElement("span", null, t("cardInteger")),
+									),
+									react.createElement("input", {
+										className: "mcp-input",
+										type: "number",
+										placeholder: t("cardMin"),
+										value: row.min,
+										onChange: (event) => setDraftRow(index, { min: event.target.value }),
+									}),
+									react.createElement("input", {
+										className: "mcp-input",
+										type: "number",
+										placeholder: t("cardMax"),
+										value: row.max,
+										onChange: (event) => setDraftRow(index, { max: event.target.value }),
+									}),
+								)
+								: null,
+						)),
+					draft.error ? react.createElement("div", { className: "mcp-field-error" }, String(draft.error)) : null,
+					react.createElement("div", { className: "mcp-panel-actions" },
+						react.createElement("button", { className: "mcp-gate-mini", onClick: saveDraft, disabled: busy }, t("cardCreate")),
+						react.createElement("button", { className: "mcp-gate-mini", onClick: () => setDraft(null), disabled: busy }, t("cancel")),
+					),
+				);
+
 				return react.createElement("div", { className: "mcp-panel" },
 					react.createElement("div", { className: "mcp-panel-head" },
-						react.createElement("div", { className: "mcp-panel-title" }, t("panelTitle")),
+						react.createElement("div", { className: "mcp-panel-title" },
+							react.createElement(McpGlyph, { size: 14, className: "mcp-panel-title-icon" }),
+							t("panelTitle"),
+						),
 						react.createElement("div", { className: "mcp-panel-sub" },
 							`${t("panelGuide")} · 隐藏 ${hiddenCount} / 已注入 ${injectedCount}`),
 					),
@@ -1051,6 +1436,23 @@ window.__ModuleLoader__.load({
 							disabled: busy || injectedCount === 0,
 						}, t("clearAll")),
 					),
+					// 快捷卡片：搜索框下面一排（点开即调，参数可固定 / 动态）
+					react.createElement("div", { className: "mcp-cards" },
+						cards.length === 0
+							? react.createElement("div", { className: "mcp-card-tool" }, t("shortcutEmpty"))
+							: cards.map((card) => react.createElement("button", {
+								key: card.id,
+								className: "mcp-card" + (activeCardId === card.id ? " is-active" : ""),
+								onClick: () => (activeCardId === card.id
+									? (setActiveCardId(""), setCardPreview(null))
+									: openCard(card)),
+							},
+								react.createElement("span", { className: "mcp-card-name" }, card.name),
+								react.createElement("span", { className: "mcp-card-tool" }, toolLabel(card.tool)),
+							)),
+					),
+					draft ? renderDraft() : null,
+					!draft && activeCardId ? (cards.find((card) => card.id === activeCardId) || null) ? renderCardForm(cards.find((card) => card.id === activeCardId)) : null : null,
 					react.createElement("div", { className: "mcp-panel-body" },
 						data.loading
 							? react.createElement("div", { className: "mcp-panel-empty" }, t("loading"))
@@ -1080,6 +1482,11 @@ window.__ModuleLoader__.load({
 														onClick: () => (calling && calling.name === tool.name ? stopCall() : startCall(tool)),
 														disabled: busy,
 													}, t("call")),
+													react.createElement("button", {
+														className: "mcp-gate-mini",
+														onClick: () => startDraft(tool),
+														disabled: busy,
+													}, t("createCard")),
 												),
 												// ① 参数表单（表单 / JSON 双模式）
 												calling && calling.name === tool.name && !preview
@@ -1155,8 +1562,16 @@ window.__ModuleLoader__.load({
 				kind: "mcp-compat",
 				title: () => t("panelTitle"),
 				icon: McpGlyph,
-				guide: [{ order: 40, title: () => t("panelTitle"), description: () => t("panelGuide") }],
+				guide: [{ order: 40, title: () => t("panelTitle"), description: () => t("panelGuide"), icon: McpGlyph }],
 			}), "mcp-compat: sidebar tab type");
+			// tab 胶囊标题（图标的落点）：官方按 type.id 分发到 sidebar.right.pane.tab.title
+			ctx.effect(() => ctx.slots.inject("sidebar.right.pane.tab.title", () => ctx.slots.register(
+				{ name: "sidebar.right.pane.tab.title", key: "dsh-mcp-compat" },
+				() => react.createElement("span", { className: "mcp-tab-title" },
+					react.createElement(McpGlyph, { size: 14 }),
+					react.createElement("span", null, t("panelTitle")),
+				),
+			)), "mcp-compat: sidebar tab title");
 			ctx.effect(() => ctx.slots.inject("sidebar.right.pane.tab", () => ctx.slots.register(
 				{ name: "sidebar.right.pane.tab", key: "dsh-mcp-compat" },
 				(props) => react.createElement(McpManagerView, { ...props }),
@@ -1179,5 +1594,10 @@ window.__ModuleLoader__.load({
 		return module.exports;
 	}
 });
+
+
+
+
+
 
 
