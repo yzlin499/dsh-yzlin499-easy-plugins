@@ -97,6 +97,17 @@ window.__ModuleLoader__.load({
 			".mcp-panel-args{width:100%;box-sizing:border-box;min-height:110px;resize:vertical;background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;color:var(--dsw-alias-label-primary);font:11px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace;padding:8px}",
 			".mcp-panel-status{font-size:10.5px;color:var(--dsw-alias-label-secondary);white-space:pre-wrap;word-break:break-word;max-height:180px;overflow:auto}",
 			".mcp-panel-empty{padding:20px 4px;text-align:center;font-size:11.5px;color:var(--dsw-alias-label-tertiary);line-height:1.6}",
+			// 参数表单
+			".mcp-field{display:flex;flex-direction:column;gap:2px}",
+			".mcp-field-label{font-size:10.5px;color:var(--dsw-alias-label-secondary);display:flex;align-items:center;gap:4px}",
+			".mcp-field-req{color:var(--dsw-alias-brand-primary)}",
+			".mcp-field-hint{font-size:10px;color:var(--dsw-alias-label-tertiary);line-height:1.35}",
+			".mcp-input,.mcp-select{width:100%;box-sizing:border-box;background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l2);border-radius:6px;color:var(--dsw-alias-label-primary);font-size:11.5px;line-height:1.5;padding:4px 8px;outline:none}",
+			".mcp-input:focus,.mcp-select:focus,.mcp-panel-args:focus{border-color:var(--dsw-alias-brand-primary)}",
+			".mcp-field-bad .mcp-input,.mcp-field-bad .mcp-select,.mcp-field-bad .mcp-panel-args{border-color:#d9534f}",
+			".mcp-field-error{font-size:10px;color:#d9534f}",
+			".mcp-check{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--dsw-alias-label-secondary)}",
+			".mcp-preview{white-space:pre-wrap;word-break:break-word;background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;padding:8px;font:11px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;max-height:220px;overflow:auto}",
 		].join("");
 		const tagId = "dsh-mcp-compat/style";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId) + "]") === null) {
@@ -342,6 +353,16 @@ window.__ModuleLoader__.load({
 					calling: "调用中…",
 					callDone: "已写入当前会话",
 					callError: "工具返回错误（结果已写入会话）",
+					params: "参数",
+					requiredMark: "必填",
+					rawMode: "JSON 模式",
+					formMode: "表单模式",
+					noParams: "该工具没有参数",
+					previewTitle: "调用结果预览（还没发送到会话）",
+					confirmSend: "发送到会话",
+					discard: "丢弃",
+					invalidArgs: "参数有误：",
+					previewFailed: "调用失败",
 				},
 				en: {
 					menuLabel: "MCP tools…",
@@ -379,6 +400,16 @@ window.__ModuleLoader__.load({
 					calling: "Calling…",
 					callDone: "Written into this session",
 					callError: "The tool returned an error (result written into the session)",
+					params: "Arguments",
+					requiredMark: "required",
+					rawMode: "JSON mode",
+					formMode: "Form mode",
+					noParams: "This tool takes no arguments",
+					previewTitle: "Result preview (not sent to the session yet)",
+					confirmSend: "Send to session",
+					discard: "Discard",
+					invalidArgs: "Invalid arguments: ",
+					previewFailed: "Call failed",
 				},
 			};
 			const localeOf = (() => {
@@ -673,20 +704,85 @@ window.__ModuleLoader__.load({
 			//   ① 注入：临时把工具加进当前会话的可见集（Host 内存态，会话结束即失效）；
 			//   ② 调用：填参数直接执行，结果按模板作为一条 user 消息写进当前会话，
 			//      工具本身从不进入上下文。
-			/** 从工具的参数 schema 生成一份可编辑的 JSON 骨架。 */
-			function argsSkeleton(schema) {
-				const props = schema && typeof schema === "object" ? schema.properties : null;
-				if (!props || typeof props !== "object") return "{}";
+			/** 从参数 schema 抽出表单字段（enum / boolean / number / array / object / string）。 */
+			function schemaFields(schema) {
+				const props = schema && typeof schema === "object" && schema.properties && typeof schema.properties === "object"
+					? schema.properties
+					: {};
+				const required = new Set(Array.isArray(schema && schema.required) ? schema.required : []);
+				return Object.entries(props).map(([name, def]) => {
+					const node = def && typeof def === "object" ? def : {};
+					const type = Array.isArray(node.enum) && node.enum.length > 0
+						? "enum"
+						: node.type === "integer" || node.type === "number" ? "number"
+							: node.type === "boolean" ? "boolean"
+								: node.type === "array" ? "array"
+									: node.type === "object" ? "object"
+										: "string";
+					return {
+						name,
+						type,
+						options: type === "enum" ? node.enum.map((value) => String(value)) : null,
+						required: required.has(name),
+						description: typeof node.description === "string" ? node.description : "",
+						hasDefault: node.default !== undefined,
+						defaultValue: node.default,
+					};
+				});
+			}
+
+			/** 表单初始值：有 default 用 default；布尔默认 false；其余空串。 */
+			function initialValues(fields) {
 				const out = {};
-				for (const [key, def] of Object.entries(props)) {
-					const type = def && def.type;
-					out[key] = type === "number" || type === "integer" ? 0
-						: type === "boolean" ? false
-							: type === "array" ? []
-								: type === "object" ? {}
-									: "";
+				for (const field of fields) {
+					if (field.hasDefault) {
+						out[field.name] = field.type === "array" || field.type === "object"
+							? JSON.stringify(field.defaultValue)
+							: String(field.defaultValue);
+					} else if (field.type === "boolean") {
+						out[field.name] = false;
+					} else {
+						out[field.name] = "";
+					}
 				}
-				return JSON.stringify(out, null, 2);
+				return out;
+			}
+
+			/** 校验并组装参数对象；errors 为空对象才可调用。 */
+			function buildArgs(fields, values) {
+				const args = {};
+				const errors = {};
+				for (const field of fields) {
+					const raw = values[field.name];
+					if (field.type === "boolean") {
+						args[field.name] = raw === true;
+						continue;
+					}
+					const text = String(raw === undefined || raw === null ? "" : raw).trim();
+					if (text === "") {
+						if (field.required) errors[field.name] = t("requiredMark");
+						continue;
+					}
+					if (field.type === "number") {
+						const n = Number(text);
+						if (!Number.isFinite(n)) errors[field.name] = "number";
+						else args[field.name] = n;
+					} else if (field.type === "array" || field.type === "object") {
+						try {
+							const parsed = JSON.parse(text);
+							const ok = field.type === "array"
+								? Array.isArray(parsed)
+								: parsed !== null && typeof parsed === "object" && !Array.isArray(parsed);
+							if (!ok) errors[field.name] = field.type;
+							else args[field.name] = parsed;
+						} catch {
+							errors[field.name] = "JSON";
+						}
+					} else {
+						args[field.name] = text;
+					}
+				}
+				return { args, errors };
 			}
 
 			function McpManagerView(props) {
@@ -695,8 +791,15 @@ window.__ModuleLoader__.load({
 				const [busy, setBusy] = react.useState(false);
 				const [status, setStatus] = react.useState("");
 				const [query, setQuery] = react.useState("");
+				// 正在填参数的工具 + 表单状态
 				const [calling, setCalling] = react.useState(null);
-				const [argsText, setArgsText] = react.useState("{}");
+				const [fields, setFields] = react.useState([]);
+				const [values, setValues] = react.useState({});
+				const [errors, setErrors] = react.useState({});
+				const [rawMode, setRawMode] = react.useState(false);
+				const [rawText, setRawText] = react.useState("{}");
+				// 调用结果预览：确认后才写进会话
+				const [preview, setPreview] = react.useState(null);
 
 				const load = () => {
 					if (!sessionId) {
@@ -750,25 +853,79 @@ window.__ModuleLoader__.load({
 					applyInject([...next]);
 				};
 				const startCall = (tool) => {
-					setCalling(tool.name);
-					setArgsText(argsSkeleton(tool.parameters));
+					const nextFields = schemaFields(tool.parameters);
+					const nextValues = initialValues(nextFields);
+					setFields(nextFields);
+					setValues(nextValues);
+					setErrors({});
+					setRawMode(false);
+					setRawText(JSON.stringify(buildArgs(nextFields, nextValues).args, null, 2));
+					setPreview(null);
+					setCalling(tool);
 					setStatus("");
+				};
+				const stopCall = () => {
+					setCalling(null);
+					setPreview(null);
+					setErrors({});
 				};
 				const sendCall = () => {
 					if (!calling) return;
+					let args = {};
+					if (rawMode) {
+						try {
+							args = JSON.parse(rawText);
+							if (args === null || typeof args !== "object" || Array.isArray(args)) throw new Error("object");
+						} catch {
+							setErrors({ __raw: t("invalidArgs") + "JSON" });
+							return;
+						}
+					} else {
+						const built = buildArgs(fields, values);
+						if (Object.keys(built.errors).length > 0) {
+							setErrors(built.errors);
+							return;
+						}
+						args = built.args;
+					}
+					setErrors({});
 					setBusy(true);
 					setStatus(t("calling"));
 					fetch("/mcp-compat/panel/call", {
 						method: "POST",
 						headers: { "content-type": "application/json" },
-						body: JSON.stringify({ sessionId, name: calling, args: argsText }),
+						body: JSON.stringify({ sessionId, name: calling.name, args: JSON.stringify(args) }),
 					})
 						.then((r) => r.json())
 						.then((payload) => {
 							setBusy(false);
 							if (payload && payload.ok) {
+								setPreview({ text: String(payload.preview || ""), isError: payload.isError === true, toolName: calling.name });
+								setStatus("");
+							} else {
+								setStatus(errorText(payload && payload.error));
+							}
+						})
+						.catch((e) => {
+							setBusy(false);
+							setStatus(String((e && e.message) || t("saveFailed")));
+						});
+				};
+				const commitPreview = () => {
+					if (!preview) return;
+					setBusy(true);
+					fetch("/mcp-compat/panel/commit", {
+						method: "POST",
+						headers: { "content-type": "application/json" },
+						body: JSON.stringify({ sessionId, text: preview.text }),
+					})
+						.then((r) => r.json())
+						.then((payload) => {
+							setBusy(false);
+							if (payload && payload.ok) {
+								setPreview(null);
 								setCalling(null);
-								setStatus((payload.isError ? t("callError") : t("callDone")) + "\n" + String(payload.text || ""));
+								setStatus(t("callDone"));
 							} else {
 								setStatus(errorText(payload && payload.error));
 							}
@@ -791,6 +948,48 @@ window.__ModuleLoader__.load({
 					.filter((server) => server.tools.length > 0);
 				const hiddenCount = servers.reduce((n, server) => n + (server.tools || []).filter((tool) => !tool.injected).length, 0);
 				const injectedCount = servers.reduce((n, server) => n + (server.tools || []).filter((tool) => tool.injected).length, 0);
+
+				/** 单个参数：按类型渲染控件，出错时红框 + 行内错误。 */
+				const renderField = (field) => {
+					const bad = errors[field.name] !== undefined;
+					const setValue = (value) => setValues((prev) => ({ ...prev, [field.name]: value }));
+					const common = {
+						className: "mcp-input",
+						value: values[field.name] === undefined ? "" : String(values[field.name]),
+						onChange: (event) => setValue(event.target.value),
+					};
+					const control = field.type === "boolean"
+						? react.createElement("label", { className: "mcp-check" },
+							react.createElement("input", {
+								type: "checkbox",
+								checked: values[field.name] === true,
+								onChange: (event) => setValue(event.target.checked),
+							}),
+							react.createElement("span", null, values[field.name] === true ? "true" : "false"),
+						)
+						: field.type === "enum"
+							? react.createElement("select", {
+								className: "mcp-select",
+								value: values[field.name] === undefined ? "" : String(values[field.name]),
+								onChange: (event) => setValue(event.target.value),
+							},
+								react.createElement("option", { value: "" }, "—"),
+								(field.options || []).map((option) => react.createElement("option", { value: option, key: option }, option)),
+							)
+							: field.type === "array" || field.type === "object"
+								? react.createElement("textarea", { ...common, className: "mcp-panel-args", spellCheck: false, rows: 3 })
+								: react.createElement("input", { ...common, type: field.type === "number" ? "number" : "text" });
+					return react.createElement("div", { className: "mcp-field" + (bad ? " mcp-field-bad" : ""), key: field.name },
+						react.createElement("div", { className: "mcp-field-label" },
+							react.createElement("span", null, field.name),
+							field.required ? react.createElement("span", { className: "mcp-field-req" }, "*") : null,
+							react.createElement("span", { className: "mcp-gate-tag" }, field.type),
+						),
+						field.description ? react.createElement("div", { className: "mcp-field-hint" }, field.description) : null,
+						control,
+						bad ? react.createElement("div", { className: "mcp-field-error" }, String(errors[field.name])) : null,
+					);
+				};
 
 				return react.createElement("div", { className: "mcp-panel" },
 					react.createElement("div", { className: "mcp-panel-head" },
@@ -838,21 +1037,68 @@ window.__ModuleLoader__.load({
 													}, tool.injected ? "✓ " + t("injectOn") : t("inject")),
 													react.createElement("button", {
 														className: "mcp-gate-mini",
-														onClick: () => (calling === tool.name ? setCalling(null) : startCall(tool)),
+														onClick: () => (calling && calling.name === tool.name ? stopCall() : startCall(tool)),
 														disabled: busy,
 													}, t("call")),
 												),
-												calling === tool.name
+												// ① 参数表单（表单 / JSON 双模式）
+												calling && calling.name === tool.name && !preview
 													? react.createElement("div", { className: "mcp-panel-form" },
-														react.createElement("textarea", {
-															className: "mcp-panel-args",
-															value: argsText,
-															spellCheck: false,
-															onChange: (event) => setArgsText(event.target.value),
-														}),
 														react.createElement("div", { className: "mcp-panel-actions" },
-															react.createElement("button", { className: "mcp-gate-mini", onClick: sendCall, disabled: busy }, t("send")),
-															react.createElement("button", { className: "mcp-gate-mini", onClick: () => setCalling(null), disabled: busy }, t("cancel")),
+															react.createElement("span", { className: "mcp-field-label" }, t("params")),
+															react.createElement("button", {
+																className: "mcp-gate-mini",
+																onClick: () => {
+																	if (rawMode) {
+																		// JSON → 表单：能解析就回填，解析不了保持 JSON 模式
+																		try {
+																			const parsed = JSON.parse(rawText);
+																			if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+																				const next = { ...values };
+																				for (const field of fields) {
+																					if (parsed[field.name] === undefined) continue;
+																					next[field.name] = typeof parsed[field.name] === "object"
+																						? JSON.stringify(parsed[field.name])
+																						: String(parsed[field.name]);
+																				}
+																				setValues(next);
+																				setRawMode(false);
+																			}
+																		} catch {}
+																	} else {
+																		const built = buildArgs(fields, values);
+																		setRawText(JSON.stringify(built.args, null, 2));
+																		setRawMode(true);
+																	}
+																},
+															}, rawMode ? t("formMode") : t("rawMode")),
+														),
+														rawMode
+															? react.createElement("textarea", {
+																className: "mcp-panel-args",
+																value: rawText,
+																spellCheck: false,
+																onChange: (event) => setRawText(event.target.value),
+															})
+															: fields.length === 0
+																? react.createElement("div", { className: "mcp-field-hint" }, t("noParams"))
+																: fields.map(renderField),
+														errors.__raw ? react.createElement("div", { className: "mcp-field-error" }, errors.__raw) : null,
+														react.createElement("div", { className: "mcp-panel-actions" },
+															react.createElement("button", { className: "mcp-gate-mini", onClick: sendCall, disabled: busy }, t("call")),
+															react.createElement("button", { className: "mcp-gate-mini", onClick: stopCall, disabled: busy }, t("cancel")),
+														),
+													)
+													: null,
+												// ② 结果预览：先看清楚，确认后才写进会话
+												preview && preview.toolName === tool.name
+													? react.createElement("div", { className: "mcp-panel-form" },
+														react.createElement("div", { className: "mcp-field-label" }, t("previewTitle")),
+														preview.isError ? react.createElement("div", { className: "mcp-field-error" }, t("previewFailed")) : null,
+														react.createElement("pre", { className: "mcp-preview" }, preview.text),
+														react.createElement("div", { className: "mcp-panel-actions" },
+															react.createElement("button", { className: "mcp-gate-mini", onClick: commitPreview, disabled: busy }, t("confirmSend")),
+															react.createElement("button", { className: "mcp-gate-mini", onClick: () => setPreview(null), disabled: busy }, t("discard")),
 														),
 													)
 													: null,
@@ -882,6 +1128,9 @@ window.__ModuleLoader__.load({
 				order: 10,
 				label: "MCP 兼容",
 			}, SettingsCard));
+
+			// 仅供 test/ 使用：参数表单的纯逻辑（不参与运行时契约）。
+			exports.__internals = { schemaFields, initialValues, buildArgs };
 		}
 
 		exports.apply = apply;

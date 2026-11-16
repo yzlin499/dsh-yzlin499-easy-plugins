@@ -164,3 +164,74 @@ test('右侧栏：注册 MCP 管理 tab 类型 + sidebar.right.pane.tab 槽位',
   assert.equal(pane.spec.key, 'dsh-mcp-compat')
   assert.equal(typeof pane.component, 'function')
 })
+
+// ── 参数表单：schema → 字段 → 参数对象 ────────────────────────────────────
+test('schemaFields：识别 enum / boolean / number / array / object / string 与必填', () => {
+  const { exports } = loadClient()
+  const ctx = makeCtx()
+  exports.apply(ctx)
+  const { schemaFields } = exports.__internals
+  const fields = schemaFields({
+    type: 'object',
+    required: ['project', 'count'],
+    properties: {
+      project: { type: 'string', description: '项目 ID' },
+      count: { type: 'integer' },
+      verbose: { type: 'boolean', default: true },
+      tags: { type: 'array', items: { type: 'string' } },
+      meta: { type: 'object' },
+      mode: { enum: ['fast', 'full'] },
+    },
+  })
+  assert.deepEqual(fields.map((f) => [f.name, f.type, f.required]), [
+    ['project', 'string', true],
+    ['count', 'number', true],
+    ['verbose', 'boolean', false],
+    ['tags', 'array', false],
+    ['meta', 'object', false],
+    ['mode', 'enum', false],
+  ])
+  assert.deepEqual(fields.find((f) => f.name === 'mode').options, ['fast', 'full'])
+  assert.equal(fields.find((f) => f.name === 'verbose').defaultValue, true)
+})
+
+test('initialValues：default 回填，布尔默认 false，其余空串', () => {
+  const { exports } = loadClient()
+  const ctx = makeCtx()
+  exports.apply(ctx)
+  const { schemaFields, initialValues } = exports.__internals
+  const fields = schemaFields({
+    type: 'object',
+    properties: {
+      project: { type: 'string' },
+      verbose: { type: 'boolean', default: true },
+      tags: { type: 'array', default: ['a'] },
+    },
+  })
+  assert.deepEqual(initialValues(fields), { project: '', verbose: 'true', tags: '["a"]' })
+})
+
+test('buildArgs：必填缺失/类型非法报错，合法输入按类型转换', () => {
+  const { exports } = loadClient()
+  const ctx = makeCtx()
+  exports.apply(ctx)
+  const { schemaFields, buildArgs } = exports.__internals
+  const fields = schemaFields({
+    type: 'object',
+    required: ['project', 'count'],
+    properties: {
+      project: { type: 'string' },
+      count: { type: 'number' },
+      verbose: { type: 'boolean' },
+      tags: { type: 'array' },
+    },
+  })
+  const bad = buildArgs(fields, { project: '', count: 'abc', verbose: true, tags: 'not-json' })
+  assert.equal(bad.errors.project, '必填')
+  assert.equal(bad.errors.count, 'number')
+  assert.equal(bad.errors.tags, 'JSON')
+
+  const ok = buildArgs(fields, { project: 'p1', count: '3', verbose: true, tags: '["x","y"]' })
+  assert.deepEqual(ok.errors, {})
+  assert.deepEqual(ok.args, { project: 'p1', count: 3, verbose: true, tags: ['x', 'y'] })
+})

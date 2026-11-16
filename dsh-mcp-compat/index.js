@@ -647,6 +647,14 @@ const describeSessionTools = (servers, schemas, deny, injected, isMounted = () =
   return list
 }
 
+// 手动调用的结果模板（纯函数，便于单测）。占位符：{server} / {tool} / {args} / {result}。
+const DEFAULT_CALL_TEMPLATE = '【MCP 手动调用】{server} / {tool}\n\n**参数**\n```json\n{args}\n```\n\n**结果**\n{result}'
+const renderCallTemplate = (template, { server, tool, args, result }) => String(template || DEFAULT_CALL_TEMPLATE)
+  .replaceAll('{server}', String(server ?? ''))
+  .replaceAll('{tool}', String(tool ?? ''))
+  .replaceAll('{args}', typeof args === 'string' ? args : JSON.stringify(args ?? {}, null, 2))
+  .replaceAll('{result}', String(result ?? ''))
+
 // 只保留「用户级 + 当前活动 workspace 的项目级」服务器。
 // 为什么要在挂载阶段就过滤，而不只靠后面的 per-agent deny：
 // 服务器一旦挂上就是**全局**的——它会出现在 MCP 服务器/资源列表里（每个会话都看得到），
@@ -696,7 +704,7 @@ const GLOBAL_FILES = [
 ]
 
 // 测试钩子：node 脚本可直接 import 本模块做解析验证
-export { parseMcpJson, parseOpencodeJson, parseCodexToml, collectServers, windowsCommand, pathKey, cwdInWorkspace, denyListFor, workspaceKeyOf, disabledToolsFor, mergeDeny, describeWorkspaceTools, describeSessionTools, filterServersForWorkspaces, activeRootKeysFor, PROJECT_FILES, GLOBAL_FILES, isWsl, getWslHostIp, wslFallbackUrl, wslTunnelTarget, wslSubnetOf, winPortListeners, winPortProxyHas, winPortProxyLegacyHas, winFirewallHas, hostListenerState }
+export { parseMcpJson, parseOpencodeJson, parseCodexToml, collectServers, windowsCommand, pathKey, cwdInWorkspace, denyListFor, workspaceKeyOf, disabledToolsFor, mergeDeny, describeWorkspaceTools, describeSessionTools, renderCallTemplate, filterServersForWorkspaces, activeRootKeysFor, PROJECT_FILES, GLOBAL_FILES, isWsl, getWslHostIp, wslFallbackUrl, wslTunnelTarget, wslSubnetOf, winPortListeners, winPortProxyHas, winPortProxyLegacyHas, winFirewallHas, hostListenerState }
 
 // 支持按启用的 family（配置源体系）过滤。enabled 为空/未传时 = 全部开启（保持原行为）。
 // globalStdioCwd：用户级（主目录下）配置里 stdio 服务器的 cwd。用户级条目没有"项目"
@@ -1890,8 +1898,8 @@ export async function apply(ctx) {
     }
     return parts.join('\n')
   }
-  // 手动调用一个 MCP 工具，把结果按模板作为一条 user 消息写进当前会话。
-  // 工具本身**从不进入上下文**——这正是「永远不可见、由我发起调用」那一档的用法。
+  // 手动调用一个 MCP 工具，**只返回预览**（不写会话）——由用户确认后再 commit。
+  // 工具本身从不进入上下文：这正是「永远不可见、由我发起调用」那一档的用法。
   const invokeTool = async (sessionId, toolName, rawArgs) => {
     if (!toolName.startsWith('mcp__')) return { ok: false, error: '只支持调用 MCP 工具（mcp__*）' }
     let session
@@ -1925,22 +1933,33 @@ export async function apply(ctx) {
     }
     if (!outcome) return { ok: false, error: '调用没有返回结果' }
     const [, serverName = '', ...rest] = toolName.split('__')
-    const rawName = rest.join('__')
-    const rendered = callTemplate()
-      .replaceAll('{server}', serverName)
-      .replaceAll('{tool}', rawName)
-      .replaceAll('{args}', JSON.stringify(args, null, 2))
-      .replaceAll('{result}', contentToText(outcome.content) || (outcome.isError ? '(无输出)' : '(空结果)'))
+    const rendered = renderCallTemplate(callTemplate(), {
+      server: serverName,
+      tool: rest.join('__'),
+      args: JSON.stringify(args, null, 2),
+      result: contentToText(outcome.content) || (outcome.isError ? '(无输出)' : '(空结果)'),
+    })
+    // 预览 = 将要写进会话的原文，避免「看到的和发出去的不一样」
+    return { ok: true, isError: outcome.isError === true, preview: rendered, tool: toolName }
+  }
+  // 用户确认后，把预览文本作为一条 user 消息写进当前会话。
+  const commitText = (sessionId, text) => {
+    const body = String(text ?? '')
+    if (body.trim() === '') return { ok: false, error: '内容为空' }
+    if (body.length > 200000) return { ok: false, error: '内容过长（上限 200000 字符）' }
+    let session
+    try { session = ctx.sessions.get(sessionId) } catch {}
+    if (!session) return { ok: false, error: '会话不存在或已关闭' }
     try {
       session.append(
         'user/message',
-        { role: 'user', content: [{ type: 'text', text: rendered }], source: { kind: 'user' } },
+        { role: 'user', content: [{ type: 'text', text: body }], source: { kind: 'user' } },
         { surfaceOp: 'append' },
       )
     } catch (e) {
       return { ok: false, error: '结果写入会话失败: ' + String((e && e.message) || e) }
     }
-    return { ok: true, isError: outcome.isError === true, text: rendered }
+    return { ok: true }
   }
   ctx.webServer.register({
     kind: 'prefix',
@@ -2069,6 +2088,17 @@ export async function apply(ctx) {
           sendJson(res, await invokeTool(sessionId, name, a.args))
           return
         }
+        if (url.pathname === '/mcp-compat/panel/commit' && req.method === 'POST') {
+          // 用户确认后：把预览文本作为一条 user 消息写进当前会话（不再触发模型，下一步才可见）
+          const a = await readBody(req)
+          const sessionId = String(a.sessionId || '').trim()
+          if (!sessionId) {
+            sendJson(res, { ok: false, error: '缺少 sessionId' }, 400)
+            return
+          }
+          sendJson(res, commitText(sessionId, a.text))
+          return
+        }
         if (url.pathname === '/mcp-compat/wsl-forward' && req.method === 'POST') {
           // 手动按钮：对当前全部已配置的 loopback 服务器端口立即配置宿主机转发
           const results = await ensureForwardForServers(currentServers.map((s) => s.name))
@@ -2089,3 +2119,4 @@ export async function apply(ctx) {
     },
   })
 }
+

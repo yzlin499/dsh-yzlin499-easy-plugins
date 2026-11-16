@@ -130,10 +130,20 @@ current workspace**, grouped by server, and offers two modes:
 | Mode | Behaviour | Does the tool enter the context? |
 |---|---|---|
 | **Inject** | Adds the tool to **this session's** visible set (Host memory only — gone when the session ends or DSH restarts; nothing is written to settings) | yes (this session only) |
-| **Call** | Fill in arguments in the panel (a JSON skeleton is generated from the tool's parameter schema) and run it; the result is written into the current session as a user message using a template | **no** — the tool never becomes visible, only its result lands in the chat |
+| **Call** | **Fill in the generated parameter form** (form mode by default, JSON mode on demand) → **review the result preview** → click "Send to session" to actually write it into the chat | **no** — the tool never becomes visible, only its result lands in the chat |
 
 How "Call" works:
 
+- **No hand-written JSON**: the panel builds a form from the tool's `parameters` schema —
+  `enum` → select, `boolean` → checkbox, `number`/`integer` → number input,
+  `array`/`object` → monospace textarea with JSON validation, everything else → text
+  input. Required fields carry `*`, invalid values turn red inline, and each field's
+  description is shown underneath. Click "JSON mode" to hand-write JSON; both modes
+  round-trip into each other.
+- **Two phases: preview first, send second.** "Call" only executes the tool and shows the
+  **exact text that would be written** (arguments and result, errors flagged); click
+  "Send to session" to commit, or "Discard" to leave no trace. Trying arguments never
+  pollutes the session history.
 - execution runs **without an agent** (standalone service call), so it does not hit the
   per-agent `tools.restrict` — a workspace-hidden tool is exactly the one the model must
   not see, and an agent-scoped call would be refused by our own restriction;
@@ -154,8 +164,9 @@ How "Call" works:
 
 - only tools that are **currently hidden** in this workspace may be called (visible ones
   need no detour), and only `mcp__*` names are accepted;
-- arguments must be a JSON object; invalid JSON is rejected host-side and echoed as an
-  error instead of being written into the session.
+- sending only **appends a user message**; it does not make the model continue. The model
+  sees it on the next step/turn — which keeps "manual call" from unexpectedly starting a
+  whole agent turn when all you wanted was the result.
 
 In one sentence, the three tiers are: **checked in the workspace = always visible (for the
 agent); "Inject" in the panel = visible for this session only; "Call" in the panel = never

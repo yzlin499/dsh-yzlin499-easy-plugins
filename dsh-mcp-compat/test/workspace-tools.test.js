@@ -2,7 +2,7 @@
 // 关注三件事：cwd 归到哪个 workspace 根、条目怎么取、两层 deny 怎么合并。
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { describeSessionTools, describeWorkspaceTools, disabledToolsFor, mergeDeny, workspaceKeyOf } from '../index.js'
+import { describeSessionTools, describeWorkspaceTools, disabledToolsFor, mergeDeny, renderCallTemplate, workspaceKeyOf } from '../index.js'
 
 const ROOTS = ['D:\\work\\projA', 'D:\\work\\projA-sub', 'D:\\work\\projB']
 
@@ -144,4 +144,17 @@ test('describeSessionTools：没有隐藏工具的服务器整块不出现', () 
   const out = describeSessionTools(SERVERS, PANEL_SCHEMAS, new Set(['mcp__ue__play']), new Set())
   assert.deepEqual(out.map((server) => server.name), ['ue'])
   assert.deepEqual(describeSessionTools(SERVERS, PANEL_SCHEMAS, new Set(), new Set()), [])
+})
+
+
+test('renderCallTemplate：替换 {server}/{tool}/{args}/{result}，缺省用默认模板', () => {
+  const text = renderCallTemplate('{server}|{tool}|{args}|{result}', {
+    server: 'ue', tool: 'play', args: '{"a":1}', result: 'ok',
+  })
+  assert.equal(text, 'ue|play|{"a":1}|ok')
+  // 对象参数自动序列化；缺省模板包含服务器与工具名
+  const fallback = renderCallTemplate(undefined, { server: 'ue', tool: 'play', args: { a: 1 }, result: 'ok' })
+  assert.match(fallback, /【MCP 手动调用】ue \/ play/)
+  assert.match(fallback, /"a": 1/)
+  assert.match(fallback, /ok$/)
 })
