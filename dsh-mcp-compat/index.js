@@ -29,7 +29,7 @@ const execFileP = promisify(execFile)
 export const name = 'mcp-compat'
 // loader：经 loader 自己的解析拿 dsh-mcp-client（bundle 源目录在项目里，
 // 顶层裸 import '@deepseek-ai/dsh-mcp-client' 会按源目录解析失败）
-export const inject = ['workspaceRegistry', 'loader', 'tools', 'agents', 'commands', 'settings', 'webServer']
+export const inject = ['workspaceRegistry', 'loader', 'tools', 'agents', 'commands', 'settings', 'webServer', 'sessions']
 
 const log = (...a) => console.log('[mcp-compat]', ...a)
 const reportedInvalidCommands = new Set()
@@ -612,6 +612,41 @@ const describeWorkspaceTools = (servers, schemas, entries, workspacePath, roots,
   }
 }
 
+// 列出「当前会话被挡住的工具」——MCP 管理面板的数据源（纯函数，便于单测）。
+// 只返回至少有一个工具被挡（或已被临时注入）的服务器，即用户要的「大类」。
+//   schemas   注册表里的工具定义（name / description / parameters）
+//   deny      该会话当前生效的 deny 集（项目级作用域 + 工作区禁用）
+//   injected  该会话临时注入（= 从 deny 里排除）的工具名
+const describeSessionTools = (servers, schemas, deny, injected, isMounted = () => false) => {
+  const list = []
+  for (const server of servers || []) {
+    const prefix = `mcp__${server.name}__`
+    const tools = (schemas || [])
+      .filter((schema) => schema && typeof schema.name === 'string' && schema.name.startsWith(prefix))
+      .map((schema) => ({
+        name: schema.name,
+        description: String(schema.description || ''),
+        // 参数 schema 原样带给面板，用来生成调用表单的骨架
+        parameters: schema.parameters === undefined ? null : schema.parameters,
+        injected: injected.has(schema.name),
+      }))
+      .filter((tool) => deny.has(tool.name) || tool.injected)
+      .sort((a, b) => a.name.localeCompare(b.name))
+    if (!tools.length) continue
+    list.push({
+      name: server.name,
+      level: server.workspaceRoot ? 'project' : 'user',
+      workspaceRoot: server.workspaceRoot || null,
+      source: server.source || '',
+      mounted: isMounted(server.name) === true,
+      total: (schemas || []).filter((schema) => schema && typeof schema.name === 'string' && schema.name.startsWith(prefix)).length,
+      tools,
+    })
+  }
+  list.sort((a, b) => a.name.localeCompare(b.name))
+  return list
+}
+
 // 只保留「用户级 + 当前活动 workspace 的项目级」服务器。
 // 为什么要在挂载阶段就过滤，而不只靠后面的 per-agent deny：
 // 服务器一旦挂上就是**全局**的——它会出现在 MCP 服务器/资源列表里（每个会话都看得到），
@@ -661,7 +696,7 @@ const GLOBAL_FILES = [
 ]
 
 // 测试钩子：node 脚本可直接 import 本模块做解析验证
-export { parseMcpJson, parseOpencodeJson, parseCodexToml, collectServers, windowsCommand, pathKey, cwdInWorkspace, denyListFor, workspaceKeyOf, disabledToolsFor, mergeDeny, describeWorkspaceTools, filterServersForWorkspaces, activeRootKeysFor, PROJECT_FILES, GLOBAL_FILES, isWsl, getWslHostIp, wslFallbackUrl, wslTunnelTarget, wslSubnetOf, winPortListeners, winPortProxyHas, winPortProxyLegacyHas, winFirewallHas, hostListenerState }
+export { parseMcpJson, parseOpencodeJson, parseCodexToml, collectServers, windowsCommand, pathKey, cwdInWorkspace, denyListFor, workspaceKeyOf, disabledToolsFor, mergeDeny, describeWorkspaceTools, describeSessionTools, filterServersForWorkspaces, activeRootKeysFor, PROJECT_FILES, GLOBAL_FILES, isWsl, getWslHostIp, wslFallbackUrl, wslTunnelTarget, wslSubnetOf, winPortListeners, winPortProxyHas, winPortProxyLegacyHas, winFirewallHas, hostListenerState }
 
 // 支持按启用的 family（配置源体系）过滤。enabled 为空/未传时 = 全部开启（保持原行为）。
 // globalStdioCwd：用户级（主目录下）配置里 stdio 服务器的 cwd。用户级条目没有"项目"
@@ -758,6 +793,11 @@ export async function apply(ctx) {
         path: z.string(),
         disabled: z.array(z.string()).default([]),
       })).default([]),
+      // 「MCP 管理面板」里手动调用工具的注入模板（{server}/{tool}/{args}/{result}）。
+      // 调用结果按这个模板作为一条 user 消息写进当前会话，工具本身从不进入上下文。
+      callTemplate: z.string().default(
+        '【MCP 手动调用】{server} / {tool}\n\n**参数**\n```json\n{args}\n```\n\n**结果**\n{result}',
+      ),
     }))
   } catch (e) {
     log('settings 注册失败，回退内存态:', String((e && e.message) || e))
@@ -841,6 +881,16 @@ export async function apply(ctx) {
   }
   // 当前 cwd 所属工作区被禁用的工具名
   const workspaceDisabledFor = (cwd) => disabledToolsFor(readWorkspaceTools(), cwd, workspaceRoots())
+  // 手动调用的注入模板（settings 缺失时用默认值）
+  const callTemplate = () => {
+    const fallback = '【MCP 手动调用】{server} / {tool}\n\n**参数**\n```json\n{args}\n```\n\n**结果**\n{result}'
+    if (!scope) return fallback
+    try {
+      const v = scope.get()
+      if (v && typeof v.callTemplate === 'string' && v.callTemplate.trim() !== '') return v.callTemplate
+    } catch {}
+    return fallback
+  }
   // 当前注册表里的全部工具名（用于丢弃失效名，避免 restrict 抛错）
   const knownToolNames = () => {
     try {
@@ -1105,6 +1155,10 @@ export async function apply(ctx) {
   // 现在只做增量 diff：deny 集合没变的 agent 完全不动，变了才「先加新的、
   // 再撤旧的」，任何时刻都不存在无限制窗口。
   const restrictionsByAgent = new Map()
+  // 会话级「临时注入」：sessionId -> Set(工具名)。
+  // 语义 = 从该会话的 deny 里排除这些工具（面板里"注入未启用的工具"）。
+  // 只存内存：DSH 重启即失效，这是刻意的——临时放行，不该悄悄变成长期配置。
+  const sessionInjections = new Map()
   const releaseRestriction = (agent) => {
     const cur = restrictionsByAgent.get(agent)
     if (!cur) return
@@ -1119,7 +1173,11 @@ export async function apply(ctx) {
     const cwd = agent.session && agent.session.header && agent.session.header.cwd
     // 两层 deny 合并：项目级 MCP 作用域（别的 workspace 的工具）+ 工作区面板禁用
     // （本工作区不希望出现的工具）。后者来自 settings，改完立即通过 refreshRestrictions 生效。
+    // 再减去「本会话临时注入」的工具：注入 = 只在当前会话把它从 deny 里拿掉。
+    const sessionId = agent.session && agent.session.id
+    const injected = sessionId ? sessionInjections.get(sessionId) : undefined
     const deny = mergeDeny(denyListFor(projectTools, cwd), workspaceDisabledFor(cwd), knownToolNames())
+      .filter((name) => !(injected !== undefined && injected.has(name)))
     const cur = restrictionsByAgent.get(agent)
     if (!deny.length) {
       releaseRestriction(agent)
@@ -1160,6 +1218,11 @@ export async function apply(ctx) {
       if (!agents.includes(agent)) releaseRestriction(agent)
     }
     for (const agent of agents) restrictAgent(agent)
+    // 会话销毁后清掉它的临时注入（纯内存态，别留泄漏；重启也会清空）
+    const liveSessions = new Set(agents.map((agent) => agent && agent.session && agent.session.id).filter(Boolean))
+    for (const sessionId of [...sessionInjections.keys()]) {
+      if (!liveSessions.has(sessionId)) sessionInjections.delete(sessionId)
+    }
   }
   // 项目级工具集变化（服务器重连后补注册了工具等）时补一次限制同步。
   // 看门狗每轮调用；只有工具名集合真的变了才会真正重算，开销可忽略。
@@ -1735,6 +1798,7 @@ export async function apply(ctx) {
       offAgent()
       try { offReconnectCommand() } catch {}
       clearRestrictions()
+      sessionInjections.clear()
       projectTools = []
       closeWatchers()
       stopHealthCheck()
@@ -1775,6 +1839,108 @@ export async function apply(ctx) {
       workspaceRoots(),
       (name) => fiberByName.has(name),
     )
+  }
+  // 会话级临时注入面板的数据源：该会话 agent 的 cwd 决定工作区，deny 减去注入集。
+  const describeForSession = (sessionId) => {
+    let agent = null
+    try {
+      agent = ctx.agents.list().find((candidate) => candidate && candidate.session && candidate.session.id === sessionId) || null
+    } catch {}
+    const cwd = agent && agent.session && agent.session.header && agent.session.header.cwd
+    let schemas = []
+    try { schemas = ctx.tools.schemas() } catch {}
+    const known = new Set(schemas.map((schema) => schema && schema.name).filter((name) => typeof name === 'string'))
+    const injected = sessionInjections.get(sessionId) || new Set()
+    const deny = new Set(
+      cwd === undefined || cwd === null
+        ? []
+        : mergeDeny(denyListFor(projectTools, cwd), workspaceDisabledFor(cwd), known),
+    )
+    const servers = describeSessionTools(currentServers, schemas, deny, injected, (name) => fiberByName.has(name))
+    return {
+      ok: true,
+      session: { sessionId, cwd: cwd || null, live: agent !== null },
+      servers,
+      totalHidden: servers.reduce((n, server) => n + server.tools.filter((tool) => !tool.injected).length, 0),
+      totalInjected: servers.reduce((n, server) => n + server.tools.filter((tool) => tool.injected).length, 0),
+    }
+  }
+  // 该会话当前被挡住的工具名（手动调用只允许这些：已经可见的不需要面板绕路）
+  const hiddenToolsForSession = (sessionId) => {
+    let agent = null
+    try {
+      agent = ctx.agents.list().find((candidate) => candidate && candidate.session && candidate.session.id === sessionId) || null
+    } catch {}
+    const cwd = agent && agent.session && agent.session.header && agent.session.header.cwd
+    let known = null
+    try { known = new Set(ctx.tools.schemas().map((schema) => schema && schema.name).filter((name) => typeof name === 'string')) } catch {}
+    const deny = new Set(cwd ? mergeDeny(denyListFor(projectTools, cwd), workspaceDisabledFor(cwd), known) : [])
+    const injected = sessionInjections.get(sessionId) || new Set()
+    return new Set([...deny].filter((name) => !injected.has(name)))
+  }
+  // 把工具结果的 ContentBlock[] 拼成给模型看的文本
+  const contentToText = (content) => {
+    const parts = []
+    for (const block of content || []) {
+      if (!block) continue
+      if (block.type === 'text' && typeof block.text === 'string') parts.push(block.text)
+      else if (block.type === 'image') parts.push(`[image${block.mediaType ? ' ' + block.mediaType : ''}]`)
+      else if (block.type === 'file') parts.push(`[file${block.name ? ' ' + block.name : ''}]`)
+      else parts.push(JSON.stringify(block))
+    }
+    return parts.join('\n')
+  }
+  // 手动调用一个 MCP 工具，把结果按模板作为一条 user 消息写进当前会话。
+  // 工具本身**从不进入上下文**——这正是「永远不可见、由我发起调用」那一档的用法。
+  const invokeTool = async (sessionId, toolName, rawArgs) => {
+    if (!toolName.startsWith('mcp__')) return { ok: false, error: '只支持调用 MCP 工具（mcp__*）' }
+    let session
+    try { session = ctx.sessions.get(sessionId) } catch {}
+    if (!session) return { ok: false, error: '会话不存在或已关闭' }
+    if (!hiddenToolsForSession(sessionId).has(toolName)) {
+      return { ok: false, error: '该工具当前在工作区可见，无需手动调用' }
+    }
+    let args = {}
+    const text = String(rawArgs === undefined || rawArgs === null ? '' : rawArgs).trim()
+    if (text !== '') {
+      try {
+        args = JSON.parse(text)
+      } catch (e) {
+        return { ok: false, error: '参数不是合法 JSON: ' + String((e && e.message) || e) }
+      }
+      if (args === null || typeof args !== 'object' || Array.isArray(args)) {
+        return { ok: false, error: '参数必须是 JSON 对象' }
+      }
+    }
+    let outcome
+    try {
+      // 不带 agent：独立服务调用，绕开 per-agent 的 restrict——否则被挡的工具根本执行不了
+      const batch = await ctx.tools.execute({
+        calls: [{ type: 'tool-call', id: `mcp-panel-${Date.now().toString(36)}`, name: toolName, arguments: JSON.stringify(args) }],
+        signal: AbortSignal.timeout(120000),
+      })
+      outcome = batch && Array.isArray(batch.results) && batch.results[0] ? batch.results[0].result : undefined
+    } catch (e) {
+      return { ok: false, error: '调用失败: ' + String((e && e.message) || e) }
+    }
+    if (!outcome) return { ok: false, error: '调用没有返回结果' }
+    const [, serverName = '', ...rest] = toolName.split('__')
+    const rawName = rest.join('__')
+    const rendered = callTemplate()
+      .replaceAll('{server}', serverName)
+      .replaceAll('{tool}', rawName)
+      .replaceAll('{args}', JSON.stringify(args, null, 2))
+      .replaceAll('{result}', contentToText(outcome.content) || (outcome.isError ? '(无输出)' : '(空结果)'))
+    try {
+      session.append(
+        'user/message',
+        { role: 'user', content: [{ type: 'text', text: rendered }], source: { kind: 'user' } },
+        { surfaceOp: 'append' },
+      )
+    } catch (e) {
+      return { ok: false, error: '结果写入会话失败: ' + String((e && e.message) || e) }
+    }
+    return { ok: true, isError: outcome.isError === true, text: rendered }
   }
   ctx.webServer.register({
     kind: 'prefix',
@@ -1860,6 +2026,47 @@ export async function apply(ctx) {
           refreshRestrictions(currentServers)
           log('工作区工具门控已更新:', key, `禁用 ${disabled.length} 个工具`)
           sendJson(res, describeFor(workspacePath))
+          return
+        }
+        if (url.pathname === '/mcp-compat/panel' && req.method === 'GET') {
+          // MCP 管理面板：列出该会话当前被挡住的工具（按服务器分组，带参数 schema）
+          const sessionId = String(url.searchParams.get('sessionId') || '').trim()
+          if (!sessionId) {
+            sendJson(res, { ok: false, error: '缺少 sessionId' }, 400)
+            return
+          }
+          sendJson(res, describeForSession(sessionId))
+          return
+        }
+        if (url.pathname === '/mcp-compat/panel/inject' && req.method === 'POST') {
+          // 临时注入：把选中的工具从该会话的 deny 里拿掉（纯内存，重启/会话结束即失效）
+          const a = await readBody(req)
+          const sessionId = String(a.sessionId || '').trim()
+          if (!sessionId) {
+            sendJson(res, { ok: false, error: '缺少 sessionId' }, 400)
+            return
+          }
+          const tools = [...new Set(
+            (Array.isArray(a.tools) ? a.tools : [])
+              .filter((name) => typeof name === 'string' && name.startsWith('mcp__')),
+          )]
+          if (tools.length) sessionInjections.set(sessionId, new Set(tools))
+          else sessionInjections.delete(sessionId)
+          refreshRestrictions(currentServers)
+          log('会话临时注入已更新:', sessionId, `注入 ${tools.length} 个工具`)
+          sendJson(res, describeForSession(sessionId))
+          return
+        }
+        if (url.pathname === '/mcp-compat/panel/call' && req.method === 'POST') {
+          // 手动调用：执行该工具，把结果按模板作为一条 user 消息写进当前会话
+          const a = await readBody(req)
+          const sessionId = String(a.sessionId || '').trim()
+          const name = String(a.name || '').trim()
+          if (!sessionId || !name) {
+            sendJson(res, { ok: false, error: '缺少 sessionId / name' }, 400)
+            return
+          }
+          sendJson(res, await invokeTool(sessionId, name, a.args))
           return
         }
         if (url.pathname === '/mcp-compat/wsl-forward' && req.method === 'POST') {

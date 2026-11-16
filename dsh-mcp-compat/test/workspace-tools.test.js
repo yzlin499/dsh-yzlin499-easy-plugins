@@ -2,7 +2,7 @@
 // 关注三件事：cwd 归到哪个 workspace 根、条目怎么取、两层 deny 怎么合并。
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { describeWorkspaceTools, disabledToolsFor, mergeDeny, workspaceKeyOf } from '../index.js'
+import { describeSessionTools, describeWorkspaceTools, disabledToolsFor, mergeDeny, workspaceKeyOf } from '../index.js'
 
 const ROOTS = ['D:\\work\\projA', 'D:\\work\\projA-sub', 'D:\\work\\projB']
 
@@ -108,3 +108,40 @@ test('describeWorkspaceTools：没有服务器 / 没有工具时是空列表而�
   assert.equal(noTools.total, 0)
 })
 
+
+// ── 右侧栏「MCP 管理」面板数据源 ──────────────────────────────────────────
+const PANEL_SCHEMAS = [
+  { name: 'mcp__ue__play', description: '播放', parameters: { type: 'object', properties: { level: { type: 'string' } } } },
+  { name: 'mcp__ue__stop', description: '停止', parameters: { type: 'object', properties: {} } },
+  { name: 'mcp__rider__build', description: '构建', parameters: { type: 'object', properties: {} } },
+  { name: 'read', description: '内置工具' },
+]
+
+test('describeSessionTools：只列被挡住的工具（含参数 schema），可见工具不出现', () => {
+  const deny = new Set(['mcp__ue__play', 'mcp__rider__build'])
+  const out = describeSessionTools(SERVERS, PANEL_SCHEMAS, deny, new Set(), (name) => name === 'ue')
+  assert.deepEqual(out.map((server) => server.name), ['rider', 'ue'])
+  const ue = out.find((server) => server.name === 'ue')
+  assert.equal(ue.level, 'project')
+  assert.equal(ue.mounted, true)
+  assert.equal(ue.total, 2) // 该服务器一共 2 个工具（play/stop）
+  assert.deepEqual(ue.tools.map((tool) => tool.name), ['mcp__ue__play'])
+  assert.deepEqual(ue.tools[0].parameters, { type: 'object', properties: { level: { type: 'string' } } })
+  assert.equal(ue.tools[0].injected, false)
+  // 内置工具永远不进 MCP 面板
+  assert.equal(out.some((server) => server.tools.some((tool) => tool.name === 'read')), false)
+})
+
+test('describeSessionTools：临时注入的工具仍然列出来（标记 injected）', () => {
+  const deny = new Set(['mcp__ue__play'])
+  const out = describeSessionTools(SERVERS, PANEL_SCHEMAS, deny, new Set(['mcp__ue__play']))
+  const ue = out.find((server) => server.name === 'ue')
+  assert.deepEqual(ue.tools.map((tool) => tool.name), ['mcp__ue__play'])
+  assert.equal(ue.tools[0].injected, true)
+})
+
+test('describeSessionTools：没有隐藏工具的服务器整块不出现', () => {
+  const out = describeSessionTools(SERVERS, PANEL_SCHEMAS, new Set(['mcp__ue__play']), new Set())
+  assert.deepEqual(out.map((server) => server.name), ['ue'])
+  assert.deepEqual(describeSessionTools(SERVERS, PANEL_SCHEMAS, new Set(), new Set()), [])
+})

@@ -120,6 +120,47 @@ an offline server's tools disappear from the list (its saved disabled entries st
 settings and apply again once it reconnects). `tools.restrict` trims the tool set sent to
 the model; it cannot retract usage instructions some plugins inject into the system prompt.
 
+### Right-sidebar "MCP manager": temporary injection and manual calls
+
+The workspace setting decides **what stays visible**; hidden tools move into the
+**MCP manager** panel in the right sidebar (the "MCP manager" card on the sidebar start
+page, or an existing right-sidebar tab). The panel lists only the MCP tools **hidden in the
+current workspace**, grouped by server, and offers two modes:
+
+| Mode | Behaviour | Does the tool enter the context? |
+|---|---|---|
+| **Inject** | Adds the tool to **this session's** visible set (Host memory only — gone when the session ends or DSH restarts; nothing is written to settings) | yes (this session only) |
+| **Call** | Fill in arguments in the panel (a JSON skeleton is generated from the tool's parameter schema) and run it; the result is written into the current session as a user message using a template | **no** — the tool never becomes visible, only its result lands in the chat |
+
+How "Call" works:
+
+- execution runs **without an agent** (standalone service call), so it does not hit the
+  per-agent `tools.restrict` — a workspace-hidden tool is exactly the one the model must
+  not see, and an agent-scoped call would be refused by our own restriction;
+- the result is rendered with the `dsh-mcp-compat.callTemplate` template
+  (`{server}` / `{tool}` / `{args}` / `{result}`); the default looks like:
+
+  ```text
+  【MCP 手动调用】{server} / {tool}
+
+  **参数**
+  ```json
+  {args}
+  ```
+
+  **结果**
+  {result}
+  ```
+
+- only tools that are **currently hidden** in this workspace may be called (visible ones
+  need no detour), and only `mcp__*` names are accepted;
+- arguments must be a JSON object; invalid JSON is rejected host-side and echoed as an
+  error instead of being written into the session.
+
+In one sentence, the three tiers are: **checked in the workspace = always visible (for the
+agent); "Inject" in the panel = visible for this session only; "Call" in the panel = never
+visible, only the call result is written into the chat.**
+
 Config file changes (`fs.watch`) or
 new sessions (`session/created`) trigger a rescan. Rescans are **incremental**: servers
 whose configuration did not change keep their live connection, and only added / removed /

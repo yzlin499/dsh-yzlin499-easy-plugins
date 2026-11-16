@@ -80,6 +80,23 @@ window.__ModuleLoader__.load({
 			".mcp-gate-empty.mcp-gate-error{color:var(--dsw-alias-label-secondary)}",
 			".mcp-gate-foot{display:flex;align-items:center;gap:10px;padding:11px 16px;border-top:1px solid var(--dsw-alias-border-l2)}",
 			".mcp-gate-legend{font-size:10.5px;color:var(--dsw-alias-label-tertiary);margin-left:auto;text-align:right}",
+			// ── 右侧栏「MCP 管理」面板 ──
+			".mcp-panel{display:flex;flex-direction:column;height:100%;min-height:0;color:var(--dsw-alias-label-primary)}",
+			".mcp-panel-head{display:flex;flex-direction:column;gap:2px;padding:10px 12px;border-bottom:1px solid var(--dsw-alias-border-l2)}",
+			".mcp-panel-title{font-size:13px;font-weight:600}",
+			".mcp-panel-sub{font-size:10.5px;color:var(--dsw-alias-label-tertiary);line-height:1.4}",
+			".mcp-panel-toolbar{display:flex;gap:6px;padding:8px 12px 0}",
+			".mcp-panel-body{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;padding:8px 12px 12px;display:flex;flex-direction:column;gap:10px}",
+			".mcp-panel-server{flex:none;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;overflow:hidden}",
+			".mcp-panel-server-head{display:flex;align-items:center;gap:6px;padding:6px 10px;background:var(--dsw-alias-bg-module-platform);font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+			".mcp-panel-tool{padding:7px 10px;border-top:1px solid var(--dsw-alias-border-l2);display:flex;flex-direction:column;gap:4px}",
+			".mcp-panel-tool-name{font-size:11.5px;word-break:break-all}",
+			".mcp-panel-tool-desc{font-size:10.5px;color:var(--dsw-alias-label-tertiary);line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}",
+			".mcp-panel-actions{display:flex;gap:6px;flex-wrap:wrap;align-items:center}",
+			".mcp-panel-form{display:flex;flex-direction:column;gap:6px;margin-top:2px}",
+			".mcp-panel-args{width:100%;box-sizing:border-box;min-height:110px;resize:vertical;background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;color:var(--dsw-alias-label-primary);font:11px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace;padding:8px}",
+			".mcp-panel-status{font-size:10.5px;color:var(--dsw-alias-label-secondary);white-space:pre-wrap;word-break:break-word;max-height:180px;overflow:auto}",
+			".mcp-panel-empty{padding:20px 4px;text-align:center;font-size:11.5px;color:var(--dsw-alias-label-tertiary);line-height:1.6}",
 		].join("");
 		const tagId = "dsh-mcp-compat/style";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId) + "]") === null) {
@@ -91,7 +108,7 @@ window.__ModuleLoader__.load({
 		}
 		//#endregion
 
-		const inject = ["slots", "contextMenus"];
+		const inject = ["slots", "contextMenus", "sidebarRightTabs"];
 
 		function ChevronIcon({ className }) {
 			return react.createElement("svg", {
@@ -311,6 +328,20 @@ window.__ModuleLoader__.load({
 					readFailed: "读取失败",
 					staleHost: "Host 侧还是旧版本（没有 /mcp-compat/tools 接口）——请完全退出并重开 DSH",
 					legend: "取消勾选 = 该工具在此工作区对模型不可见，也不会被执行（跨会话持久化）",
+					// 右侧栏「MCP 管理」面板
+					panelTitle: "MCP 管理",
+					panelGuide: "把平时不用的 MCP 工具临时注入当前会话，或直接手动调用并把结果写进对话",
+					panelEmpty: "当前工作区没有隐藏的 MCP 工具。\n在左侧工作区右键 →「MCP 工具…」里取消勾选，即可把工具收进这里。",
+					panelSearch: "搜索工具…",
+					inject: "注入",
+					injectOn: "已注入",
+					call: "调用",
+					send: "发送",
+					cancel: "取消",
+					clearAll: "全部还原",
+					calling: "调用中…",
+					callDone: "已写入当前会话",
+					callError: "工具返回错误（结果已写入会话）",
 				},
 				en: {
 					menuLabel: "MCP tools…",
@@ -335,6 +366,19 @@ window.__ModuleLoader__.load({
 					readFailed: "Read failed",
 					staleHost: "The Host plugin is still an older build (no /mcp-compat/tools route) — quit and reopen DSH",
 					legend: "Unchecked = hidden from the model and refused in this workspace (persisted across sessions)",
+					panelTitle: "MCP manager",
+					panelGuide: "Temporarily inject rarely used MCP tools into this session, or call one directly and write the result into the chat",
+					panelEmpty: "No hidden MCP tools in this workspace.\nRight-click a workspace in the sidebar → \"MCP tools…\" and uncheck tools to collect them here.",
+					panelSearch: "Filter tools…",
+					inject: "Inject",
+					injectOn: "Injected",
+					call: "Call",
+					send: "Send",
+					cancel: "Cancel",
+					clearAll: "Reset all",
+					calling: "Calling…",
+					callDone: "Written into this session",
+					callError: "The tool returned an error (result written into the session)",
 				},
 			};
 			const localeOf = (() => {
@@ -623,6 +667,213 @@ window.__ModuleLoader__.load({
 				}, McpToolsPanel)),
 				"mcp-compat: tools panel overlay",
 			);
+
+			// ── 右侧栏「MCP 管理」面板 ─────────────────────────────────────────
+			// 只列「当前工作区被隐藏的」MCP 工具（全程可见的那些不进来），提供两种用法：
+			//   ① 注入：临时把工具加进当前会话的可见集（Host 内存态，会话结束即失效）；
+			//   ② 调用：填参数直接执行，结果按模板作为一条 user 消息写进当前会话，
+			//      工具本身从不进入上下文。
+			/** 从工具的参数 schema 生成一份可编辑的 JSON 骨架。 */
+			function argsSkeleton(schema) {
+				const props = schema && typeof schema === "object" ? schema.properties : null;
+				if (!props || typeof props !== "object") return "{}";
+				const out = {};
+				for (const [key, def] of Object.entries(props)) {
+					const type = def && def.type;
+					out[key] = type === "number" || type === "integer" ? 0
+						: type === "boolean" ? false
+							: type === "array" ? []
+								: type === "object" ? {}
+									: "";
+				}
+				return JSON.stringify(out, null, 2);
+			}
+
+			function McpManagerView(props) {
+				const sessionId = props && props.sessionId ? String(props.sessionId) : "";
+				const [data, setData] = react.useState({ loading: true, error: "", servers: [] });
+				const [busy, setBusy] = react.useState(false);
+				const [status, setStatus] = react.useState("");
+				const [query, setQuery] = react.useState("");
+				const [calling, setCalling] = react.useState(null);
+				const [argsText, setArgsText] = react.useState("{}");
+
+				const load = () => {
+					if (!sessionId) {
+						setData({ loading: false, error: t("readFailed"), servers: [] });
+						return;
+					}
+					setData((prev) => ({ ...prev, loading: true, error: "" }));
+					fetch("/mcp-compat/panel?sessionId=" + encodeURIComponent(sessionId))
+						.then((r) => r.json())
+						.then((payload) => {
+							if (payload && payload.ok) setData({ loading: false, error: "", servers: payload.servers || [] });
+							else setData({ loading: false, error: errorText(payload && payload.error), servers: [] });
+						})
+						.catch((e) => setData({ loading: false, error: String((e && e.message) || t("readFailed")), servers: [] }));
+				};
+				react.useEffect(() => { load(); }, [sessionId]);
+
+				const currentInjected = () => {
+					const names = [];
+					for (const server of data.servers) {
+						for (const tool of (server.tools || [])) if (tool.injected) names.push(tool.name);
+					}
+					return names;
+				};
+				const applyInject = (names) => {
+					setBusy(true);
+					fetch("/mcp-compat/panel/inject", {
+						method: "POST",
+						headers: { "content-type": "application/json" },
+						body: JSON.stringify({ sessionId, tools: names }),
+					})
+						.then((r) => r.json())
+						.then((payload) => {
+							setBusy(false);
+							if (payload && payload.ok) {
+								setData({ loading: false, error: "", servers: payload.servers || [] });
+								setStatus("");
+							} else {
+								setStatus(errorText(payload && payload.error));
+							}
+						})
+						.catch((e) => {
+							setBusy(false);
+							setStatus(String((e && e.message) || t("saveFailed")));
+						});
+				};
+				const toggleInject = (tool) => {
+					const next = new Set(currentInjected());
+					if (next.has(tool.name)) next.delete(tool.name);
+					else next.add(tool.name);
+					applyInject([...next]);
+				};
+				const startCall = (tool) => {
+					setCalling(tool.name);
+					setArgsText(argsSkeleton(tool.parameters));
+					setStatus("");
+				};
+				const sendCall = () => {
+					if (!calling) return;
+					setBusy(true);
+					setStatus(t("calling"));
+					fetch("/mcp-compat/panel/call", {
+						method: "POST",
+						headers: { "content-type": "application/json" },
+						body: JSON.stringify({ sessionId, name: calling, args: argsText }),
+					})
+						.then((r) => r.json())
+						.then((payload) => {
+							setBusy(false);
+							if (payload && payload.ok) {
+								setCalling(null);
+								setStatus((payload.isError ? t("callError") : t("callDone")) + "\n" + String(payload.text || ""));
+							} else {
+								setStatus(errorText(payload && payload.error));
+							}
+						})
+						.catch((e) => {
+							setBusy(false);
+							setStatus(String((e && e.message) || t("saveFailed")));
+						});
+				};
+
+				const servers = data.servers || [];
+				const q = query.trim().toLowerCase();
+				const visible = servers
+					.map((server) => ({
+						...server,
+						tools: q
+							? (server.tools || []).filter((tool) => tool.name.toLowerCase().includes(q) || tool.description.toLowerCase().includes(q))
+							: (server.tools || []),
+					}))
+					.filter((server) => server.tools.length > 0);
+				const hiddenCount = servers.reduce((n, server) => n + (server.tools || []).filter((tool) => !tool.injected).length, 0);
+				const injectedCount = servers.reduce((n, server) => n + (server.tools || []).filter((tool) => tool.injected).length, 0);
+
+				return react.createElement("div", { className: "mcp-panel" },
+					react.createElement("div", { className: "mcp-panel-head" },
+						react.createElement("div", { className: "mcp-panel-title" }, t("panelTitle")),
+						react.createElement("div", { className: "mcp-panel-sub" },
+							`${t("panelGuide")} · 隐藏 ${hiddenCount} / 已注入 ${injectedCount}`),
+					),
+					react.createElement("div", { className: "mcp-panel-toolbar" },
+						react.createElement("input", {
+							className: "mcp-gate-search",
+							type: "search",
+							value: query,
+							placeholder: t("panelSearch"),
+							onChange: (event) => setQuery(event.target.value),
+						}),
+						react.createElement("button", {
+							className: "mcp-gate-mini",
+							onClick: () => applyInject([]),
+							disabled: busy || injectedCount === 0,
+						}, t("clearAll")),
+					),
+					react.createElement("div", { className: "mcp-panel-body" },
+						data.loading
+							? react.createElement("div", { className: "mcp-panel-empty" }, t("loading"))
+							: data.error
+								? react.createElement("div", { className: "mcp-panel-empty" }, data.error)
+								: servers.length === 0
+									? react.createElement("div", { className: "mcp-panel-empty" }, t("panelEmpty"))
+									: visible.length === 0
+										? react.createElement("div", { className: "mcp-panel-empty" }, t("noMatch"))
+										: visible.map((server) => react.createElement("section", { className: "mcp-panel-server", key: server.name },
+											react.createElement("div", { className: "mcp-panel-server-head", title: server.source || server.name },
+												react.createElement("span", { className: "mcp-gate-server-name" }, server.name),
+												react.createElement("span", { className: "mcp-gate-tag" + (server.level === "project" ? " is-project" : "") },
+													server.level === "project" ? t("project") : t("user")),
+											),
+											server.tools.map((tool) => react.createElement("div", { className: "mcp-panel-tool", key: tool.name },
+												react.createElement("div", { className: "mcp-panel-tool-name" }, tool.name),
+												tool.description ? react.createElement("div", { className: "mcp-panel-tool-desc" }, tool.description) : null,
+												react.createElement("div", { className: "mcp-panel-actions" },
+													react.createElement("button", {
+														className: "mcp-gate-mini",
+														onClick: () => toggleInject(tool),
+														disabled: busy,
+													}, tool.injected ? "✓ " + t("injectOn") : t("inject")),
+													react.createElement("button", {
+														className: "mcp-gate-mini",
+														onClick: () => (calling === tool.name ? setCalling(null) : startCall(tool)),
+														disabled: busy,
+													}, t("call")),
+												),
+												calling === tool.name
+													? react.createElement("div", { className: "mcp-panel-form" },
+														react.createElement("textarea", {
+															className: "mcp-panel-args",
+															value: argsText,
+															spellCheck: false,
+															onChange: (event) => setArgsText(event.target.value),
+														}),
+														react.createElement("div", { className: "mcp-panel-actions" },
+															react.createElement("button", { className: "mcp-gate-mini", onClick: sendCall, disabled: busy }, t("send")),
+															react.createElement("button", { className: "mcp-gate-mini", onClick: () => setCalling(null), disabled: busy }, t("cancel")),
+														),
+													)
+													: null,
+											)),
+										)),
+						status ? react.createElement("div", { className: "mcp-panel-status" }, status) : null,
+					),
+				);
+			}
+
+			// 注册右侧栏 tab 类型 + 引导页入口（右侧栏起始页的卡片）。
+			ctx.effect(() => ctx.sidebarRightTabs.register({
+				id: "dsh-mcp-compat",
+				kind: "mcp-compat",
+				title: () => t("panelTitle"),
+				guide: [{ order: 40, title: () => t("panelTitle"), description: () => t("panelGuide") }],
+			}), "mcp-compat: sidebar tab type");
+			ctx.effect(() => ctx.slots.inject("sidebar.right.pane.tab", () => ctx.slots.register(
+				{ name: "sidebar.right.pane.tab", key: "dsh-mcp-compat" },
+				(props) => react.createElement(McpManagerView, { ...props }),
+			)), "mcp-compat: sidebar tab body");
 
 			ctx.slots.inject("settings.plugin.item", () => ctx.slots.register({
 				name: "settings.plugin.item",

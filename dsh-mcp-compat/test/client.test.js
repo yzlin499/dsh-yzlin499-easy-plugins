@@ -40,6 +40,7 @@ function makeCtx() {
   const menus = []
   const slotRegistrations = []
   const localeListeners = []
+  const tabs = []
   const services = {
     contextMenus: {
       register(input) {
@@ -48,6 +49,12 @@ function makeCtx() {
       },
       notify: () => {},
       open: () => {},
+    },
+    sidebarRightTabs: {
+      register(input) {
+        tabs.push(input)
+        return () => {}
+      },
     },
     slots: {
       inject: (key, callback) => {
@@ -70,9 +77,11 @@ function makeCtx() {
   const ctx = {
     menus,
     slotRegistrations,
-    // 真实 Client 上下文里 slots / contextMenus 是直接属性，locale 走 ctx.get
+    tabs,
+    // 真实 Client 上下文里 slots / contextMenus / sidebarRightTabs 是直接属性，locale 走 ctx.get
     slots: services.slots,
     contextMenus: services.contextMenus,
+    sidebarRightTabs: services.sidebarRightTabs,
     get(name) {
       return services[name]
     },
@@ -137,4 +146,21 @@ test('面板未打开时不渲染 / 打开后能拿到请求', () => {
   const panel = ctx.slotRegistrations.find((entry) => entry.spec.name === 'shell.overlay')
   // 未点开任何工作区：root 槽位不产生 DOM
   assert.equal(panel.component(), null)
+})
+
+test('右侧栏：注册 MCP 管理 tab 类型 + sidebar.right.pane.tab 槽位', () => {
+  const { exports } = loadClient()
+  const ctx = makeCtx()
+  exports.apply(ctx)
+
+  const tab = ctx.tabs.find((entry) => entry.id === 'dsh-mcp-compat')
+  assert.ok(tab, '没有注册右侧栏 tab 类型')
+  assert.equal(tab.kind, 'mcp-compat')
+  assert.equal(typeof tab.title, 'function')
+  assert.ok(Array.isArray(tab.guide) && tab.guide.length > 0, '右侧栏起始页应有引导卡片')
+
+  const pane = ctx.slotRegistrations.find((entry) => entry.spec.name === 'sidebar.right.pane.tab')
+  assert.ok(pane, '没有注册 sidebar.right.pane.tab')
+  assert.equal(pane.spec.key, 'dsh-mcp-compat')
+  assert.equal(typeof pane.component, 'function')
 })

@@ -20,7 +20,7 @@
 
 | 插件 | 用途 | 状态 |
 |---|---|---|
-| [dsh-mcp-compat](dsh-mcp-compat/README.md) | 标准 MCP 配置兼容：自动读取 `.mcp.json` / `opencode.json` / `.cursor/mcp.json` / `.codex/config.toml`（项目级 + 用户级），把每个 MCP 服务器挂载为 dsh-mcp-client 实例，工具以 `mcp__<名>__*` 出现；右键工作区 → MCP 工具… 可按工作区启停单个工具 | 可用，偶有兼容问题 |
+| [dsh-mcp-compat](dsh-mcp-compat/README.md) | 标准 MCP 配置兼容：自动读取 `.mcp.json` / `opencode.json` / `.cursor/mcp.json` / `.codex/config.toml`（项目级 + 用户级），把每个 MCP 服务器挂载为 dsh-mcp-client 实例，工具以 `mcp__<名>__*` 出现；右键工作区 → MCP 工具… 可按工作区启停单个工具，右侧栏「MCP 管理」面板可临时注入 / 手动调用 | 可用，偶有兼容问题 |
 | [dsh-version-control](dsh-version-control/README.md) | 统一版本控制：接入官方 `ui-sidebar-right` 侧边栏，支持 Git 与 SVN 的变更、历史、差异、提交和更新 | 稳定 |
 | [dsh-ctx-menu](dsh-ctx-menu/README.md) | 右键增强：复用官方统一右键，只补官方缺的「打开方式 ▸ / 复制相对路径 / 复制文件内容」 | 稳定 |
 | [dsh-win-notify](dsh-win-notify/README.md) | Windows 原生吐司通知：权限申请 / 发起提问 / 运行停止时弹右下角通知，网页挂后台也能第一时间知道；支持仅后台通知模式 | 稳定 |
