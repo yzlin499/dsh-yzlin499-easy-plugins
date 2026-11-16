@@ -15,8 +15,8 @@
 //
 // 变更时自动重扫：配置文件 fs.watch + 新会话事件（session/created）触发。
 // ═══════════════════════════════════════════════════════════════════════════
-import { existsSync, readFileSync, watch } from 'node:fs'
-import { isAbsolute, join, resolve, delimiter, sep } from 'node:path'
+import { existsSync, readFileSync, watch, writeFileSync, renameSync, mkdirSync } from 'node:fs'
+import { isAbsolute, join, resolve, delimiter, sep, dirname } from 'node:path'
 import { connect as tcpConnect, createServer as createTcpServer } from 'node:net'
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
@@ -29,7 +29,7 @@ const execFileP = promisify(execFile)
 export const name = 'mcp-compat'
 // loader：经 loader 自己的解析拿 dsh-mcp-client（bundle 源目录在项目里，
 // 顶层裸 import '@deepseek-ai/dsh-mcp-client' 会按源目录解析失败）
-export const inject = ['workspaceRegistry', 'loader', 'tools', 'agents', 'commands', 'settings', 'webServer', 'sessions']
+export const inject = ['workspaceRegistry', 'loader', 'tools', 'agents', 'commands', 'webServer', 'sessions']
 
 const log = (...a) => console.log('[mcp-compat]', ...a)
 const reportedInvalidCommands = new Set()
@@ -704,7 +704,7 @@ const GLOBAL_FILES = [
 ]
 
 // 测试钩子：node 脚本可直接 import 本模块做解析验证
-export { parseMcpJson, parseOpencodeJson, parseCodexToml, collectServers, windowsCommand, pathKey, cwdInWorkspace, denyListFor, workspaceKeyOf, disabledToolsFor, mergeDeny, describeWorkspaceTools, describeSessionTools, renderCallTemplate, filterServersForWorkspaces, activeRootKeysFor, PROJECT_FILES, GLOBAL_FILES, isWsl, getWslHostIp, wslFallbackUrl, wslTunnelTarget, wslSubnetOf, winPortListeners, winPortProxyHas, winPortProxyLegacyHas, winFirewallHas, hostListenerState }
+export { parseMcpJson, parseOpencodeJson, parseCodexToml, collectServers, windowsCommand, pathKey, cwdInWorkspace, denyListFor, workspaceKeyOf, disabledToolsFor, mergeDeny, describeWorkspaceTools, describeSessionTools, renderCallTemplate, normalizeStore, filterServersForWorkspaces, activeRootKeysFor, PROJECT_FILES, GLOBAL_FILES, isWsl, getWslHostIp, wslFallbackUrl, wslTunnelTarget, wslSubnetOf, winPortListeners, winPortProxyHas, winPortProxyLegacyHas, winFirewallHas, hostListenerState }
 
 // 支持按启用的 family（配置源体系）过滤。enabled 为空/未传时 = 全部开启（保持原行为）。
 // globalStdioCwd：用户级（主目录下）配置里 stdio 服务器的 cwd。用户级条目没有"项目"
@@ -772,112 +772,94 @@ function collectServers(workspacePaths, enabled, globalStdioCwd, home = homedir(
   return found
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// 插件自己的持久化存储（DSH home 下的 mcp-compat.json）
+//
+// 为什么不用 `ctx.settings`：DSH 0.2.x 的 settings 服务只提供
+// describe / update / replace / mutate（**没有 register**），插件要持久化必须导出
+// schemastery `Config` 且字段标 `.volatile()`。那套只对「profile 里可编辑的条目」
+// 生效，而我们要存的是运行时状态（工作区工具禁用集、宿主机转发规则跟踪），
+// 不属于 profile 配置。所以直接落一个 JSON 文件：不依赖任何服务生命周期，
+// 卸载/重装插件也不会丢，也不会被 pnpm 重装 profile 冲掉。
+// ═══════════════════════════════════════════════════════════════════════════
+const STORE_DEFAULTS = () => ({
+  scanners: [...ALL_FAMILIES],
+  wslCompat: true,
+  wslAutoForward: true,
+  forwardedPorts: [],
+  workspaceTools: [],
+  callTemplate: '【MCP 手动调用】{server} / {tool}\n\n**参数**\n```json\n{args}\n```\n\n**结果**\n{result}',
+})
+// 把磁盘上的任意内容归一成合法 store（纯函数，便于单测；坏字段逐项回退默认值）。
+const normalizeStore = (raw) => {
+  const base = STORE_DEFAULTS()
+  if (!raw || typeof raw !== 'object') return base
+  if (Array.isArray(raw.scanners)) {
+    const valid = raw.scanners.filter((name) => ALL_FAMILIES.includes(String(name)))
+    if (valid.length) base.scanners = valid
+  }
+  if (typeof raw.wslCompat === 'boolean') base.wslCompat = raw.wslCompat
+  if (typeof raw.wslAutoForward === 'boolean') base.wslAutoForward = raw.wslAutoForward
+  if (Array.isArray(raw.forwardedPorts)) {
+    base.forwardedPorts = raw.forwardedPorts.filter((entry) => entry && typeof entry.port === 'number')
+  }
+  if (Array.isArray(raw.workspaceTools)) {
+    base.workspaceTools = raw.workspaceTools
+      .filter((entry) => entry && typeof entry.path === 'string' && Array.isArray(entry.disabled))
+      .map((entry) => ({
+        path: entry.path,
+        disabled: entry.disabled.filter((name) => typeof name === 'string' && name !== ''),
+      }))
+  }
+  if (typeof raw.callTemplate === 'string' && raw.callTemplate.trim() !== '') base.callTemplate = raw.callTemplate
+  return base
+}
+
 export async function apply(ctx) {
-  // ── 持久化设置：注册命名空间（schemastery schema 经 loader 拉取）──
-  const NS = 'dsh-mcp-compat'
-  let scope = null
-  let memScanners = [...ALL_FAMILIES]
-  let memWslCompat = true
-  let memWslAutoForward = true
-  let memForwardedPorts = []
+  // ── 持久化设置（自己的 JSON 文件；读写都在 Host 侧）──
+  const storeFile = () => join(process.env.DSH_HOME || join(homedir(), '.dsh'), 'mcp-compat.json')
+  let store = STORE_DEFAULTS()
+  const persist = () => {
+    try {
+      const file = storeFile()
+      const tmp = file + '.tmp'
+      mkdirSync(dirname(file), { recursive: true })
+      writeFileSync(tmp, JSON.stringify({ version: 1, ...store }, null, 2), 'utf8')
+      renameSync(tmp, file)
+    } catch (e) {
+      log('保存设置失败:', String((e && e.message) || e))
+    }
+  }
   try {
-    const mod = await ctx.loader.import('@deepseek-ai/schemastery')
-    const z = mod && mod.default ? mod.default : mod
-    scope = ctx.settings.register(NS, z.object({
-      scanners: z.array(z.string()).default(ALL_FAMILIES),
-      wslCompat: z.boolean().default(true),
-      wslAutoForward: z.boolean().default(true),
-      // 插件创建的宿主机转发规则（portproxy + 防火墙），用于 DSH 退出时自动释放
-      forwardedPorts: z.array(z.object({
-        port: z.number(),
-        listen: z.string(),
-        proxy: z.boolean().default(true),
-        firewall: z.boolean().default(true),
-      })).default([]),
-      // 工作区级工具门控（工作区右键菜单 → 面板写入）：我不希望这个工作区出现哪些
-      // MCP 工具。path 是 workspace 根的归一化路径（Windows 小写），disabled 是
-      // `mcp__<服务器>__<工具>` 全名。只影响可见集，不改配置文件、不卸载服务器。
-      workspaceTools: z.array(z.object({
-        path: z.string(),
-        disabled: z.array(z.string()).default([]),
-      })).default([]),
-      // 「MCP 管理面板」里手动调用工具的注入模板（{server}/{tool}/{args}/{result}）。
-      // 调用结果按这个模板作为一条 user 消息写进当前会话，工具本身从不进入上下文。
-      callTemplate: z.string().default(
-        '【MCP 手动调用】{server} / {tool}\n\n**参数**\n```json\n{args}\n```\n\n**结果**\n{result}',
-      ),
-    }))
+    store = normalizeStore(JSON.parse(readFileSync(storeFile(), 'utf8')))
+    log('设置存储:', storeFile())
   } catch (e) {
-    log('settings 注册失败，回退内存态:', String((e && e.message) || e))
+    if (e && e.code !== 'ENOENT') log('读取设置失败，使用默认值:', String((e && e.message) || e))
   }
 
-  // 当前启用的扫描 family（设置里勾选；settings 不可用时回退全部）
-  const readScanners = () => {
-    if (scope) {
-      try {
-        const v = scope.get()
-        if (v && Array.isArray(v.scanners) && v.scanners.length) {
-          const valid = v.scanners.filter((s) => ALL_FAMILIES.includes(s))
-          return valid.length ? valid : [...memScanners]
-        }
-      } catch {}
-    }
-    return [...memScanners]
-  }
+  // 当前启用的扫描 family（设置里勾选；空 = 全部）
+  const readScanners = () => (store.scanners.length ? [...store.scanners] : [...ALL_FAMILIES])
   // WSL 兼容开关：wslCompat 是否启用隧道/改写兜底；wslAutoForward 是否在宿主机
   // 端口不可达时自动配置 portproxy + 防火墙（触发一次 Windows UAC 授权）。
-  const readWslCfg = () => {
-    if (scope) {
-      try {
-        const v = scope.get()
-        if (v) {
-          return {
-            compat: typeof v.wslCompat === 'boolean' ? v.wslCompat : memWslCompat,
-            autoForward: typeof v.wslAutoForward === 'boolean' ? v.wslAutoForward : memWslAutoForward,
-          }
-        }
-      } catch {}
-    }
-    return { compat: memWslCompat, autoForward: memWslAutoForward }
-  }
+  const readWslCfg = () => ({ compat: store.wslCompat !== false, autoForward: store.wslAutoForward !== false })
   // 插件自建的宿主机转发规则跟踪（仅释放自己创建的，不碰用户手动加的）。
-  const readTrackedPorts = () => {
-    if (scope) {
-      try {
-        const v = scope.get()
-        if (v && Array.isArray(v.forwardedPorts)) return v.forwardedPorts.filter((t) => t && typeof t.port === 'number')
-      } catch {}
-    }
-    return memForwardedPorts
-  }
+  const readTrackedPorts = () => store.forwardedPorts
   const setTrackedPorts = (list) => {
-    memForwardedPorts = list
-    if (scope) {
-      try { void scope.update({ forwardedPorts: list }).catch(() => {}) } catch {}
-    }
+    store.forwardedPorts = list
+    persist()
   }
   // ── 工作区级工具门控（面板读写）──
-  // 与 forwardedPorts 一样：settings 不可用时退化为内存态（当次运行有效）。
-  let memWorkspaceTools = []
-  const readWorkspaceTools = () => {
-    if (scope) {
-      try {
-        const v = scope.get()
-        if (v && Array.isArray(v.workspaceTools)) {
-          return v.workspaceTools.filter((e) => e && typeof e.path === 'string' && Array.isArray(e.disabled))
-        }
-      } catch {}
-    }
-    return memWorkspaceTools
-  }
+  const readWorkspaceTools = () => store.workspaceTools
   const writeWorkspaceTools = async (list) => {
-    memWorkspaceTools = list
-    if (!scope) return
-    try {
-      await scope.update({ workspaceTools: list })
-    } catch (e) {
-      log('工作区工具门控保存失败:', String((e && e.message) || e))
-    }
+    store.workspaceTools = list
+    persist()
+  }
+  // 设置页保存（扫描源 / WSL 开关）
+  const updateStore = (patch) => {
+    if (Array.isArray(patch.scanners)) store.scanners = patch.scanners.filter((name) => ALL_FAMILIES.includes(String(name)))
+    if (typeof patch.wslCompat === 'boolean') store.wslCompat = patch.wslCompat
+    if (typeof patch.wslAutoForward === 'boolean') store.wslAutoForward = patch.wslAutoForward
+    persist()
   }
   // 已注册的 workspace 根目录（restrictAgent 每条路径都要用；失败了就退化成 cwd 本身）
   const workspaceRoots = () => {
@@ -889,16 +871,8 @@ export async function apply(ctx) {
   }
   // 当前 cwd 所属工作区被禁用的工具名
   const workspaceDisabledFor = (cwd) => disabledToolsFor(readWorkspaceTools(), cwd, workspaceRoots())
-  // 手动调用的注入模板（settings 缺失时用默认值）
-  const callTemplate = () => {
-    const fallback = '【MCP 手动调用】{server} / {tool}\n\n**参数**\n```json\n{args}\n```\n\n**结果**\n{result}'
-    if (!scope) return fallback
-    try {
-      const v = scope.get()
-      if (v && typeof v.callTemplate === 'string' && v.callTemplate.trim() !== '') return v.callTemplate
-    } catch {}
-    return fallback
-  }
+  // 手动调用的注入模板
+  const callTemplate = () => (store.callTemplate && store.callTemplate.trim() !== '' ? store.callTemplate : STORE_DEFAULTS().callTemplate)
   // 当前注册表里的全部工具名（用于丢弃失效名，避免 restrict 抛错）
   const knownToolNames = () => {
     try {
@@ -1998,12 +1972,7 @@ export async function apply(ctx) {
             return
           }
           try {
-            if (scope) await scope.update(patch)
-            else {
-              if (patch.scanners) memScanners = [...patch.scanners]
-              if (typeof patch.wslCompat === 'boolean') memWslCompat = patch.wslCompat
-              if (typeof patch.wslAutoForward === 'boolean') memWslAutoForward = patch.wslAutoForward
-            }
+            updateStore(patch)
             log('配置 ->', JSON.stringify({ ...patch, scanners: patch.scanners || readScanners() }))
             // 立即按新配置重建挂载（WSL 兼容开关变化会启用/关闭隧道与改写）
             void sync()
@@ -2119,4 +2088,6 @@ export async function apply(ctx) {
     },
   })
 }
+
+
 

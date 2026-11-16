@@ -2,7 +2,7 @@
 // 关注三件事：cwd 归到哪个 workspace 根、条目怎么取、两层 deny 怎么合并。
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { describeSessionTools, describeWorkspaceTools, disabledToolsFor, mergeDeny, renderCallTemplate, workspaceKeyOf } from '../index.js'
+import { describeSessionTools, describeWorkspaceTools, disabledToolsFor, mergeDeny, normalizeStore, renderCallTemplate, workspaceKeyOf } from '../index.js'
 
 const ROOTS = ['D:\\work\\projA', 'D:\\work\\projA-sub', 'D:\\work\\projB']
 
@@ -157,4 +157,38 @@ test('renderCallTemplate：替换 {server}/{tool}/{args}/{result}，缺省用默
   assert.match(fallback, /【MCP 手动调用】ue \/ play/)
   assert.match(fallback, /"a": 1/)
   assert.match(fallback, /ok$/)
+})
+
+
+// ── 持久化存储：磁盘内容归一 ──────────────────────────────────────────────
+test('normalizeStore：坏字段逐项回退，好字段原样保留', () => {
+  const defaults = normalizeStore(undefined)
+  assert.deepEqual(defaults.scanners, ['claude', 'cursor', 'opencode', 'codex'])
+  assert.deepEqual(defaults.workspaceTools, [])
+  assert.equal(defaults.wslCompat, true)
+  assert.match(defaults.callTemplate, /\{result\}/)
+
+  const merged = normalizeStore({
+    scanners: ['claude', 'bogus'],
+    wslCompat: false,
+    forwardedPorts: [{ port: 8000, listen: '192.168.1.1' }, { bad: true }],
+    workspaceTools: [
+      { path: 'd:\\work\\proja', disabled: ['mcp__ue__play', '', 3] },
+      { path: 42 },
+      'junk',
+    ],
+    callTemplate: '  ',
+  })
+  assert.deepEqual(merged.scanners, ['claude'])
+  assert.equal(merged.wslCompat, false)
+  assert.deepEqual(merged.forwardedPorts, [{ port: 8000, listen: '192.168.1.1' }])
+  assert.deepEqual(merged.workspaceTools, [{ path: 'd:\\work\\proja', disabled: ['mcp__ue__play'] }])
+  // 空白模板回退默认
+  assert.match(merged.callTemplate, /\{args\}/)
+})
+
+test('normalizeStore：空 scanners / 非对象输入回退默认', () => {
+  assert.deepEqual(normalizeStore({ scanners: [] }).scanners, ['claude', 'cursor', 'opencode', 'codex'])
+  assert.deepEqual(normalizeStore(null).workspaceTools, [])
+  assert.deepEqual(normalizeStore('nope').workspaceTools, [])
 })

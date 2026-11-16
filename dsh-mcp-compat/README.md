@@ -81,13 +81,15 @@ dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/ds
 在本工作区生效。判定用会话 `cwd` 归到的 workspace 根（根目录本身和子目录都算），
 所以从子目录开会话同样命中。
 
-持久化：写在 profile 的 `settings.yaml`（`dsh-mcp-compat.workspaceTools`），
-形如 `{ path: <workspace 根>, disabled: ["mcp__ue__play", ...] }`。这是一项**用户偏好**
-（"我不希望这个工作区出现某些工具"），所以不往你的项目目录写文件、不产生 git 变更。
-settings 服务不可用时退化为内存态（当次运行有效）。
+持久化：写在 **`<DSH home>/mcp-compat.json`**（默认 `~/.dsh/mcp-compat.json`），
+形如 `{ "workspaceTools": [{ "path": "<workspace 根>", "disabled": ["mcp__ue__play"] }] }`。
+这是一项**用户偏好**（"我不希望这个工作区出现某些工具"），所以不往你的项目目录写文件、
+不产生 git 变更；也不依赖 DSH 的 settings 服务（0.2.x 的 settings 只有 describe/update，
+没有 `register`，把运行时状态塞进去只会静默丢数据），卸载/重装插件都不会丢。
+文件损坏时逐字段回退默认值（`normalizeStore` 有单测）。
 
 已知边界：面板只列「当前可见且已注册」的工具——服务器掉线时它的工具会从列表消失
-（已保存的禁用条目仍保留在 settings 里，恢复连接后继续生效）；`tools.restrict` 只裁剪
+（已保存的禁用条目仍保留在存储里，恢复连接后继续生效）；`tools.restrict` 只裁剪
 「下发给模型的工具集」，管不到某些插件自己往 system prompt 里注入的工具使用说明。
 
 ### 右侧栏「MCP 管理」面板：临时注入 / 手动调用

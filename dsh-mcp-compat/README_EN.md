@@ -109,16 +109,18 @@ so their disabled entries only apply there. Attribution uses the workspace root 
 the session `cwd` (the root itself and any subdirectory both match), so sessions opened in
 a subdirectory are covered too.
 
-Persistence: the plugin's profile settings (`dsh-mcp-compat.workspaceTools`), shaped like
-`{ path: <workspace root>, disabled: ["mcp__ue__play", ...] }`. This is a **user
-preference** ("I don't want these tools in this workspace"), so nothing is written into
-your project directory and no git changes appear. Without the settings service the list
-degrades to memory (current run only).
+Persistence: **`<DSH home>/mcp-compat.json`** (default `~/.dsh/mcp-compat.json`), shaped like
+`{ "workspaceTools": [{ "path": "<workspace root>", "disabled": ["mcp__ue__play"] }] }`.
+This is a **user preference** ("I don't want these tools in this workspace"), so nothing is
+written into your project directory and no git changes appear. It deliberately does not use
+DSH's settings service (0.2.x only has describe/update — no `register` — so pushing runtime
+state there silently loses it), and it survives uninstall/reinstall. A corrupt file falls
+back field by field (`normalizeStore` is unit-tested).
 
 Known boundaries: the panel only lists tools that are **currently visible and registered** —
-an offline server's tools disappear from the list (its saved disabled entries stay in
-settings and apply again once it reconnects). `tools.restrict` trims the tool set sent to
-the model; it cannot retract usage instructions some plugins inject into the system prompt.
+an offline server's tools disappear from the list (its saved disabled entries stay in the
+store and apply again once it reconnects). `tools.restrict` trims the tool set sent to the
+model; it cannot retract usage instructions some plugins inject into the system prompt.
 
 ### Right-sidebar "MCP manager": temporary injection and manual calls
 
