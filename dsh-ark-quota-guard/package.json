@@ -1,0 +1,34 @@
+{
+  "name": "dsh-ark-quota-guard",
+  "version": "0.1.0",
+  "description": "Parks a DSH session when Volcengine Ark (火山方舟) quota is exhausted and resumes it automatically a few seconds after the quota resets.",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\""
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "dsh-plugin",
+    "volcengine",
+    "ark",
+    "火山方舟",
+    "quota",
+    "auto-resume",
+    "429"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}

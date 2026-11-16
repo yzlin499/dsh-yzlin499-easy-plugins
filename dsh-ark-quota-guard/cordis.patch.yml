@@ -1,0 +1,18 @@
+# dsh bundle layer: mount the Ark quota guard plugin.
+# - id: ark-quota-guard —— the row key in the composed tree
+#   name: dsh-ark-quota-guard —— the package whose `main` (index.js) is the host half
+# `dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-ark-quota-guard"` installs it and
+# auto-registers this patch as a bundle layer (dsh.bundle.patch), so DSH mounts it on boot.
+#
+# Runtime config is read from <DSH_HOME>/ark-quota-guard.json (created with defaults on first
+# boot), so credentials never have to live in the profile patch. The `config` block below is
+# only the fallback seed used when that file does not exist yet.
+- insert:
+    - id: ark-quota-guard
+      name: dsh-ark-quota-guard
+      config:
+        enabled: true
+        providerPattern: "ark|volc|doubao|pi-ai"
+        plan: auto
+        resumeBufferMs: 10000
+        minParkMs: 60000

@@ -25,6 +25,7 @@
 | [dsh-ctx-menu](dsh-ctx-menu/README.md) | 右键增强：复用官方统一右键，只补官方缺的「打开方式 ▸ / 复制相对路径 / 复制文件内容」 | 稳定 |
 | [dsh-win-notify](dsh-win-notify/README.md) | Windows 原生吐司通知：权限申请 / 发起提问 / 运行停止时弹右下角通知，网页挂后台也能第一时间知道；支持仅后台通知模式 | 稳定 |
 | [dsh-recent-tps](dsh-recent-tps/README.md) | 最近 30 秒速度：给输入框下方的会话统计面板多一行「最近 30 秒速度」，官方四行读数与样式原样保留 | 稳定 |
+| [dsh-ark-quota-guard](dsh-ark-quota-guard/README.md) | 火山方舟额度守护：撞 429 后挂起会话，到「重置时刻 + 10 秒」自动续跑，不用人盯着发「继续」 | 稳定 |
 
 > 点插件名可查看该插件的详细文档（中文 `README.md` / 英文 `README_EN.md`）。
 
@@ -38,6 +39,7 @@ dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/ds
 dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-ctx-menu"
 dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-win-notify"
 dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-recent-tps"
+dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-ark-quota-guard"
 ```
 
 1. 按需执行上面对应的一行（`dsh-xxx` 换成表格里的插件目录名，`web` 换成你的 profile 名）。
