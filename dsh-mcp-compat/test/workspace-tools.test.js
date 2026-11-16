@@ -203,3 +203,18 @@ test('normalizeStore：空 scanners / 非对象输入回退默认', () => {
   assert.deepEqual(normalizeStore(null).workspaceTools, [])
   assert.deepEqual(normalizeStore('nope').workspaceTools, [])
 })
+
+test('normalizeStore：会话级注入只保留 mcp__* 且去重、限长', () => {
+  const merged = normalizeStore({
+    sessionTools: [
+      { sessionId: 'session-a', tools: ['mcp__rider__x', 'mcp__rider__x', 'pwsh', ''] },
+      { sessionId: '', tools: ['mcp__x__y'] },
+      { sessionId: 'session-b' },
+      'junk',
+    ],
+  })
+  assert.deepEqual(merged.sessionTools, [{ sessionId: 'session-a', tools: ['mcp__rider__x'] }])
+  assert.deepEqual(normalizeStore(undefined).sessionTools, [])
+  // 空工具集不落盘
+  assert.deepEqual(normalizeStore({ sessionTools: [{ sessionId: 'session-c', tools: [] }] }).sessionTools, [])
+})

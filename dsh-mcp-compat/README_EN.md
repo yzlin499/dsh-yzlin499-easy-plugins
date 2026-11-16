@@ -131,7 +131,7 @@ current workspace**, grouped by server, and offers two modes:
 
 | Mode | Behaviour | Does the tool enter the context? |
 |---|---|---|
-| **Inject** | Adds the tool to **this session's** visible set (Host memory only — gone when the session ends or DSH restarts; nothing is written to settings) | yes (this session only) |
+| **Inject** | Adds the tool to **this session's** visible set (**persisted** in `mcp-compat.json` under `sessionTools`, restored after a DSH restart; entries for deleted sessions are harmless and capped at 200) | yes (this session only) |
 | **Call** | **Fill in the generated parameter form** (form mode by default, JSON mode on demand) → **review the result preview** → click "Send to session" to actually write it into the chat | **no** — the tool never becomes visible, only its result lands in the chat |
 
 How "Call" works:

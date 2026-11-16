@@ -792,6 +792,10 @@ const STORE_DEFAULTS = () => ({
   wslAutoForward: true,
   forwardedPorts: [],
   workspaceTools: [],
+  // 会话级临时注入：sessionId -> 工具名。**必须持久化**——否则 DSH 重启后
+  // 注入没了，而这些会话的历史里已经有对应工具的调用/结果，模型继续时会发现
+  // 工具突然消失（表现为「会话毁了」）。
+  sessionTools: [],
   callTemplate: '【MCP 手动调用】{server} / {tool}\n\n**参数**\n```json\n{args}\n```\n\n**结果**\n{result}',
 })
 // 把磁盘上的任意内容归一成合法 store（纯函数，便于单测；坏字段逐项回退默认值）。
@@ -814,6 +818,17 @@ const normalizeStore = (raw) => {
         path: entry.path,
         disabled: entry.disabled.filter((name) => typeof name === 'string' && name !== ''),
       }))
+  }
+  // 会话级注入：只保留形状合法的条目，最多 200 个会话（防止无限增长）
+  if (Array.isArray(raw.sessionTools)) {
+    base.sessionTools = raw.sessionTools
+      .filter((entry) => entry && typeof entry.sessionId === 'string' && entry.sessionId !== '' && Array.isArray(entry.tools))
+      .map((entry) => ({
+        sessionId: entry.sessionId,
+        tools: [...new Set(entry.tools.filter((name) => typeof name === 'string' && name.startsWith('mcp__')))],
+      }))
+      .filter((entry) => entry.tools.length > 0)
+      .slice(-200)
   }
   if (typeof raw.callTemplate === 'string' && raw.callTemplate.trim() !== '') base.callTemplate = raw.callTemplate
   return base
@@ -1153,8 +1168,19 @@ export async function apply(ctx) {
   const restrictionsByAgent = new Map()
   // 会话级「临时注入」：sessionId -> Set(工具名)。
   // 语义 = 从该会话的 deny 里排除这些工具（面板里"注入未启用的工具"）。
-  // 只存内存：DSH 重启即失效，这是刻意的——临时放行，不该悄悄变成长期配置。
-  const sessionInjections = new Map()
+  // **持久化到 store.sessionTools**：DSH 重启后自动恢复。临时注入如果只存内存，
+  // 重启会让已有会话历史里的工具调用突然失效（模型「记得」用过却调不到），
+  // 用户视角就是「会话毁了」。条目上限见 normalizeStore。
+  const sessionInjections = new Map(
+    (store.sessionTools || []).map((entry) => [entry.sessionId, new Set(entry.tools)]),
+  )
+  const persistSessionInjections = () => {
+    store.sessionTools = [...sessionInjections.entries()]
+      .map(([sessionId, tools]) => ({ sessionId, tools: [...tools] }))
+      .filter((entry) => entry.tools.length > 0)
+      .slice(-200)
+    persist()
+  }
   const releaseRestriction = (agent) => {
     const cur = restrictionsByAgent.get(agent)
     if (!cur) return
@@ -1214,11 +1240,9 @@ export async function apply(ctx) {
       if (!agents.includes(agent)) releaseRestriction(agent)
     }
     for (const agent of agents) restrictAgent(agent)
-    // 会话销毁后清掉它的临时注入（纯内存态，别留泄漏；重启也会清空）
-    const liveSessions = new Set(agents.map((agent) => agent && agent.session && agent.session.id).filter(Boolean))
-    for (const sessionId of [...sessionInjections.keys()]) {
-      if (!liveSessions.has(sessionId)) sessionInjections.delete(sessionId)
-    }
+    // 注意：**不要**按「当前存活 agent」清理 sessionInjections——冷启动时还没有
+    // agent，会立刻把刚恢复的注入又删掉，等于没持久化。陈旧条目无害（只有
+    // sessionId 命中时才会用到），数量由 normalizeStore 的上限兜住。
   }
   // 项目级工具集变化（服务器重连后补注册了工具等）时补一次限制同步。
   // 看门狗每轮调用；只有工具名集合真的变了才会真正重算，开销可忽略。
@@ -2062,6 +2086,7 @@ export async function apply(ctx) {
           )]
           if (tools.length) sessionInjections.set(sessionId, new Set(tools))
           else sessionInjections.delete(sessionId)
+          persistSessionInjections() // 重启后恢复，避免会话历史里的工具突然失效
           refreshRestrictions(currentServers)
           log('会话临时注入已更新:', sessionId, `注入 ${tools.length} 个工具`)
           sendJson(res, describeForSession(sessionId))
