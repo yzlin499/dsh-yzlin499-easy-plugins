@@ -532,6 +532,47 @@ const denyListFor = (tools, cwd) => {
   if (!tools || !tools.length) return []
   return tools.filter((tool) => !cwdInWorkspace(cwd, tool.workspaceRoot)).map((tool) => tool.name)
 }
+// ── 工作区级「按工具禁用」（工作区右键菜单 → 工具面板写入）──
+// 面板保存的条目形如 { path: <workspace 根的 pathKey>, disabled: [工具名...] }。
+// 语义与项目级作用域不同：这是**用户偏好**（我不希望这个工作区出现某些工具），
+// 不来自配置文件，因此落在 profile settings 里，不需要往用户项目目录写东西。
+
+// 会话 cwd 归到包含它的 workspace 根（最长匹配）；没有根匹配时退回 cwd 本身，
+// 这样「工作区没注册进 registry 但会话就在那个目录」也能命中自己保存的规则。
+const workspaceKeyOf = (cwd, roots) => {
+  const exact = pathKey(cwd)
+  if (!exact) return ''
+  let best = ''
+  for (const root of roots || []) {
+    if (!cwdInWorkspace(cwd, root)) continue
+    const key = pathKey(root)
+    if (key.length > best.length) best = key
+  }
+  return best || exact
+}
+// 某个工作区被禁用的工具名（面板保存的条目）。
+const disabledToolsFor = (entries, cwd, roots) => {
+  const key = workspaceKeyOf(cwd, roots)
+  if (!key) return []
+  const hit = (entries || []).find((entry) => entry && pathKey(entry.path) === key)
+  if (!hit || !Array.isArray(hit.disabled)) return []
+  return hit.disabled.filter((name) => typeof name === 'string' && name !== '')
+}
+// 合并两层 deny（项目级 MCP 作用域 + 工作区面板禁用）：
+// 去重，并丢弃当前注册表里已不存在的工具名——`tools.restrict()` 收到失效名会抛错，
+// 而失效名只可能来自「服务器暂时掉线」这种瞬时状态，不该让整层限制失效。
+const mergeDeny = (projectDeny, workspaceDeny, known) => {
+  const out = []
+  const seen = new Set()
+  for (const name of [...(projectDeny || []), ...(workspaceDeny || [])]) {
+    if (typeof name !== 'string' || name === '' || seen.has(name)) continue
+    if (known && !known.has(name)) continue
+    seen.add(name)
+    out.push(name)
+  }
+  return out
+}
+
 // 只保留「用户级 + 当前活动 workspace 的项目级」服务器。
 // 为什么要在挂载阶段就过滤，而不只靠后面的 per-agent deny：
 // 服务器一旦挂上就是**全局**的——它会出现在 MCP 服务器/资源列表里（每个会话都看得到），
@@ -581,7 +622,7 @@ const GLOBAL_FILES = [
 ]
 
 // 测试钩子：node 脚本可直接 import 本模块做解析验证
-export { parseMcpJson, parseOpencodeJson, parseCodexToml, collectServers, windowsCommand, pathKey, cwdInWorkspace, denyListFor, filterServersForWorkspaces, activeRootKeysFor, PROJECT_FILES, GLOBAL_FILES, isWsl, getWslHostIp, wslFallbackUrl, wslTunnelTarget, wslSubnetOf, winPortListeners, winPortProxyHas, winPortProxyLegacyHas, winFirewallHas, hostListenerState }
+export { parseMcpJson, parseOpencodeJson, parseCodexToml, collectServers, windowsCommand, pathKey, cwdInWorkspace, denyListFor, workspaceKeyOf, disabledToolsFor, mergeDeny, filterServersForWorkspaces, activeRootKeysFor, PROJECT_FILES, GLOBAL_FILES, isWsl, getWslHostIp, wslFallbackUrl, wslTunnelTarget, wslSubnetOf, winPortListeners, winPortProxyHas, winPortProxyLegacyHas, winFirewallHas, hostListenerState }
 
 // 支持按启用的 family（配置源体系）过滤。enabled 为空/未传时 = 全部开启（保持原行为）。
 // globalStdioCwd：用户级（主目录下）配置里 stdio 服务器的 cwd。用户级条目没有"项目"
@@ -671,6 +712,13 @@ export async function apply(ctx) {
         proxy: z.boolean().default(true),
         firewall: z.boolean().default(true),
       })).default([]),
+      // 工作区级工具门控（工作区右键菜单 → 面板写入）：我不希望这个工作区出现哪些
+      // MCP 工具。path 是 workspace 根的归一化路径（Windows 小写），disabled 是
+      // `mcp__<服务器>__<工具>` 全名。只影响可见集，不改配置文件、不卸载服务器。
+      workspaceTools: z.array(z.object({
+        path: z.string(),
+        disabled: z.array(z.string()).default([]),
+      })).default([]),
     }))
   } catch (e) {
     log('settings 注册失败，回退内存态:', String((e && e.message) || e))
@@ -719,6 +767,47 @@ export async function apply(ctx) {
     memForwardedPorts = list
     if (scope) {
       try { void scope.update({ forwardedPorts: list }).catch(() => {}) } catch {}
+    }
+  }
+  // ── 工作区级工具门控（面板读写）──
+  // 与 forwardedPorts 一样：settings 不可用时退化为内存态（当次运行有效）。
+  let memWorkspaceTools = []
+  const readWorkspaceTools = () => {
+    if (scope) {
+      try {
+        const v = scope.get()
+        if (v && Array.isArray(v.workspaceTools)) {
+          return v.workspaceTools.filter((e) => e && typeof e.path === 'string' && Array.isArray(e.disabled))
+        }
+      } catch {}
+    }
+    return memWorkspaceTools
+  }
+  const writeWorkspaceTools = async (list) => {
+    memWorkspaceTools = list
+    if (!scope) return
+    try {
+      await scope.update({ workspaceTools: list })
+    } catch (e) {
+      log('工作区工具门控保存失败:', String((e && e.message) || e))
+    }
+  }
+  // 已注册的 workspace 根目录（restrictAgent 每条路径都要用；失败了就退化成 cwd 本身）
+  const workspaceRoots = () => {
+    try {
+      return ctx.workspaceRegistry.list().map((w) => String(w.path))
+    } catch {
+      return []
+    }
+  }
+  // 当前 cwd 所属工作区被禁用的工具名
+  const workspaceDisabledFor = (cwd) => disabledToolsFor(readWorkspaceTools(), cwd, workspaceRoots())
+  // 当前注册表里的全部工具名（用于丢弃失效名，避免 restrict 抛错）
+  const knownToolNames = () => {
+    try {
+      return new Set(ctx.tools.schemas().map((s) => s && s.name).filter((n) => typeof n === 'string'))
+    } catch {
+      return null
     }
   }
   const trackForward = (port, listen, proxy, firewall) => {
@@ -989,7 +1078,9 @@ export async function apply(ctx) {
   const restrictAgent = (agent) => {
     if (!agent) return
     const cwd = agent.session && agent.session.header && agent.session.header.cwd
-    const deny = denyListFor(projectTools, cwd)
+    // 两层 deny 合并：项目级 MCP 作用域（别的 workspace 的工具）+ 工作区面板禁用
+    // （本工作区不希望出现的工具）。后者来自 settings，改完立即通过 refreshRestrictions 生效。
+    const deny = mergeDeny(denyListFor(projectTools, cwd), workspaceDisabledFor(cwd), knownToolNames())
     const cur = restrictionsByAgent.get(agent)
     if (!deny.length) {
       releaseRestriction(agent)
@@ -1632,6 +1723,45 @@ export async function apply(ctx) {
     })
     req.on('error', () => resolve({}))
   })
+  // ── 工作区工具门控：列出「当前项目可见的 MCP 工具」并保存禁用集 ──
+  // 面板（工作区右键 → MCP 工具）用这两个接口。可见性口径与限制口径完全一致：
+  // 用户级服务器全局可见；项目级服务器只在 cwd 属于其 workspace 根时可见。
+  const describeWorkspaceTools = (workspacePath) => {
+    const roots = workspaceRoots()
+    const key = workspaceKeyOf(workspacePath, roots)
+    const disabled = new Set(disabledToolsFor(readWorkspaceTools(), workspacePath, roots))
+    let schemas = []
+    try { schemas = ctx.tools.schemas() } catch {}
+    const servers = []
+    for (const server of currentServers) {
+      if (server.workspaceRoot && !cwdInWorkspace(workspacePath, server.workspaceRoot)) continue
+      const prefix = `mcp__${server.name}__`
+      const tools = schemas
+        .filter((schema) => schema && typeof schema.name === 'string' && schema.name.startsWith(prefix))
+        .map((schema) => ({
+          name: schema.name,
+          description: String(schema.description || ''),
+          disabled: disabled.has(schema.name),
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name))
+      servers.push({
+        name: server.name,
+        transport: server.transport,
+        level: server.workspaceRoot ? 'project' : 'user',
+        workspaceRoot: server.workspaceRoot || null,
+        source: server.source || '',
+        mounted: fiberByName.has(server.name),
+        tools,
+      })
+    }
+    servers.sort((a, b) => a.name.localeCompare(b.name))
+    return {
+      ok: true,
+      workspace: { path: workspacePath, key },
+      servers,
+      total: servers.reduce((n, s) => n + s.tools.length, 0),
+    }
+  }
   ctx.webServer.register({
     kind: 'prefix',
     path: '/mcp-compat',
@@ -1683,6 +1813,39 @@ export async function apply(ctx) {
             log('配置保存失败:', String((e && e.message) || e))
             sendJson(res, { ok: false, error: '保存失败: ' + String((e && e.message) || e) }, 500)
           }
+          return
+        }
+        if (url.pathname === '/mcp-compat/tools' && req.method === 'GET') {
+          // 工作区面板：列出该工作区可见的 dsh-mcp-compat 注入工具及当前禁用状态
+          const workspacePath = String(url.searchParams.get('workspacePath') || '').trim()
+          if (!workspacePath) {
+            sendJson(res, { ok: false, error: '缺少 workspacePath' }, 400)
+            return
+          }
+          sendJson(res, describeWorkspaceTools(workspacePath))
+          return
+        }
+        if (url.pathname === '/mcp-compat/tools' && req.method === 'POST') {
+          // 工作区面板：保存该工作区的禁用工具集（立即同步到所有 agent 的限制层）
+          const a = await readBody(req)
+          const workspacePath = String(a.workspacePath || '').trim()
+          if (!workspacePath) {
+            sendJson(res, { ok: false, error: '缺少 workspacePath' }, 400)
+            return
+          }
+          const key = workspaceKeyOf(workspacePath, workspaceRoots())
+          const disabled = [...new Set(
+            (Array.isArray(a.disabled) ? a.disabled : [])
+              .filter((name) => typeof name === 'string' && name.startsWith('mcp__')),
+          )]
+          const list = readWorkspaceTools().filter((entry) => pathKey(entry.path) !== key)
+          // 空集合不落盘：恢复「全部启用」的工作区不在 settings 里留垃圾条目
+          if (disabled.length) list.push({ path: key, disabled })
+          await writeWorkspaceTools(list)
+          // 同一份 disabled 状态驱动可见集与执行拒绝，改完立即生效（无需重启/重连）
+          refreshRestrictions(currentServers)
+          log('工作区工具门控已更新:', key, `禁用 ${disabled.length} 个工具`)
+          sendJson(res, describeWorkspaceTools(workspacePath))
           return
         }
         if (url.pathname === '/mcp-compat/wsl-forward' && req.method === 'POST') {

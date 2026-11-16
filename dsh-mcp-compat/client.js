@@ -39,6 +39,38 @@ window.__ModuleLoader__.load({
 			".pc-chevron{color:var(--dsw-alias-label-tertiary);flex:none;transition:transform .16s}",
 			".pc-open{transform:rotate(180deg)}",
 			".pc-body{border-top:1px solid var(--dsw-alias-border-l2);padding:14px 16px}",
+			// ── 工作区工具门控面板（工作区右键 → MCP 工具）──
+			".mcp-gate-backdrop{position:fixed;inset:0;z-index:9000;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(0,0,0,.45)}",
+			"body[data-ds-dark-theme] .mcp-gate-backdrop{background:rgba(0,0,0,.62)}",
+			".mcp-gate-panel{display:flex;flex-direction:column;width:min(780px,94vw);max-height:84vh;overflow:hidden;background:var(--dsw-alias-bg-layer-3);border:1px solid var(--dsw-alias-border-l2);border-radius:12px;box-shadow:0 24px 64px rgba(0,0,0,.28);color:var(--dsw-alias-label-primary)}",
+			".mcp-gate-head{display:flex;align-items:flex-start;gap:12px;padding:14px 16px;border-bottom:1px solid var(--dsw-alias-border-l2)}",
+			".mcp-gate-titles{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}",
+			".mcp-gate-title{font-size:15px;font-weight:600;line-height:1.4}",
+			".mcp-gate-path{font-size:11px;color:var(--dsw-alias-label-tertiary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+			".mcp-gate-close{flex:none;background:transparent;border:0;color:var(--dsw-alias-label-secondary);font-size:20px;line-height:1;cursor:pointer;padding:2px 6px;border-radius:6px}",
+			".mcp-gate-close:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}",
+			".mcp-gate-body{flex:1;min-height:0;overflow:auto;padding:12px 16px;display:flex;flex-direction:column;gap:12px}",
+			".mcp-gate-server{border:1px solid var(--dsw-alias-border-l2);border-radius:10px;overflow:hidden}",
+			".mcp-gate-server-head{display:flex;align-items:center;gap:8px;padding:9px 12px;background:var(--dsw-alias-bg-module-platform)}",
+			".mcp-gate-server-name{font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+			".mcp-gate-tag{flex:none;font-size:10px;line-height:1;padding:3px 6px;border-radius:999px;border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-tertiary)}",
+			".mcp-gate-tag.is-project{color:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary)}",
+			".mcp-gate-tag.is-off{color:var(--dsw-alias-label-dimmed, var(--dsw-alias-label-tertiary));border-style:dashed}",
+			".mcp-gate-server-actions{flex:none;margin-left:auto;display:flex;gap:6px}",
+			".mcp-gate-mini{background:transparent;border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary);border-radius:6px;font-size:11px;line-height:1;padding:4px 8px;cursor:pointer}",
+			".mcp-gate-mini:hover{color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-border-l1)}",
+			".mcp-gate-tools{list-style:none;margin:0;padding:4px 0}",
+			".mcp-gate-tool{padding:6px 12px}",
+			".mcp-gate-tool:hover{background:var(--dsw-alias-interactive-bg-hover)}",
+			".mcp-gate-tool label{display:flex;align-items:flex-start;gap:8px;cursor:pointer}",
+			".mcp-gate-tool input{width:14px;height:14px;margin-top:2px;accent-color:var(--dsw-alias-brand-primary);flex:none}",
+			".mcp-gate-tool-text{display:flex;flex-direction:column;gap:1px;min-width:0}",
+			".mcp-gate-tool-name{font-size:12px;color:var(--dsw-alias-label-primary);word-break:break-all}",
+			".mcp-gate-tool-desc{font-size:10.5px;color:var(--dsw-alias-label-tertiary);line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}",
+			".mcp-gate-empty{padding:18px 12px;text-align:center;font-size:12px;color:var(--dsw-alias-label-tertiary)}",
+			".mcp-gate-empty.mcp-gate-error{color:var(--dsw-alias-label-secondary)}",
+			".mcp-gate-foot{display:flex;align-items:center;gap:10px;padding:11px 16px;border-top:1px solid var(--dsw-alias-border-l2)}",
+			".mcp-gate-legend{font-size:10.5px;color:var(--dsw-alias-label-tertiary);margin-left:auto;text-align:right}",
 		].join("");
 		const tagId = "dsh-mcp-compat/style";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId) + "]") === null) {
@@ -50,7 +82,7 @@ window.__ModuleLoader__.load({
 		}
 		//#endregion
 
-		const inject = ["slots"];
+		const inject = ["slots", "contextMenus"];
 
 		function ChevronIcon({ className }) {
 			return react.createElement("svg", {
@@ -239,6 +271,279 @@ window.__ModuleLoader__.load({
 						: null,
 				);
 			}
+
+			// ── 工作区工具门控：右键菜单项 + 面板 ──────────────────────────────
+			// 入口：工作区行的右键 / 省略号菜单（官方 `workspace` 右键操作对象，
+			// 由 ui-workspace 声明：{ workspaceId, path, displayTitle }）。
+			// 面板：渲染进官方 `shell.overlay`（frame 级浮层），管理「当前工作区可见的
+			// dsh-mcp-compat 注入工具」——只控制本插件注入的 `mcp__<服务器>__*`，
+			// 不碰其它插件/内置工具。
+			const DICT = {
+				zh: {
+					menuLabel: "MCP 工具…",
+					title: "MCP 工具",
+					close: "关闭",
+					loading: "正在读取…",
+					empty: "当前工作区没有 dsh-mcp-compat 注入的工具",
+					noTools: "该服务器暂未注册工具（可能未连接）",
+					project: "项目级",
+					user: "用户级",
+					offline: "未连接",
+					enableAll: "全部启用",
+					disableAll: "全部禁用",
+					save: "保存",
+					saving: "保存中…",
+					saved: "已保存，立即生效",
+					saveFailed: "保存失败",
+					readFailed: "读取失败",
+					legend: "取消勾选 = 该工具在此工作区对模型不可见，也不会被执行（跨会话持久化）",
+				},
+				en: {
+					menuLabel: "MCP tools…",
+					title: "MCP tools",
+					close: "Close",
+					loading: "Loading…",
+					empty: "This workspace has no tools injected by dsh-mcp-compat",
+					noTools: "This server has no registered tools (not connected?)",
+					project: "project",
+					user: "user",
+					offline: "offline",
+					enableAll: "Enable all",
+					disableAll: "Disable all",
+					save: "Save",
+					saving: "Saving…",
+					saved: "Saved — effective immediately",
+					saveFailed: "Save failed",
+					readFailed: "Read failed",
+					legend: "Unchecked = hidden from the model and refused in this workspace (persisted across sessions)",
+				},
+			};
+			const localeOf = (() => {
+				try { return ctx.get("locale"); } catch { return undefined; }
+			})();
+			let dict = DICT.zh;
+			const readLocale = () => {
+				dict = localeOf?.getLocale?.().active === "en" ? DICT.en : DICT.zh;
+			};
+			readLocale();
+			if (typeof localeOf?.subscribe === "function") {
+				ctx.effect(() => localeOf.subscribe(readLocale), "mcp-compat: locale follow");
+			}
+			const t = (key) => (typeof dict[key] === "string" ? dict[key] : key);
+
+			// 面板请求（哪个工作区被点开）；用最朴素的订阅，避免依赖 React 版本差异。
+			const panel = {
+				request: null,
+				listeners: new Set(),
+				set(next) {
+					panel.request = next;
+					for (const fn of panel.listeners) {
+						try { fn(); } catch {}
+					}
+				},
+				subscribe(fn) {
+					panel.listeners.add(fn);
+					return () => panel.listeners.delete(fn);
+				},
+			};
+			function usePanelRequest() {
+				const [value, setValue] = react.useState(panel.request);
+				react.useEffect(() => {
+					const off = panel.subscribe(() => setValue(panel.request));
+					setValue(panel.request);
+					return off;
+				}, []);
+				return value;
+			}
+
+			/** 面板：按服务器分组列出当前工作区可见的工具，取消勾选 = 禁用。 */
+			function McpToolsDialog({ request, onClose }) {
+				const [data, setData] = react.useState({ loading: true, error: "", servers: [] });
+				const [draft, setDraft] = react.useState(() => new Set());
+				const [busy, setBusy] = react.useState(false);
+				const [status, setStatus] = react.useState("");
+				const closeRef = react.useRef(onClose);
+				closeRef.current = onClose;
+
+				const applyData = (payload) => {
+					const servers = Array.isArray(payload?.servers) ? payload.servers : [];
+					const disabled = new Set();
+					for (const server of servers) {
+						for (const tool of (server.tools || [])) if (tool.disabled) disabled.add(tool.name);
+					}
+					setData({ loading: false, error: "", servers });
+					setDraft(disabled);
+				};
+
+				react.useEffect(() => {
+					let alive = true;
+					setData({ loading: true, error: "", servers: [] });
+					fetch("/mcp-compat/tools?workspacePath=" + encodeURIComponent(request.path))
+						.then((r) => r.json())
+						.then((payload) => {
+							if (!alive) return;
+							if (payload && payload.ok) applyData(payload);
+							else setData({ loading: false, error: (payload && payload.error) || t("readFailed"), servers: [] });
+						})
+						.catch((e) => {
+							if (alive) setData({ loading: false, error: String((e && e.message) || t("readFailed")), servers: [] });
+						});
+					return () => { alive = false; };
+				}, [request.path]);
+
+				react.useEffect(() => {
+					const onKey = (event) => {
+						if (event.key !== "Escape") return;
+						event.stopPropagation();
+						closeRef.current();
+					};
+					document.addEventListener("keydown", onKey, true);
+					return () => document.removeEventListener("keydown", onKey, true);
+				}, []);
+
+				const toggleTool = (name) => {
+					setDraft((prev) => {
+						const next = new Set(prev);
+						if (next.has(name)) next.delete(name);
+						else next.add(name);
+						return next;
+					});
+				};
+				const setServer = (server, enabled) => {
+					setDraft((prev) => {
+						const next = new Set(prev);
+						for (const tool of (server.tools || [])) {
+							if (enabled) next.delete(tool.name);
+							else next.add(tool.name);
+						}
+						return next;
+					});
+				};
+				const save = () => {
+					setBusy(true);
+					setStatus(t("saving"));
+					fetch("/mcp-compat/tools", {
+						method: "POST",
+						headers: { "content-type": "application/json" },
+						body: JSON.stringify({ workspacePath: request.path, disabled: [...draft] }),
+					})
+						.then((r) => r.json())
+						.then((payload) => {
+							setBusy(false);
+							if (payload && payload.ok) {
+								applyData(payload);
+								setStatus(t("saved"));
+							} else {
+								setStatus((payload && payload.error) || t("saveFailed"));
+							}
+						})
+						.catch((e) => {
+							setBusy(false);
+							setStatus(String((e && e.message) || t("saveFailed")));
+						});
+				};
+
+				const servers = data.servers || [];
+				return react.createElement("div", {
+					className: "mcp-gate-backdrop",
+					onMouseDown: (event) => { if (event.target === event.currentTarget) onClose(); },
+				},
+					react.createElement("div", { className: "mcp-gate-panel", role: "dialog", "aria-modal": "true", "aria-label": t("title") },
+						react.createElement("header", { className: "mcp-gate-head" },
+							react.createElement("div", { className: "mcp-gate-titles" },
+								react.createElement("div", { className: "mcp-gate-title" }, t("title")),
+								react.createElement("div", { className: "mcp-gate-path", title: request.path }, request.path),
+							),
+							react.createElement("button", { className: "mcp-gate-close", onClick: onClose, "aria-label": t("close") }, "×"),
+						),
+						react.createElement("div", { className: "mcp-gate-body" },
+							data.loading
+								? react.createElement("div", { className: "mcp-gate-empty" }, t("loading"))
+								: data.error
+									? react.createElement("div", { className: "mcp-gate-empty mcp-gate-error" }, data.error)
+									: servers.length === 0
+										? react.createElement("div", { className: "mcp-gate-empty" }, t("empty"))
+										: servers.map((server) => react.createElement("section", { className: "mcp-gate-server", key: server.name },
+											react.createElement("div", { className: "mcp-gate-server-head" },
+												react.createElement("span", { className: "mcp-gate-server-name", title: server.source || server.name }, server.name),
+												react.createElement("span", { className: "mcp-gate-tag" + (server.level === "project" ? " is-project" : "") },
+													server.level === "project" ? t("project") : t("user")),
+												server.mounted ? null : react.createElement("span", { className: "mcp-gate-tag is-off" }, t("offline")),
+												react.createElement("span", { className: "mcp-gate-server-actions" },
+													react.createElement("button", { className: "mcp-gate-mini", onClick: () => setServer(server, true) }, t("enableAll")),
+													react.createElement("button", { className: "mcp-gate-mini", onClick: () => setServer(server, false) }, t("disableAll")),
+												),
+											),
+											(server.tools || []).length === 0
+												? react.createElement("div", { className: "mcp-gate-empty" }, t("noTools"))
+												: react.createElement("ul", { className: "mcp-gate-tools" },
+													server.tools.map((tool) => react.createElement("li", { className: "mcp-gate-tool", key: tool.name },
+														react.createElement("label", null,
+															react.createElement("input", {
+																type: "checkbox",
+																checked: !draft.has(tool.name),
+																onChange: () => toggleTool(tool.name),
+															}),
+															react.createElement("span", { className: "mcp-gate-tool-text" },
+																react.createElement("span", { className: "mcp-gate-tool-name" }, tool.name),
+																tool.description
+																	? react.createElement("span", { className: "mcp-gate-tool-desc" }, tool.description)
+																	: null,
+															),
+														),
+													)),
+												),
+										)),
+						),
+						react.createElement("footer", { className: "mcp-gate-foot" },
+							react.createElement("button", { className: "mc-btn", onClick: save, disabled: busy || data.loading }, t("save")),
+							status ? react.createElement("span", { className: "mc-status" }, status) : null,
+							react.createElement("span", { className: "mcp-gate-legend" }, t("legend")),
+						),
+					),
+				);
+			}
+
+			/** 只有被点开时才渲染（未点开时这个 root 槽位不产生任何 DOM）。 */
+			function McpToolsPanel() {
+				const request = usePanelRequest();
+				if (!request) return null;
+				return react.createElement(McpToolsDialog, { request, onClose: () => panel.set(null) });
+			}
+
+			// ① 工作区右键菜单项：官方 `workspace` 目标（ui-workspace 声明）。
+			//    order 200 落在「重命名(100)」与「删除工作区(300)」之间。
+			const menus = (() => {
+				try { return ctx.get("contextMenus"); } catch { return undefined; }
+			})();
+			if (menus !== undefined && typeof menus.register === "function") {
+				ctx.effect(
+					() => menus.register({
+						id: "mcp-compat.workspace",
+						target: "workspace",
+						order: 200,
+						resolve: (target) => {
+							if (!target || typeof target.path !== "string" || target.path === "") return [];
+							return [{
+								id: "tools",
+								label: t("menuLabel"),
+								run: () => panel.set({ workspaceId: target.workspaceId, path: target.path, title: target.displayTitle }),
+							}];
+						},
+					}),
+					"mcp-compat: workspace menu",
+				);
+			}
+
+			// ② 面板挂到官方 frame 级浮层（root 作用域，永远存在）。
+			ctx.effect(
+				() => ctx.slots.inject("shell.overlay", () => ctx.slots.register({
+					name: "shell.overlay",
+					id: "mcp-compat.panel",
+					order: 80,
+				}, McpToolsPanel)),
+				"mcp-compat: tools panel overlay",
+			);
 
 			ctx.slots.inject("settings.plugin.item", () => ctx.slots.register({
 				name: "settings.plugin.item",

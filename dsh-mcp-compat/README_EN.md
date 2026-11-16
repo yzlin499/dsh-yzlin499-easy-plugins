@@ -86,6 +86,40 @@ names that belong to **other** workspaces. Rules:
 - An unknown `cwd` (agent not bound to a session yet) is handled conservatively: all
   project-level tools are denied.
 
+### Per-workspace tool gating: right-click a workspace → "MCP tools…"
+
+This controls **only the tools dsh-mcp-compat injects** (`mcp__<server>__<tool>`); it never
+touches built-in tools or tools registered by other plugins. The entry lives in the
+sidebar workspace row's context / ellipsis menu (the official `workspace` target, order
+200, between "Rename" and "Delete workspace"):
+
+1. Right-click a workspace → **MCP tools…**;
+2. the panel lists every MCP tool **visible** in that workspace, grouped by server, with a
+   `project` / `user` badge, an `offline` marker, and per-server "Enable all" / "Disable
+   all";
+3. unchecking a tool means **the model cannot see it and cannot execute it in this
+   workspace** (the visible set and the execution refusal read the same state, so it
+   cannot be side-stepped);
+4. saving is **immediate** — no restart, no reconnect, no new session.
+
+The scope rules are identical to the ones above: **user-level** servers (`~/.mcp.json`,
+etc.) are visible across the whole profile, and disabling a tool in one workspace only
+affects that workspace; **project-level** servers are only visible in their own workspace,
+so their disabled entries only apply there. Attribution uses the workspace root containing
+the session `cwd` (the root itself and any subdirectory both match), so sessions opened in
+a subdirectory are covered too.
+
+Persistence: the plugin's profile settings (`dsh-mcp-compat.workspaceTools`), shaped like
+`{ path: <workspace root>, disabled: ["mcp__ue__play", ...] }`. This is a **user
+preference** ("I don't want these tools in this workspace"), so nothing is written into
+your project directory and no git changes appear. Without the settings service the list
+degrades to memory (current run only).
+
+Known boundaries: the panel only lists tools that are **currently visible and registered** —
+an offline server's tools disappear from the list (its saved disabled entries stay in
+settings and apply again once it reconnects). `tools.restrict` trims the tool set sent to
+the model; it cannot retract usage instructions some plugins inject into the system prompt.
+
 Config file changes (`fs.watch`) or
 new sessions (`session/created`) trigger a rescan. Rescans are **incremental**: servers
 whose configuration did not change keep their live connection, and only added / removed /
