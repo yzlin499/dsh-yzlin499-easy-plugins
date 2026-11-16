@@ -2,7 +2,7 @@
 // 关注三件事：cwd 归到哪个 workspace 根、条目怎么取、两层 deny 怎么合并。
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { disabledToolsFor, mergeDeny, workspaceKeyOf } from '../index.js'
+import { describeWorkspaceTools, disabledToolsFor, mergeDeny, workspaceKeyOf } from '../index.js'
 
 const ROOTS = ['D:\\work\\projA', 'D:\\work\\projA-sub', 'D:\\work\\projB']
 
@@ -53,3 +53,58 @@ test('mergeDeny：注册表不可用（known=null）时不做失效过滤', () =
   assert.deepEqual(mergeDeny(['a'], ['b', 'a'], null), ['a', 'b'])
   assert.deepEqual(mergeDeny(undefined, undefined, new Set()), [])
 })
+
+// ── 面板数据源 ────────────────────────────────────────────────────────────
+const SERVERS = [
+  { name: 'ue', transport: 'streamable-http', workspaceRoot: 'D:\\work\\projA', source: 'D:\\work\\projA\\.mcp.json' },
+  { name: 'rider', transport: 'stdio', workspaceRoot: 'D:\\work\\projB', source: 'D:\\work\\projB\\.mcp.json' },
+  { name: 'codegraph', transport: 'stdio', workspaceRoot: undefined, source: '~/.mcp.json' },
+]
+const SCHEMAS = [
+  { name: 'mcp__ue__play', description: '播放关卡' },
+  { name: 'mcp__ue__compile', description: '编译' },
+  { name: 'mcp__rider__build', description: '构建' },
+  { name: 'mcp__codegraph__query', description: '查符号' },
+  { name: 'read', description: '不是 MCP 工具' },
+]
+
+test('describeWorkspaceTools：只列本工作区可见的服务器（用户级 + 本工作区项目级）', () => {
+  const out = describeWorkspaceTools(SERVERS, SCHEMAS, [], 'D:\\work\\projA', ROOTS, (name) => name === 'ue')
+  assert.equal(out.ok, true)
+  assert.equal(out.workspace.key, 'd:\\work\\proja')
+  assert.deepEqual(out.servers.map((s) => s.name), ['codegraph', 'ue'])
+  const ue = out.servers.find((s) => s.name === 'ue')
+  assert.equal(ue.level, 'project')
+  assert.equal(ue.mounted, true)
+  assert.equal(ue.source, 'D:\\work\\projA\\.mcp.json')
+  const codegraph = out.servers.find((s) => s.name === 'codegraph')
+  assert.equal(codegraph.level, 'user')
+  assert.equal(codegraph.workspaceRoot, null)
+  assert.equal(codegraph.mounted, false)
+})
+
+test('describeWorkspaceTools：工具按服务器前缀归属，禁用状态来自条目，按名字排序', () => {
+  const entries = [{ path: 'd:\\work\\proja', disabled: ['mcp__ue__play'] }]
+  const out = describeWorkspaceTools(SERVERS, SCHEMAS, entries, 'D:\\work\\projA', ROOTS)
+  const ue = out.servers.find((s) => s.name === 'ue')
+  assert.deepEqual(ue.tools.map((t) => t.name), ['mcp__ue__compile', 'mcp__ue__play'])
+  assert.deepEqual(ue.tools.map((t) => t.disabled), [false, true])
+  assert.equal(ue.tools[1].description, '播放关卡')
+  // 内置工具不属于任何服务器
+  assert.equal(out.servers.some((s) => s.tools.some((t) => t.name === 'read')), false)
+  assert.equal(out.total, 2 + 1)
+})
+
+test('describeWorkspaceTools：子目录会话命中同一工作区，别的项目级服务器不出现', () => {
+  const out = describeWorkspaceTools(SERVERS, SCHEMAS, [], 'D:\\work\\projA\\src\\deep', ROOTS)
+  assert.deepEqual(out.servers.map((s) => s.name), ['codegraph', 'ue'])
+  assert.equal(out.workspace.key, 'd:\\work\\proja')
+})
+
+test('describeWorkspaceTools：没有服务器 / 没有工具时是空列表而不是报错', () => {
+  assert.deepEqual(describeWorkspaceTools([], SCHEMAS, [], 'D:\\work\\projA', ROOTS).servers, [])
+  const noTools = describeWorkspaceTools([{ name: 'down', transport: 'stdio' }], SCHEMAS, [], 'D:\\work\\projA', ROOTS)
+  assert.deepEqual(noTools.servers[0].tools, [])
+  assert.equal(noTools.total, 0)
+})
+

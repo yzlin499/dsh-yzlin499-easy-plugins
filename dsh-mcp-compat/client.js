@@ -296,6 +296,7 @@ window.__ModuleLoader__.load({
 					saved: "已保存，立即生效",
 					saveFailed: "保存失败",
 					readFailed: "读取失败",
+					staleHost: "Host 侧还是旧版本（没有 /mcp-compat/tools 接口）——请完全退出并重开 DSH",
 					legend: "取消勾选 = 该工具在此工作区对模型不可见，也不会被执行（跨会话持久化）",
 				},
 				en: {
@@ -315,6 +316,7 @@ window.__ModuleLoader__.load({
 					saved: "Saved — effective immediately",
 					saveFailed: "Save failed",
 					readFailed: "Read failed",
+					staleHost: "The Host plugin is still an older build (no /mcp-compat/tools route) — quit and reopen DSH",
 					legend: "Unchecked = hidden from the model and refused in this workspace (persisted across sessions)",
 				},
 			};
@@ -330,6 +332,9 @@ window.__ModuleLoader__.load({
 				ctx.effect(() => localeOf.subscribe(readLocale), "mcp-compat: locale follow");
 			}
 			const t = (key) => (typeof dict[key] === "string" ? dict[key] : key);
+			// Host 侧可能还是旧构建（没有 /mcp-compat/tools 路由，请求落到插件自己的
+			// not-found 兜底）——把它翻译成能指导用户恢复的提示，而不是干巴巴的 not-found。
+			const errorText = (code) => (code === "not-found" ? t("staleHost") : (code || t("readFailed")));
 
 			// 面板请求（哪个工作区被点开）；用最朴素的订阅，避免依赖 React 版本差异。
 			const panel = {
@@ -383,7 +388,7 @@ window.__ModuleLoader__.load({
 						.then((payload) => {
 							if (!alive) return;
 							if (payload && payload.ok) applyData(payload);
-							else setData({ loading: false, error: (payload && payload.error) || t("readFailed"), servers: [] });
+							else setData({ loading: false, error: errorText(payload && payload.error), servers: [] });
 						})
 						.catch((e) => {
 							if (alive) setData({ loading: false, error: String((e && e.message) || t("readFailed")), servers: [] });
@@ -434,7 +439,7 @@ window.__ModuleLoader__.load({
 								applyData(payload);
 								setStatus(t("saved"));
 							} else {
-								setStatus((payload && payload.error) || t("saveFailed"));
+								setStatus(errorText(payload && payload.error));
 							}
 						})
 						.catch((e) => {

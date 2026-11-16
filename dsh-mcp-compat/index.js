@@ -573,6 +573,45 @@ const mergeDeny = (projectDeny, workspaceDeny, known) => {
   return out
 }
 
+// 列出某工作区「可见的 dsh-mcp-compat 注入工具」——面板的数据源（纯函数，便于单测）。
+// 可见性口径与限制口径一致：用户级服务器全局可见；项目级服务器只在 cwd 属于其根时可见。
+//   servers   当前挂载的服务器（name / transport / workspaceRoot / source）
+//   schemas   注册表里的工具定义
+//   entries   settings 里的工作区禁用条目
+//   isMounted 该服务器当前是否已连接（只影响展示标记）
+const describeWorkspaceTools = (servers, schemas, entries, workspacePath, roots, isMounted = () => false) => {
+  const disabled = new Set(disabledToolsFor(entries, workspacePath, roots))
+  const list = []
+  for (const server of servers || []) {
+    if (server.workspaceRoot && !cwdInWorkspace(workspacePath, server.workspaceRoot)) continue
+    const prefix = `mcp__${server.name}__`
+    const tools = (schemas || [])
+      .filter((schema) => schema && typeof schema.name === 'string' && schema.name.startsWith(prefix))
+      .map((schema) => ({
+        name: schema.name,
+        description: String(schema.description || ''),
+        disabled: disabled.has(schema.name),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+    list.push({
+      name: server.name,
+      transport: server.transport,
+      level: server.workspaceRoot ? 'project' : 'user',
+      workspaceRoot: server.workspaceRoot || null,
+      source: server.source || '',
+      mounted: isMounted(server.name) === true,
+      tools,
+    })
+  }
+  list.sort((a, b) => a.name.localeCompare(b.name))
+  return {
+    ok: true,
+    workspace: { path: workspacePath, key: workspaceKeyOf(workspacePath, roots) },
+    servers: list,
+    total: list.reduce((n, server) => n + server.tools.length, 0),
+  }
+}
+
 // 只保留「用户级 + 当前活动 workspace 的项目级」服务器。
 // 为什么要在挂载阶段就过滤，而不只靠后面的 per-agent deny：
 // 服务器一旦挂上就是**全局**的——它会出现在 MCP 服务器/资源列表里（每个会话都看得到），
@@ -622,7 +661,7 @@ const GLOBAL_FILES = [
 ]
 
 // 测试钩子：node 脚本可直接 import 本模块做解析验证
-export { parseMcpJson, parseOpencodeJson, parseCodexToml, collectServers, windowsCommand, pathKey, cwdInWorkspace, denyListFor, workspaceKeyOf, disabledToolsFor, mergeDeny, filterServersForWorkspaces, activeRootKeysFor, PROJECT_FILES, GLOBAL_FILES, isWsl, getWslHostIp, wslFallbackUrl, wslTunnelTarget, wslSubnetOf, winPortListeners, winPortProxyHas, winPortProxyLegacyHas, winFirewallHas, hostListenerState }
+export { parseMcpJson, parseOpencodeJson, parseCodexToml, collectServers, windowsCommand, pathKey, cwdInWorkspace, denyListFor, workspaceKeyOf, disabledToolsFor, mergeDeny, describeWorkspaceTools, filterServersForWorkspaces, activeRootKeysFor, PROJECT_FILES, GLOBAL_FILES, isWsl, getWslHostIp, wslFallbackUrl, wslTunnelTarget, wslSubnetOf, winPortListeners, winPortProxyHas, winPortProxyLegacyHas, winFirewallHas, hostListenerState }
 
 // 支持按启用的 family（配置源体系）过滤。enabled 为空/未传时 = 全部开启（保持原行为）。
 // globalStdioCwd：用户级（主目录下）配置里 stdio 服务器的 cwd。用户级条目没有"项目"
@@ -1724,43 +1763,18 @@ export async function apply(ctx) {
     req.on('error', () => resolve({}))
   })
   // ── 工作区工具门控：列出「当前项目可见的 MCP 工具」并保存禁用集 ──
-  // 面板（工作区右键 → MCP 工具）用这两个接口。可见性口径与限制口径完全一致：
-  // 用户级服务器全局可见；项目级服务器只在 cwd 属于其 workspace 根时可见。
-  const describeWorkspaceTools = (workspacePath) => {
-    const roots = workspaceRoots()
-    const key = workspaceKeyOf(workspacePath, roots)
-    const disabled = new Set(disabledToolsFor(readWorkspaceTools(), workspacePath, roots))
+  // 面板（工作区右键 → MCP 工具）用这两个接口；纯逻辑在 describeWorkspaceTools 里，便于单测。
+  const describeFor = (workspacePath) => {
     let schemas = []
     try { schemas = ctx.tools.schemas() } catch {}
-    const servers = []
-    for (const server of currentServers) {
-      if (server.workspaceRoot && !cwdInWorkspace(workspacePath, server.workspaceRoot)) continue
-      const prefix = `mcp__${server.name}__`
-      const tools = schemas
-        .filter((schema) => schema && typeof schema.name === 'string' && schema.name.startsWith(prefix))
-        .map((schema) => ({
-          name: schema.name,
-          description: String(schema.description || ''),
-          disabled: disabled.has(schema.name),
-        }))
-        .sort((a, b) => a.name.localeCompare(b.name))
-      servers.push({
-        name: server.name,
-        transport: server.transport,
-        level: server.workspaceRoot ? 'project' : 'user',
-        workspaceRoot: server.workspaceRoot || null,
-        source: server.source || '',
-        mounted: fiberByName.has(server.name),
-        tools,
-      })
-    }
-    servers.sort((a, b) => a.name.localeCompare(b.name))
-    return {
-      ok: true,
-      workspace: { path: workspacePath, key },
-      servers,
-      total: servers.reduce((n, s) => n + s.tools.length, 0),
-    }
+    return describeWorkspaceTools(
+      currentServers,
+      schemas,
+      readWorkspaceTools(),
+      workspacePath,
+      workspaceRoots(),
+      (name) => fiberByName.has(name),
+    )
   }
   ctx.webServer.register({
     kind: 'prefix',
@@ -1822,7 +1836,7 @@ export async function apply(ctx) {
             sendJson(res, { ok: false, error: '缺少 workspacePath' }, 400)
             return
           }
-          sendJson(res, describeWorkspaceTools(workspacePath))
+          sendJson(res, describeFor(workspacePath))
           return
         }
         if (url.pathname === '/mcp-compat/tools' && req.method === 'POST') {
@@ -1845,7 +1859,7 @@ export async function apply(ctx) {
           // 同一份 disabled 状态驱动可见集与执行拒绝，改完立即生效（无需重启/重连）
           refreshRestrictions(currentServers)
           log('工作区工具门控已更新:', key, `禁用 ${disabled.length} 个工具`)
-          sendJson(res, describeWorkspaceTools(workspacePath))
+          sendJson(res, describeFor(workspacePath))
           return
         }
         if (url.pathname === '/mcp-compat/wsl-forward' && req.method === 'POST') {
