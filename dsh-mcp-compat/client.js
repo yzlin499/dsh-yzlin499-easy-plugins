@@ -427,6 +427,26 @@ window.__ModuleLoader__.load({
 			// Host 侧可能还是旧构建（没有 /mcp-compat/tools 路由，请求落到插件自己的
 			// not-found 兜底）——把它翻译成能指导用户恢复的提示，而不是干巴巴的 not-found。
 			const errorText = (code) => (code === "not-found" ? t("staleHost") : (code || t("readFailed")));
+			// 统一的 JSON 请求：失败时带上 HTTP 状态码 + 响应体片段，避免面板只显示一句
+			// 无法定位的「保存失败」；非 2xx 也返回结构化 payload 而不是抛错。
+			const requestJson = async (url, options) => {
+				const response = await fetch(url, options);
+				const text = await response.text();
+				let payload;
+				try {
+					payload = text ? JSON.parse(text) : {};
+				} catch {
+					throw new Error(`HTTP ${response.status}：${text.slice(0, 300) || "(空响应)"}`);
+				}
+				if (!response.ok) {
+					return {
+						ok: false,
+						error: (payload && payload.error) || `HTTP ${response.status}`,
+						httpStatus: response.status,
+					};
+				}
+				return payload;
+			};
 
 			// 面板请求（哪个工作区被点开）；用最朴素的订阅，避免依赖 React 版本差异。
 			const panel = {
@@ -479,14 +499,12 @@ window.__ModuleLoader__.load({
 				react.useEffect(() => {
 					let alive = true;
 					setData({ loading: true, error: "", servers: [] });
-					fetch("/mcp-compat/tools?workspacePath=" + encodeURIComponent(request.path))
-						.then((r) => r.json())
+					requestJson("/mcp-compat/tools?workspacePath=" + encodeURIComponent(request.path))
 						.then((payload) => {
 							if (!alive) return;
 							if (payload && payload.ok) applyData(payload);
 							else setData({ loading: false, error: errorText(payload && payload.error), servers: [] });
-						})
-						.catch((e) => {
+						})						.catch((e) => {
 							if (alive) setData({ loading: false, error: String((e && e.message) || t("readFailed")), servers: [] });
 						});
 					return () => { alive = false; };
@@ -534,17 +552,18 @@ window.__ModuleLoader__.load({
 				const save = () => {
 					setBusy(true);
 					setStatus(t("saving"));
-					fetch("/mcp-compat/tools", {
+					requestJson("/mcp-compat/tools", {
 						method: "POST",
 						headers: { "content-type": "application/json" },
 						body: JSON.stringify({ workspacePath: request.path, disabled: [...draft] }),
 					})
-						.then((r) => r.json())
 						.then((payload) => {
 							setBusy(false);
 							if (payload && payload.ok) {
 								applyData(payload);
-								setStatus(t("saved"));
+								setStatus(payload.store && payload.store.path
+									? `${t("saved")} · ${payload.store.path}`
+									: t("saved"));
 							} else {
 								setStatus(errorText(payload && payload.error));
 							}
@@ -807,8 +826,7 @@ window.__ModuleLoader__.load({
 						return;
 					}
 					setData((prev) => ({ ...prev, loading: true, error: "" }));
-					fetch("/mcp-compat/panel?sessionId=" + encodeURIComponent(sessionId))
-						.then((r) => r.json())
+					requestJson("/mcp-compat/panel?sessionId=" + encodeURIComponent(sessionId))
 						.then((payload) => {
 							if (payload && payload.ok) setData({ loading: false, error: "", servers: payload.servers || [] });
 							else setData({ loading: false, error: errorText(payload && payload.error), servers: [] });
@@ -826,12 +844,11 @@ window.__ModuleLoader__.load({
 				};
 				const applyInject = (names) => {
 					setBusy(true);
-					fetch("/mcp-compat/panel/inject", {
+					requestJson("/mcp-compat/panel/inject", {
 						method: "POST",
 						headers: { "content-type": "application/json" },
 						body: JSON.stringify({ sessionId, tools: names }),
 					})
-						.then((r) => r.json())
 						.then((payload) => {
 							setBusy(false);
 							if (payload && payload.ok) {
@@ -891,12 +908,11 @@ window.__ModuleLoader__.load({
 					setErrors({});
 					setBusy(true);
 					setStatus(t("calling"));
-					fetch("/mcp-compat/panel/call", {
+					requestJson("/mcp-compat/panel/call", {
 						method: "POST",
 						headers: { "content-type": "application/json" },
 						body: JSON.stringify({ sessionId, name: calling.name, args: JSON.stringify(args) }),
 					})
-						.then((r) => r.json())
 						.then((payload) => {
 							setBusy(false);
 							if (payload && payload.ok) {
@@ -914,12 +930,11 @@ window.__ModuleLoader__.load({
 				const commitPreview = () => {
 					if (!preview) return;
 					setBusy(true);
-					fetch("/mcp-compat/panel/commit", {
+					requestJson("/mcp-compat/panel/commit", {
 						method: "POST",
 						headers: { "content-type": "application/json" },
 						body: JSON.stringify({ sessionId, text: preview.text }),
 					})
-						.then((r) => r.json())
 						.then((payload) => {
 							setBusy(false);
 							if (payload && payload.ok) {
@@ -1138,3 +1153,5 @@ window.__ModuleLoader__.load({
 		return module.exports;
 	}
 });
+
+

@@ -819,6 +819,15 @@ export async function apply(ctx) {
   // ── 持久化设置（自己的 JSON 文件；读写都在 Host 侧）──
   const storeFile = () => join(process.env.DSH_HOME || join(homedir(), '.dsh'), 'mcp-compat.json')
   let store = STORE_DEFAULTS()
+  // 写盘日志：面板保存失败时，浏览器只拿得到一句 error；真正的异常先落这份日志，
+  // 方便事后直接读（<DSH_HOME>/mcp-compat.log）。
+  const logStore = (...parts) => {
+    try {
+      const file = storeFile().replace(/\.json$/, '.log')
+      mkdirSync(dirname(file), { recursive: true })
+      writeFileSync(file, `[${new Date().toISOString()}] ${parts.map((p) => String(p)).join(' ')}\n`, { encoding: 'utf8', flag: 'a' })
+    } catch {}
+  }
   const persist = () => {
     try {
       const file = storeFile()
@@ -828,6 +837,7 @@ export async function apply(ctx) {
       renameSync(tmp, file)
     } catch (e) {
       log('保存设置失败:', String((e && e.message) || e))
+      logStore('persist-failed', String((e && e.code) || ''), String((e && e.message) || e))
     }
   }
   try {
@@ -1813,7 +1823,7 @@ export async function apply(ctx) {
   const describeFor = (workspacePath) => {
     let schemas = []
     try { schemas = ctx.tools.schemas() } catch {}
-    return describeWorkspaceTools(
+    const result = describeWorkspaceTools(
       currentServers,
       schemas,
       readWorkspaceTools(),
@@ -1821,6 +1831,8 @@ export async function apply(ctx) {
       workspaceRoots(),
       (name) => fiberByName.has(name),
     )
+    // 面板上直接显示「存到哪」，保存成功/失败都能一眼确认
+    return { ...result, store: { path: storeFile() } }
   }
   // 会话级临时注入面板的数据源：该会话 agent 的 cwd 决定工作区，deny 减去注入集。
   const describeForSession = (sessionId) => {
@@ -1995,25 +2007,31 @@ export async function apply(ctx) {
         }
         if (url.pathname === '/mcp-compat/tools' && req.method === 'POST') {
           // 工作区面板：保存该工作区的禁用工具集（立即同步到所有 agent 的限制层）
-          const a = await readBody(req)
-          const workspacePath = String(a.workspacePath || '').trim()
-          if (!workspacePath) {
-            sendJson(res, { ok: false, error: '缺少 workspacePath' }, 400)
-            return
+          try {
+            const a = await readBody(req)
+            const workspacePath = String(a.workspacePath || '').trim()
+            if (!workspacePath) {
+              sendJson(res, { ok: false, error: '缺少 workspacePath' }, 400)
+              return
+            }
+            const key = workspaceKeyOf(workspacePath, workspaceRoots())
+            const disabled = [...new Set(
+              (Array.isArray(a.disabled) ? a.disabled : [])
+                .filter((name) => typeof name === 'string' && name.startsWith('mcp__')),
+            )]
+            const list = readWorkspaceTools().filter((entry) => pathKey(entry.path) !== key)
+            // 空集合不落盘：恢复「全部启用」的工作区不在存储里留垃圾条目
+            if (disabled.length) list.push({ path: key, disabled })
+            await writeWorkspaceTools(list)
+            // 同一份 disabled 状态驱动可见集与执行拒绝，改完立即生效（无需重启/重连）
+            refreshRestrictions(currentServers)
+            log('工作区工具门控已更新:', key, `禁用 ${disabled.length} 个工具`)
+            logStore('save', key, `disabled=${disabled.length}`)
+            sendJson(res, describeFor(workspacePath))
+          } catch (e) {
+            logStore('save-failed', String((e && e.stack) || e))
+            throw e
           }
-          const key = workspaceKeyOf(workspacePath, workspaceRoots())
-          const disabled = [...new Set(
-            (Array.isArray(a.disabled) ? a.disabled : [])
-              .filter((name) => typeof name === 'string' && name.startsWith('mcp__')),
-          )]
-          const list = readWorkspaceTools().filter((entry) => pathKey(entry.path) !== key)
-          // 空集合不落盘：恢复「全部启用」的工作区不在 settings 里留垃圾条目
-          if (disabled.length) list.push({ path: key, disabled })
-          await writeWorkspaceTools(list)
-          // 同一份 disabled 状态驱动可见集与执行拒绝，改完立即生效（无需重启/重连）
-          refreshRestrictions(currentServers)
-          log('工作区工具门控已更新:', key, `禁用 ${disabled.length} 个工具`)
-          sendJson(res, describeFor(workspacePath))
           return
         }
         if (url.pathname === '/mcp-compat/panel' && req.method === 'GET') {
