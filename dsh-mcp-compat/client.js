@@ -131,27 +131,19 @@ window.__ModuleLoader__.load({
 			}));
 		}
 
-		// 「MCP 管理」图标：一只电源插头（连接 = MCP 的语义）。
-		// 16 网格、currentColor 描边，跟随主题深浅色；size 由调用方（右侧栏 / 右键菜单）给。
+		// 「MCP 管理」图标：官方 MCP 的 ribbon「M」标记（按参考图描的矢量，24 网格）。
+		// fill: currentColor 跟随主题；size 由调用方（右侧栏 / 右键菜单）给。
+		const MCP_GLYPH_PATH = "M12.29 2.00 L14.80 2.00 L15.69 2.45 L17.03 4.24 L17.03 5.76 L19.05 6.03 L21.06 8.26 L21.06 10.55 L20.61 11.44 L12.78 19.09 L14.35 20.79 L14.35 21.96 L13.19 21.96 L11.62 20.39 L11.40 18.33 L18.11 11.62 L18.51 11.62 L18.55 11.17 L19.00 11.13 L19.67 10.01 L19.23 7.91 L17.84 7.19 L16.63 7.41 L9.65 14.13 L8.94 13.90 L8.94 12.74 L15.65 6.21 L15.65 4.77 L14.71 3.61 L12.38 3.61 L3.83 12.11 L2.89 11.66 L2.89 10.95 L11.40 2.45 L12.29 2.04 Z";
 		function McpGlyph({ size = 14, className } = {}) {
 			const px = typeof size === "number" && size > 0 ? size : 14;
 			return react.createElement("svg", {
-				width: px, height: px, viewBox: "0 0 16 16", fill: "none",
+				width: px, height: px, viewBox: "0 0 24 24",
 				xmlns: "http://www.w3.org/2000/svg", className, "aria-hidden": "true",
-			},
-				react.createElement("path", {
-					d: "M6 2.4v3.2M10 2.4v3.2",
-					stroke: "currentColor", strokeWidth: 1.5, strokeLinecap: "round",
-				}),
-				react.createElement("rect", {
-					x: 4.05, y: 5.7, width: 7.9, height: 4.5, rx: 1.3,
-					stroke: "currentColor", strokeWidth: 1.5,
-				}),
-				react.createElement("path", {
-					d: "M8 10.35v3.25",
-					stroke: "currentColor", strokeWidth: 1.5, strokeLinecap: "round",
-				}),
-			);
+			}, react.createElement("path", {
+				d: MCP_GLYPH_PATH,
+				fill: "currentColor",
+				fillRule: "evenodd",
+			}));
 		}
 
 		function apply(ctx) {
