@@ -16,6 +16,7 @@
 // 变更时自动重扫：配置文件 fs.watch + 新会话事件（session/created）触发。
 // ═══════════════════════════════════════════════════════════════════════════
 import { existsSync, readFileSync, watch, writeFileSync, renameSync, mkdirSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { isAbsolute, join, resolve, delimiter, sep, dirname } from 'node:path'
 import { connect as tcpConnect, createServer as createTcpServer } from 'node:net'
 import { request as httpRequest } from 'node:http'
@@ -659,6 +660,17 @@ const renderCallTemplate = (template, { server, tool, args, result }) => String(
   .replaceAll('{args}', typeof args === 'string' ? args : JSON.stringify(args ?? {}, null, 2))
   .replaceAll('{result}', String(result ?? ''))
 
+// 构造一条合法的 user 消息（会话日志的恢复校验要求 id 非空字符串、role/source/content 齐全）。
+// 历史 bug：手动调用直接 append `{ role, content, source }` 而漏了 id，DSH 重启恢复会话时
+// adoptSessionEvent → assertMessageEventShape 抛「lacks an identified message」，
+// 整条会话因此读不出来（用户看到的就是「会话毁了」）。
+const buildUserMessage = (text) => ({
+  id: `msg_${randomUUID()}`,
+  role: 'user',
+  content: [{ type: 'text', text: String(text ?? '') }],
+  source: { kind: 'user' },
+})
+
 // 只保留「用户级 + 当前活动 workspace 的项目级」服务器。
 // 为什么要在挂载阶段就过滤，而不只靠后面的 per-agent deny：
 // 服务器一旦挂上就是**全局**的——它会出现在 MCP 服务器/资源列表里（每个会话都看得到），
@@ -708,7 +720,7 @@ const GLOBAL_FILES = [
 ]
 
 // 测试钩子：node 脚本可直接 import 本模块做解析验证
-export { parseMcpJson, parseOpencodeJson, parseCodexToml, collectServers, windowsCommand, pathKey, cwdInWorkspace, denyListFor, workspaceKeyOf, disabledToolsFor, mergeDeny, describeWorkspaceTools, describeSessionTools, renderCallTemplate, normalizeStore, filterServersForWorkspaces, activeRootKeysFor, PROJECT_FILES, GLOBAL_FILES, isWsl, getWslHostIp, wslFallbackUrl, wslTunnelTarget, wslSubnetOf, winPortListeners, winPortProxyHas, winPortProxyLegacyHas, winFirewallHas, hostListenerState }
+export { parseMcpJson, parseOpencodeJson, parseCodexToml, collectServers, windowsCommand, pathKey, cwdInWorkspace, denyListFor, workspaceKeyOf, disabledToolsFor, mergeDeny, describeWorkspaceTools, describeSessionTools, renderCallTemplate, normalizeStore, buildUserMessage, filterServersForWorkspaces, activeRootKeysFor, PROJECT_FILES, GLOBAL_FILES, isWsl, getWslHostIp, wslFallbackUrl, wslTunnelTarget, wslSubnetOf, winPortListeners, winPortProxyHas, winPortProxyLegacyHas, winFirewallHas, hostListenerState }
 
 // 支持按启用的 family（配置源体系）过滤。enabled 为空/未传时 = 全部开启（保持原行为）。
 // globalStdioCwd：用户级（主目录下）配置里 stdio 服务器的 cwd。用户级条目没有"项目"
@@ -1956,20 +1968,26 @@ export async function apply(ctx) {
     // 预览 = 将要写进会话的原文，避免「看到的和发出去的不一样」
     return { ok: true, isError: outcome.isError === true, preview: rendered, tool: toolName }
   }
-  // 用户确认后，把预览文本作为一条 user 消息写进当前会话。
+  // 用户确认后，把预览文本作为一条 user 消息**交给 agent**（inbox next-turn + 唤醒驱动）。
   const commitText = (sessionId, text) => {
     const body = String(text ?? '')
     if (body.trim() === '') return { ok: false, error: '内容为空' }
     if (body.length > 200000) return { ok: false, error: '内容过长（上限 200000 字符）' }
-    let session
-    try { session = ctx.sessions.get(sessionId) } catch {}
-    if (!session) return { ok: false, error: '会话不存在或已关闭' }
+    let agent = null
     try {
-      session.append(
-        'user/message',
-        { role: 'user', content: [{ type: 'text', text: body }], source: { kind: 'user' } },
-        { surfaceOp: 'append' },
-      )
+      agent = ctx.agents.list().find((candidate) => candidate && candidate.session && candidate.session.id === sessionId) || null
+    } catch {}
+    if (!agent) return { ok: false, error: '会话未激活（找不到 agent）：请先切到该会话再发送' }
+    try {
+      // 走 agent 的 followup：进 inbox(next-turn) 并唤醒驱动，等价于「用户发了一条消息」。
+      // **不要**直接 session.append —— 那样会留一条不在队列、且没有 id 的假 user 消息，
+      // DSH 恢复会话时会拒绝整条会话（这就是上一版「会话毁了」的根因）。
+      if (typeof agent.followup === 'function') agent.followup(buildUserMessage(body))
+      else if (agent.inbox && typeof agent.inbox.splice === 'function') {
+        agent.inbox.splice('next-turn', Infinity, 0, [buildUserMessage(body)])
+      } else {
+        return { ok: false, error: '当前 DSH 版本不支持 inbox 注入' }
+      }
     } catch (e) {
       return { ok: false, error: '结果写入会话失败: ' + String((e && e.message) || e) }
     }
@@ -2163,6 +2181,7 @@ export async function apply(ctx) {
     },
   })
 }
+
 
 
 

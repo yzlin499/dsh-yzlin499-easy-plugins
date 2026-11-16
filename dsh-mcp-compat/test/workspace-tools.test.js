@@ -2,7 +2,7 @@
 // 关注三件事：cwd 归到哪个 workspace 根、条目怎么取、两层 deny 怎么合并。
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { describeSessionTools, describeWorkspaceTools, disabledToolsFor, mergeDeny, normalizeStore, renderCallTemplate, workspaceKeyOf } from '../index.js'
+import { buildUserMessage, describeSessionTools, describeWorkspaceTools, disabledToolsFor, mergeDeny, normalizeStore, renderCallTemplate, workspaceKeyOf } from '../index.js'
 
 const ROOTS = ['D:\\work\\projA', 'D:\\work\\projA-sub', 'D:\\work\\projB']
 
@@ -218,3 +218,14 @@ test('normalizeStore：会话级注入只保留 mcp__* 且去重、限长', () =
   // 空工具集不落盘
   assert.deepEqual(normalizeStore({ sessionTools: [{ sessionId: 'session-c', tools: [] }] }).sessionTools, [])
 })
+
+test('buildUserMessage：id/role/source/content 齐全（恢复校验的硬要求）', () => {
+  const message = buildUserMessage('【MCP 手动调用】ue / play')
+  assert.match(message.id, /^msg_[0-9a-f-]{36}$/)
+  assert.equal(message.role, 'user')
+  assert.deepEqual(message.source, { kind: 'user' })
+  assert.deepEqual(message.content, [{ type: 'text', text: '【MCP 手动调用】ue / play' }])
+  // 每次生成不同 id（不能用固定值）
+  assert.notEqual(buildUserMessage('x').id, buildUserMessage('x').id)
+})
+

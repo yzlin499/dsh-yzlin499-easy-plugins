@@ -132,7 +132,7 @@ current workspace**, grouped by server, and offers two modes:
 | Mode | Behaviour | Does the tool enter the context? |
 |---|---|---|
 | **Inject** | Adds the tool to **this session's** visible set (**persisted** in `mcp-compat.json` under `sessionTools`, restored after a DSH restart; entries for deleted sessions are harmless and capped at 200) | yes (this session only) |
-| **Call** | **Fill in the generated parameter form** (form mode by default, JSON mode on demand) → **review the result preview** → click "Send to session" to actually write it into the chat | **no** — the tool never becomes visible, only its result lands in the chat |
+| **Call** | **Fill in the generated parameter form** (form mode by default, JSON mode on demand) → **review the result preview** → "Send to session" goes through `agent.followup()` (queues into the inbox next-turn and wakes the driver), exactly like you sent a message | **no** — the tool never becomes visible, only its result lands in the chat |
 
 How "Call" works:
 
@@ -338,3 +338,24 @@ or type `/mcp-reconnect unreal` directly in the input box.
 ## License
 
 MIT
+
+
+### Troubleshooting: sessions broken by 0.12.0 ~ 0.12.4
+
+Those versions implemented "Send to session" as `session.append('user/message', …)`
+**without an `id`**. On restore DSH runs `adoptSessionEvent`, which requires a non-empty
+`id`, so the whole session fails to load (it looks "destroyed"). Since 0.12.5 the panel
+uses `agent.followup()` with a `msg_<uuid>` id, so this can no longer happen.
+
+If you still have a session written by an older build, the bundled script adds the
+missing ids (it backs up first; `--dry-run` only reports):
+
+```powershell
+cd dsh-mcp-compat
+node scripts/repair-session-ids.cjs --dry-run
+node scripts/repair-session-ids.cjs
+```
+
+It scans `<DSH_HOME>/sessions/**/*.jsonl.zstd` and only patches `user/message` events
+that lack an `id` (every other byte is preserved), then drops the matching projection
+cache. Restart DSH afterwards.

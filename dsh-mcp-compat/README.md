@@ -101,7 +101,7 @@ dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/ds
 | 用法 | 行为 | 工具是否进上下文 |
 |---|---|---|
 | **注入** | 把工具临时加进**当前会话**的可见集（**持久化**在 `mcp-compat.json` 的 `sessionTools` 里，DSH 重启后自动恢复；会话删除后条目无害、由 200 条上限兜住） | 是（仅本会话） |
-| **调用** | 面板里**按参数表单填**（默认表单模式，可按需切 JSON 模式）→ **先看结果预览** → 点「发送到会话」才真正写进对话 | **否**——工具全程不可见，只把结果写进对话 |
+| **调用** | 面板里**按参数表单填**（默认表单模式，可按需切 JSON 模式）→ **先看结果预览** → 点「发送到会话」后走 `agent.followup()`（进 inbox 的 next-turn 并唤醒驱动），等价于你发了一条消息 | **否**——工具全程不可见，只把结果写进对话 |
 
 「调用」的实现要点：
 
@@ -135,6 +135,24 @@ dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/ds
 
 一句话总结三档语义：**工作区里勾选的 = 全程可见（Agent 用）；面板里「注入」的 = 本会话
 临时可见；面板里「调用」的 = 永远不可见，只把调用结果写进对话。**
+
+### 故障排查：0.12.0 ~ 0.12.4 写坏的会话
+
+那几版「发送到会话」直接 `session.append('user/message', …)` 且**漏了 `id`**。
+DSH 恢复会话时 `adoptSessionEvent` 会校验 `id` 必须是非空字符串，于是一整条会话
+读取失败（打开就报错 / 看起来“毁了”）。0.12.5 起改走 `agent.followup()` 并带上
+`msg_<uuid>` 的 id，不会再产生这种日志。
+
+如果你有旧版本留下的坏会话，用内置脚本补 id（会先备份，`--dry-run` 只报告不写盘）：
+
+```powershell
+cd dsh-mcp-compat
+node scripts/repair-session-ids.cjs --dry-run   # 先看会改哪些
+node scripts/repair-session-ids.cjs             # 写回（同时清掉对应 projection cache）
+```
+
+脚本会扫描 `<DSH_HOME>/sessions/**/*.jsonl.zstd`，只给**缺 `id` 的 `user/message`**
+补 id（其余字节不动），修完重启 DSH 即可打开。
 
 用户级 stdio 服务器以**当前会话所在工作区**作为工作目录启动（与 Claude Code / Codex /
 opencode 用当前项目目录启动 MCP 的行为一致）——不少 MCP（例如 codegraph）的工具集由 `cwd`
