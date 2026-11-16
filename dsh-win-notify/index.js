@@ -15,7 +15,7 @@
 // 过滤：子代理会话（header.origin === 'subagent' 或存在 parentSession）不提示，
 // 避免子任务刷屏。
 //
-// 通知策略（设置持久化到 ~/.dsh/settings.yaml，命名空间 dsh-win-notify）：
+// 通知策略（设置持久化到 <DSH_HOME>/win-notify.json，默认 ~/.dsh/win-notify.json）：
 //   enabled 总开关；notifyApproval/notifyQuestion/notifyDone 三类分别开关；
 //   mode 'always' 总是通知 / 'background' 仅当页面在后台时通知
 //   （页面可见性由 Client 半侧经 /win-notify/visibility 上报，浏览器
@@ -24,15 +24,17 @@
 // 吐司执行：ctx.subprocess.spawn powershell.exe -File toast.ps1，
 // 标题/正文 Base64 传入（避免引号/中文转义），fire-and-forget 不阻塞主流程。
 // ═══════════════════════════════════════════════════════════════════════════
+import { readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs'
+import { spawn } from 'node:child_process'
+import { homedir } from 'node:os'
 import { join, dirname, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 export const name = 'win-notify'
-export const inject = ['subprocess', 'settings', 'webServer', 'loader']
+export const inject = ['subprocess', 'webServer']
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const TOAST_PS1 = join(HERE, 'toast.ps1')
-const NS = 'dsh-win-notify'
 const APP_ID = 'DSH.Notify'
 
 const DEFAULTS = {
@@ -42,12 +44,35 @@ const DEFAULTS = {
   notifyDone: true,
   mode: 'always', // 'always' | 'background'
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 持久化存储：<DSH_HOME>/win-notify.json（默认 ~/.dsh/win-notify.json）
+//
+// 不用 `ctx.settings`：DSH 0.2.x 的 settings 服务只有 describe/update/replace/mutate，
+// **没有 register**，`ctx.settings.register(...)` 会抛 TypeError 被 catch 吞掉，
+// 结果就是「改了开关、重启又回默认」。这里直接落 JSON 文件（原子写），
+// 与 dsh-mcp-compat 用同一套做法。
+// ═══════════════════════════════════════════════════════════════════════════
+const storeFile = () => join(process.env.DSH_HOME || join(homedir(), '.dsh'), 'win-notify.json')
+/** 把磁盘内容归一成合法配置（纯函数，便于单测；坏字段逐项回退默认值）。 */
+const normalizeConfig = (raw) => {
+  const base = { ...DEFAULTS }
+  if (!raw || typeof raw !== 'object') return base
+  for (const key of ['enabled', 'notifyApproval', 'notifyQuestion', 'notifyDone']) {
+    if (typeof raw[key] === 'boolean') base[key] = raw[key]
+  }
+  if (raw.mode === 'always' || raw.mode === 'background') base.mode = raw.mode
+  return base
+}
 /** 同类吐司最小间隔，防连发（例如同一瞬间多次审批） */
 const DEBOUNCE_MS = 800
 /** 吐司正文最大长度（超出截断） */
 const MAX_BODY = 110
 
 const log = (...a) => console.log('[win-notify]', ...a)
+
+// 测试钩子：node 脚本可直接 import 本模块校验配置归一化
+export { normalizeConfig }
 
 /** 取路径最后一段（Windows 反斜杠 / 正斜杠都处理）作为会话名 */
 function wsName(cwd) {
@@ -63,33 +88,48 @@ function clip(s, max = MAX_BODY) {
 }
 
 export async function apply(ctx) {
-  // ── 持久化设置（settings 不可用时回退内存态）──
-  let scope = null
-  let memConfig = { ...DEFAULTS }
+  // ── 持久化设置（自己的 JSON 文件；读写都在 Host 侧）──
+  let config = { ...DEFAULTS }
+  const persist = () => {
+    try {
+      const file = storeFile()
+      const tmp = file + '.tmp'
+      mkdirSync(dirname(file), { recursive: true })
+      writeFileSync(tmp, JSON.stringify({ version: 1, ...config }, null, 2), 'utf8')
+      renameSync(tmp, file)
+    } catch (e) {
+      log('保存设置失败:', String((e && e.message) || e))
+    }
+  }
   try {
-    const mod = await ctx.loader.import('@deepseek-ai/schemastery')
-    const z = mod && mod.default ? mod.default : mod
-    scope = ctx.settings.register(NS, z.object({
-      enabled: z.boolean().default(true),
-      notifyApproval: z.boolean().default(true),
-      notifyQuestion: z.boolean().default(true),
-      notifyDone: z.boolean().default(true),
-      mode: z.string().default('always'),
-    }))
+    config = normalizeConfig(JSON.parse(readFileSync(storeFile(), 'utf8')))
+    log('设置存储:', storeFile())
   } catch (e) {
-    log('settings 注册失败，回退内存态:', String((e && e.message) || e))
+    if (e && e.code !== 'ENOENT') log('读取设置失败，使用默认值:', String((e && e.message) || e))
   }
 
-  const readConfig = () => {
-    if (scope) {
-      try {
-        const v = scope.get()
-        if (v && typeof v === 'object') return { ...DEFAULTS, ...v }
-      } catch (e) {
-        log('settings 读取失败，回退内存态:', String((e && e.message) || e))
-      }
+  const readConfig = () => ({ ...config })
+  const writeConfig = (patch) => {
+    Object.assign(config, patch)
+    persist()
+  }
+  // 在系统文件管理器/默认编辑器里打开配置文件（Windows：cmd /c start）
+  const openConfigFile = () => {
+    const file = storeFile()
+    persist() // 确保文件存在，否则「打开」会指向不存在的路径
+    if (process.platform !== 'win32') return { ok: true, path: file }
+    try {
+      const child = spawn('cmd.exe', ['/c', 'start', '', file], {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true,
+      })
+      child.unref()
+      return { ok: true, path: file }
+    } catch (e) {
+      log('打开配置文件失败:', String((e && e.message) || e))
+      return { ok: false, path: file, error: String((e && e.message) || e) }
     }
-    return { ...memConfig }
   }
 
   // ── 页面可见性（Client 上报；初始假设前台，避免误判后台）──
@@ -254,13 +294,18 @@ export async function apply(ctx) {
           if (typeof a.notifyDone === 'boolean') next.notifyDone = a.notifyDone
           if (a.mode === 'always' || a.mode === 'background') next.mode = a.mode
           try {
-            if (scope) await scope.update(next)
-            else Object.assign(memConfig, next)
+            writeConfig(next)
             sendJson(res, { ok: true, ...readConfig() })
           } catch (e) {
             log('配置保存失败:', String((e && e.message) || e))
             sendJson(res, { ok: false, error: '配置保存失败' }, 500)
           }
+          return
+        }
+        if (p === '/win-notify/open-config' && req.method === 'POST') {
+          // 设置卡片「打开配置文件」：在系统默认编辑器里打开存储文件，并回显路径
+          const result = openConfigFile()
+          sendJson(res, result, result.ok ? 200 : 500)
           return
         }
         if (p === '/win-notify/visibility' && req.method === 'POST') {
@@ -279,3 +324,4 @@ export async function apply(ctx) {
 
   log('已加载。吐司脚本:', TOAST_PS1, '| powershell:', powershellPath)
 }
+

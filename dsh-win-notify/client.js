@@ -105,6 +105,7 @@ window.__ModuleLoader__.load({
 					mode: "When", always: "Always", background: "Background only",
 					page: "Page", foreground: "Foreground", backgroundNow: "Background",
 					save: "Save", saved: "Saved", saving: "Saving…", loadFail: "Load failed", saveFail: "Save failed",
+					openConfig: "Open config file", opening: "Opening…", opened: "Opened", openFail: "Open failed",
 				} : {
 					name: "Windows 通知",
 					desc: "权限申请 / 提问 / 运行停止时弹原生吐司",
@@ -112,6 +113,7 @@ window.__ModuleLoader__.load({
 					mode: "通知时机", always: "总是通知", background: "仅页面在后台时",
 					page: "当前页面", foreground: "前台", backgroundNow: "后台",
 					save: "保存", saved: "已保存", saving: "保存中…", loadFail: "读取失败", saveFail: "保存失败",
+					openConfig: "打开配置文件", opening: "正在打开…", opened: "已打开", openFail: "打开失败",
 				};
 
 				react.useEffect(() => {
@@ -167,6 +169,17 @@ window.__ModuleLoader__.load({
 						.catch(() => setCfg((s) => ({ ...s, status: T.saveFail })));
 				};
 
+				const openConfig = () => {
+					setCfg((s) => ({ ...s, status: T.opening }));
+					fetch("/win-notify/open-config", { method: "POST" })
+						.then((r) => r.json())
+						.then((d) => setCfg((s) => ({
+							...s,
+							status: d && d.ok ? T.opened + (d.path ? "：" + d.path : "") : ((d && d.error) || T.openFail),
+						})))
+						.catch(() => setCfg((s) => ({ ...s, status: T.openFail })));
+				};
+
 				const toggleRow = (label, checked, onChange, hint) =>
 					react.createElement("label", { className: "wn-row" },
 						react.createElement("input", { type: "checkbox", checked: !!checked, onChange: (e) => onChange(e.target.checked) }),
@@ -207,6 +220,7 @@ window.__ModuleLoader__.load({
 								),
 								react.createElement("div", { className: "wn-foot" },
 									react.createElement("button", { className: "wn-btn", onClick: save, disabled: cfg.loading }, T.save),
+									react.createElement("button", { className: "wn-btn", onClick: openConfig, disabled: cfg.loading }, T.openConfig),
 									cfg.status ? react.createElement("span", { className: "wn-status" }, cfg.status) : null,
 								),
 							),

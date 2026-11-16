@@ -38,10 +38,19 @@ dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/ds
 | 启用通知 | 总开关（默认开） |
 | 权限申请 / 发起提问 / 运行停止 | 三类时机独立开关（默认全开） |
 | 通知时机 | **总是通知**（默认）/ **仅页面在后台时** |
+| 打开配置文件 | 在系统默认编辑器里打开配置文件，并回显完整路径 |
 
 「仅页面在后台时」模式下，吐司只在网页处于后台（标签页隐藏 / 窗口最小化 / 被遮挡）
 时弹出；页面是否后台由浏览器 `document.visibilityState` 自动判定，
 **无需任何鼠标/焦点检测**。卡片里会实时显示当前页面状态（前台/后台）。
+
+### 配置文件
+
+- 路径：**`<DSH_HOME>/win-notify.json`**（默认 `~/.dsh/win-notify.json`）；
+- 结构：`{ "enabled": true, "notifyApproval": true, "notifyQuestion": true, "notifyDone": true, "mode": "always" }`
+- 原子写（`tmp` + `rename`，目录不存在递归创建）；手改坏了也不会崩——
+  读取时逐字段回退默认值（`normalizeConfig` 有单测）；
+- 卡片里的「打开配置文件」会先确保文件存在，再用 `cmd /c start` 交给系统默认程序打开。
 
 ## 工作原理
 
@@ -59,8 +68,11 @@ dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/ds
   **必须用 powershell.exe（5.1）执行**——pwsh（PowerShell 7）不支持 WinRT 加载。
 - **Client**（`client.js`）：`settings.plugin.item` 设置卡片 + 页面可见性上报
   （`visibilitychange` → POST `/win-notify/visibility`）。
-- 配置经官方 `ctx.settings` 持久化到 `~/.dsh/settings.yaml`（命名空间
-  `dsh-win-notify`），卡片走插件自身 `/win-notify/config` 路由读写。
+- 配置持久化在插件自己的 JSON 文件 `<DSH_HOME>/win-notify.json`（默认
+  `~/.dsh/win-notify.json`），卡片走 `/win-notify/config` 读写；
+  「打开配置文件」走 `/win-notify/open-config`。（不用官方 `ctx.settings`：
+  DSH 0.2.x 的 settings 只有 `describe/update`，**没有 `register`**，
+  调它会抛错被吞、配置静默不落盘。）
 
 ## License
 

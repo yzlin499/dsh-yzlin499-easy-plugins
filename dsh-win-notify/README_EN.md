@@ -39,11 +39,22 @@ Out of the box it notifies **always** on the three moments:
 | Enable notifications | Master switch (default on) |
 | Approval / Question / Run done | Per-moment toggles (all on by default) |
 | When to notify | **Always** (default) / **Background only** |
+| Open config file | Opens the config file in the OS default editor and shows its full path |
 
 In "Background only" mode toasts appear only while the page is in the background
 (tab hidden / window minimized / covered). Background state comes from the browser's
 `document.visibilityState` automatically — **no mouse or focus detection needed**.
 The card shows the live page state (foreground/background).
+
+### Config file
+
+- Path: **`<DSH_HOME>/win-notify.json`** (default `~/.dsh/win-notify.json`);
+- Shape: `{ "enabled": true, "notifyApproval": true, "notifyQuestion": true, "notifyDone": true, "mode": "always" }`
+- Atomic writes (`tmp` + `rename`, directories created recursively); hand-editing it badly
+  never breaks the plugin — every field falls back to its default (`normalizeConfig` is
+  unit-tested);
+- The card's "Open config file" button creates the file first, then hands it to the OS via
+  `cmd /c start`.
 
 ## How it works
 
@@ -62,9 +73,11 @@ The card shows the live page state (foreground/background).
   **Must run under powershell.exe (5.1)** — pwsh (PowerShell 7) cannot load WinRT.
 - **Client** (`client.js`): `settings.plugin.item` settings card + page-visibility
   reporting (`visibilitychange` → POST `/win-notify/visibility`).
-- Config persists through the official `ctx.settings` service into
-  `~/.dsh/settings.yaml` (namespace `dsh-win-notify`); the card reads/writes via the
-  plugin's own `/win-notify/config` route.
+- Config persists in the plugin's own JSON file `<DSH_HOME>/win-notify.json` (default
+  `~/.dsh/win-notify.json`); the card reads/writes via `/win-notify/config` and the
+  "Open config file" button via `/win-notify/open-config`. (It deliberately does not use
+  the official `ctx.settings`: DSH 0.2.x only has `describe/update` — **no `register`** —
+  so calling it throws, gets swallowed, and nothing is ever persisted.)
 
 ## License
 
