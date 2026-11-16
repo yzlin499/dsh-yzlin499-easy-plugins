@@ -617,9 +617,13 @@ const describeWorkspaceTools = (servers, schemas, entries, workspacePath, roots,
 //   schemas   注册表里的工具定义（name / description / parameters）
 //   deny      该会话当前生效的 deny 集（项目级作用域 + 工作区禁用）
 //   injected  该会话临时注入（= 从 deny 里排除）的工具名
-const describeSessionTools = (servers, schemas, deny, injected, isMounted = () => false) => {
+//   cwd       会话工作目录：**别的工作区的项目级服务器整块不出现**——它们本来就该
+//             属于那个项目，既不该被注入，也不该在面板里出现（否则就是跨工作区串味）。
+const describeSessionTools = (servers, schemas, deny, injected, cwd, isMounted = () => false) => {
   const list = []
   for (const server of servers || []) {
+    // 跨工作区隔离：项目级服务器只在 cwd 属于其根时才算「本工作区的大类」
+    if (server.workspaceRoot && !cwdInWorkspace(cwd, server.workspaceRoot)) continue
     const prefix = `mcp__${server.name}__`
     const tools = (schemas || [])
       .filter((schema) => schema && typeof schema.name === 'string' && schema.name.startsWith(prefix))
@@ -1850,7 +1854,7 @@ export async function apply(ctx) {
         ? []
         : mergeDeny(denyListFor(projectTools, cwd), workspaceDisabledFor(cwd), known),
     )
-    const servers = describeSessionTools(currentServers, schemas, deny, injected, (name) => fiberByName.has(name))
+    const servers = describeSessionTools(currentServers, schemas, deny, injected, cwd, (name) => fiberByName.has(name))
     return {
       ok: true,
       session: { sessionId, cwd: cwd || null, live: agent !== null },
@@ -2084,6 +2088,34 @@ export async function apply(ctx) {
             return
           }
           sendJson(res, commitText(sessionId, a.text))
+          return
+        }
+        if (url.pathname === '/mcp-compat/debug' && req.method === 'GET') {
+          // 隔离自查：每个会话实际能看到的 mcp__* 工具 / 当前 deny / 已挂载服务器。
+          // 排查「别的项目的工具串进来」时直接看这里，不用猜。
+          let agents = []
+          try { agents = ctx.agents.list() } catch {}
+          const info = agents.map((agent) => {
+            const cwd = agent && agent.session && agent.session.header && agent.session.header.cwd
+            let scoped = []
+            try {
+              scoped = ctx.tools.schemas(agent).map((schema) => schema && schema.name).filter((name) => typeof name === 'string')
+            } catch (e) {
+              scoped = ['ERR:' + String((e && e.message) || e)]
+            }
+            const restriction = restrictionsByAgent.get(agent)
+            return {
+              sessionId: agent && agent.session && agent.session.id,
+              cwd: cwd || null,
+              mcpTools: scoped.filter((name) => name.startsWith('mcp__')),
+              deny: restriction ? restriction.key.split('\0').filter(Boolean) : [],
+            }
+          })
+          sendJson(res, {
+            projectTools: projectTools.map((tool) => ({ name: tool.name, workspaceRoot: tool.workspaceRoot })),
+            mounted: currentServers.map((server) => ({ name: server.name, workspaceRoot: server.workspaceRoot || null })),
+            agents: info,
+          })
           return
         }
         if (url.pathname === '/mcp-compat/wsl-forward' && req.method === 'POST') {

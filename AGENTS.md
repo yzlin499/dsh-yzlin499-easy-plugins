@@ -15,7 +15,7 @@
 
 | 目录 / 包名 | 版本 | 一句话 | 有 Client 半侧 | 有测试 |
 |---|---|---|---|---|
-| `dsh-mcp-compat` | 0.12.2 | 读取标准 MCP 配置（`.mcp.json` / `opencode.json` / `.cursor/mcp.json` / `.codex/config.toml`），挂载为 dsh-mcp-client 实例；按工作区门控工具（右键工作区 → MCP 工具…），右侧栏「MCP 管理」面板可临时注入 / 手动调用 | 是 | 是 |
+| `dsh-mcp-compat` | 0.12.3 | 读取标准 MCP 配置（`.mcp.json` / `opencode.json` / `.cursor/mcp.json` / `.codex/config.toml`），挂载为 dsh-mcp-client 实例；按工作区门控工具（右键工作区 → MCP 工具…），右侧栏「MCP 管理」面板可临时注入 / 手动调用 | 是 | 是 |
 | `dsh-version-control` | 0.4.0 | 接入官方 `ui-sidebar-right` 的 Git / SVN 版本控制面板 | 是 | 是 |
 | `dsh-ctx-menu` | 0.3.2 | 向 DSH 官方统一右键（`ctx.contextMenus`）贡献官方缺的动作：打开方式子菜单 / 复制相对路径 / 复制文件内容 | 是 | 是 + 静态自检 |
 | `dsh-win-notify` | 0.2.0 | Windows 原生吐司通知（权限申请 / 提问 / 运行结束）+ 设置卡片 + 打开配置文件 | 是 | 是 |

@@ -117,10 +117,11 @@ const PANEL_SCHEMAS = [
   { name: 'read', description: '内置工具' },
 ]
 
-test('describeSessionTools：只列被挡住的工具（含参数 schema），可见工具不出现', () => {
+test('describeSessionTools：只列本工作区被挡住的工具（含参数 schema），可见工具不出现', () => {
   const deny = new Set(['mcp__ue__play', 'mcp__rider__build'])
-  const out = describeSessionTools(SERVERS, PANEL_SCHEMAS, deny, new Set(), (name) => name === 'ue')
-  assert.deepEqual(out.map((server) => server.name), ['rider', 'ue'])
+  const out = describeSessionTools(SERVERS, PANEL_SCHEMAS, deny, new Set(), 'D:\\work\\projA', (name) => name === 'ue')
+  // 跨工作区隔离：rider 属于 projB，在 projA 的会话里整块不出现
+  assert.deepEqual(out.map((server) => server.name), ['ue'])
   const ue = out.find((server) => server.name === 'ue')
   assert.equal(ue.level, 'project')
   assert.equal(ue.mounted, true)
@@ -132,18 +133,28 @@ test('describeSessionTools：只列被挡住的工具（含参数 schema），�
   assert.equal(out.some((server) => server.tools.some((tool) => tool.name === 'read')), false)
 })
 
+test('describeSessionTools：跨工作区的项目级服务器不出现（别处被挡 ≠ 可注入）', () => {
+  // rider 是 projB 的项目级服务器，在 projA 的会话里既不可见、也不该出现在面板
+  const deny = new Set(['mcp__rider__build'])
+  const out = describeSessionTools(SERVERS, PANEL_SCHEMAS, deny, new Set(), 'D:\\work\\projA')
+  assert.deepEqual(out, [])
+  // 换成 projB 的会话才看得到它
+  const inB = describeSessionTools(SERVERS, PANEL_SCHEMAS, deny, new Set(), 'D:\\work\\projB\\src')
+  assert.deepEqual(inB.map((server) => server.name), ['rider'])
+})
+
 test('describeSessionTools：临时注入的工具仍然列出来（标记 injected）', () => {
   const deny = new Set(['mcp__ue__play'])
-  const out = describeSessionTools(SERVERS, PANEL_SCHEMAS, deny, new Set(['mcp__ue__play']))
+  const out = describeSessionTools(SERVERS, PANEL_SCHEMAS, deny, new Set(['mcp__ue__play']), 'D:\\work\\projA')
   const ue = out.find((server) => server.name === 'ue')
   assert.deepEqual(ue.tools.map((tool) => tool.name), ['mcp__ue__play'])
   assert.equal(ue.tools[0].injected, true)
 })
 
 test('describeSessionTools：没有隐藏工具的服务器整块不出现', () => {
-  const out = describeSessionTools(SERVERS, PANEL_SCHEMAS, new Set(['mcp__ue__play']), new Set())
+  const out = describeSessionTools(SERVERS, PANEL_SCHEMAS, new Set(['mcp__ue__play']), new Set(), 'D:\\work\\projA')
   assert.deepEqual(out.map((server) => server.name), ['ue'])
-  assert.deepEqual(describeSessionTools(SERVERS, PANEL_SCHEMAS, new Set(), new Set()), [])
+  assert.deepEqual(describeSessionTools(SERVERS, PANEL_SCHEMAS, new Set(), new Set(), 'D:\\work\\projA'), [])
 })
 
 
