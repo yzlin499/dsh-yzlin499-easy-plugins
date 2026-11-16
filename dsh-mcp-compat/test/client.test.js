@@ -120,6 +120,7 @@ test('工作区右键菜单项：workspace 目标、order 200、文案与 run �
   assert.equal(typeof actions[0].label, 'string')
   assert.ok(actions[0].label.length > 0)
   assert.equal(typeof actions[0].run, 'function')
+  assert.equal(actions[0].icon && actions[0].icon.key, 'mcp-compat.action')
   // run 只切换面板状态，不抛错
   assert.doesNotThrow(() => actions[0].run())
 })
@@ -133,6 +134,11 @@ test('面板注册进 shell.overlay，设置卡片仍然注册', () => {
   assert.ok(panel, '没有把面板挂到 shell.overlay')
   assert.equal(panel.spec.id, 'mcp-compat.panel')
   assert.equal(typeof panel.component, 'function')
+
+  const icon = ctx.slotRegistrations.find((entry) => entry.spec.name === 'contextMenu.icon')
+  assert.ok(icon, '没有注册 contextMenu.icon')
+  assert.equal(icon.spec.key, 'mcp-compat.action')
+  assert.equal(typeof icon.component, 'function')
 
   const card = ctx.slotRegistrations.find((entry) => entry.spec.name === 'settings.plugin.item')
   assert.ok(card, '设置卡片注册丢了')
@@ -157,6 +163,7 @@ test('右侧栏：注册 MCP 管理 tab 类型 + sidebar.right.pane.tab 槽位',
   assert.ok(tab, '没有注册右侧栏 tab 类型')
   assert.equal(tab.kind, 'mcp-compat')
   assert.equal(typeof tab.title, 'function')
+  assert.equal(typeof tab.icon, 'function', '右侧栏 tab 应带图标组件')
   assert.ok(Array.isArray(tab.guide) && tab.guide.length > 0, '右侧栏起始页应有引导卡片')
 
   const pane = ctx.slotRegistrations.find((entry) => entry.spec.name === 'sidebar.right.pane.tab')
@@ -235,3 +242,4 @@ test('buildArgs：必填缺失/类型非法报错，合法输入按类型转换'
   assert.deepEqual(ok.errors, {})
   assert.deepEqual(ok.args, { project: 'p1', count: 3, verbose: true, tags: ['x', 'y'] })
 })
+

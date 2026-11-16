@@ -131,6 +131,29 @@ window.__ModuleLoader__.load({
 			}));
 		}
 
+		// 「MCP 管理」图标：一只电源插头（连接 = MCP 的语义）。
+		// 16 网格、currentColor 描边，跟随主题深浅色；size 由调用方（右侧栏 / 右键菜单）给。
+		function McpGlyph({ size = 14, className } = {}) {
+			const px = typeof size === "number" && size > 0 ? size : 14;
+			return react.createElement("svg", {
+				width: px, height: px, viewBox: "0 0 16 16", fill: "none",
+				xmlns: "http://www.w3.org/2000/svg", className, "aria-hidden": "true",
+			},
+				react.createElement("path", {
+					d: "M6 2.4v3.2M10 2.4v3.2",
+					stroke: "currentColor", strokeWidth: 1.5, strokeLinecap: "round",
+				}),
+				react.createElement("rect", {
+					x: 4.05, y: 5.7, width: 7.9, height: 4.5, rx: 1.3,
+					stroke: "currentColor", strokeWidth: 1.5,
+				}),
+				react.createElement("path", {
+					d: "M8 10.35v3.25",
+					stroke: "currentColor", strokeWidth: 1.5, strokeLinecap: "round",
+				}),
+			);
+		}
+
 		function apply(ctx) {
 			function configWslText(wsl) {
 				if (!wsl || !wsl.detected) return "未检测到 WSL，无需改写（直连 localhost）";
@@ -700,6 +723,7 @@ window.__ModuleLoader__.load({
 							return [{
 								id: "tools",
 								label: t("menuLabel"),
+								icon: { key: "mcp-compat.action" },
 								run: () => panel.set({ workspaceId: target.workspaceId, path: target.path, title: target.displayTitle }),
 							}];
 						},
@@ -716,6 +740,15 @@ window.__ModuleLoader__.load({
 					order: 80,
 				}, McpToolsPanel)),
 				"mcp-compat: tools panel overlay",
+			);
+
+			// ③ 右键菜单项图标：keyed Slot contextMenu.icon（官方叠加层按 action.icon.key 渲染）。
+			ctx.effect(
+				() => ctx.slots.inject("contextMenu.icon", () => ctx.slots.register({
+					name: "contextMenu.icon",
+					key: "mcp-compat.action",
+				}, McpGlyph)),
+				"mcp-compat: menu icon",
 			);
 
 			// ── 右侧栏「MCP 管理」面板 ─────────────────────────────────────────
@@ -1129,6 +1162,7 @@ window.__ModuleLoader__.load({
 				id: "dsh-mcp-compat",
 				kind: "mcp-compat",
 				title: () => t("panelTitle"),
+				icon: McpGlyph,
 				guide: [{ order: 40, title: () => t("panelTitle"), description: () => t("panelGuide") }],
 			}), "mcp-compat: sidebar tab type");
 			ctx.effect(() => ctx.slots.inject("sidebar.right.pane.tab", () => ctx.slots.register(
