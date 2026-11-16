@@ -49,8 +49,17 @@ window.__ModuleLoader__.load({
 			".mcp-gate-path{font-size:11px;color:var(--dsw-alias-label-tertiary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
 			".mcp-gate-close{flex:none;background:transparent;border:0;color:var(--dsw-alias-label-secondary);font-size:20px;line-height:1;cursor:pointer;padding:2px 6px;border-radius:6px}",
 			".mcp-gate-close:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}",
-			".mcp-gate-body{flex:1;min-height:0;overflow:auto;padding:12px 16px;display:flex;flex-direction:column;gap:12px}",
-			".mcp-gate-server{border:1px solid var(--dsw-alias-border-l2);border-radius:10px;overflow:hidden}",
+			".mcp-gate-body{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;padding:12px 16px;display:flex;flex-direction:column;gap:12px}",
+			// 关键：flex 列里的 section 默认 flex-shrink:1，会被压扁到容器高度内各自裁切，
+			// 于是「内容不溢出 → 容器不滚 → 底部工具永远看不到」。禁止收缩，让 body 真正溢出。
+			".mcp-gate-server{flex:none;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;overflow:hidden}",
+			".mcp-gate-toolbar{display:flex;align-items:center;gap:8px;padding:0 16px 10px}",
+			".mcp-gate-search{flex:1;min-width:0;background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;color:var(--dsw-alias-label-primary);font-size:12px;line-height:1.6;padding:5px 10px;outline:none}",
+			".mcp-gate-search:focus{border-color:var(--dsw-alias-brand-primary)}",
+			".mcp-gate-server-toggle{flex:1;min-width:0;display:flex;align-items:center;gap:8px;background:transparent;border:0;padding:0;font:inherit;color:inherit;text-align:left;cursor:pointer}",
+			".mcp-gate-count{flex:none;font-size:10.5px;color:var(--dsw-alias-label-tertiary)}",
+			".mcp-gate-chevron{flex:none;color:var(--dsw-alias-label-tertiary);transition:transform .16s}",
+			".mcp-gate-chevron.is-closed{transform:rotate(-90deg)}",
 			".mcp-gate-server-head{display:flex;align-items:center;gap:8px;padding:9px 12px;background:var(--dsw-alias-bg-module-platform)}",
 			".mcp-gate-server-name{font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
 			".mcp-gate-tag{flex:none;font-size:10px;line-height:1;padding:3px 6px;border-radius:999px;border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-tertiary)}",
@@ -289,6 +298,10 @@ window.__ModuleLoader__.load({
 					project: "项目级",
 					user: "用户级",
 					offline: "未连接",
+					search: "搜索工具名 / 说明…",
+					expandAll: "展开全部",
+					collapseAll: "收起全部",
+					noMatch: "没有匹配的工具",
 					enableAll: "全部启用",
 					disableAll: "全部禁用",
 					save: "保存",
@@ -309,6 +322,10 @@ window.__ModuleLoader__.load({
 					project: "project",
 					user: "user",
 					offline: "offline",
+					search: "Filter by tool name or description…",
+					expandAll: "Expand all",
+					collapseAll: "Collapse all",
+					noMatch: "No matching tools",
 					enableAll: "Enable all",
 					disableAll: "Disable all",
 					save: "Save",
@@ -367,6 +384,10 @@ window.__ModuleLoader__.load({
 				const [draft, setDraft] = react.useState(() => new Set());
 				const [busy, setBusy] = react.useState(false);
 				const [status, setStatus] = react.useState("");
+				// 搜索：按工具名/说明过滤（服务器多、单服务器几十个工具时比滚动快）
+				const [query, setQuery] = react.useState("");
+				// 折叠：默认全部展开；点服务器标题收起（搜索时强制展开，否则看不到命中）
+				const [collapsed, setCollapsed] = react.useState(() => new Set());
 				const closeRef = react.useRef(onClose);
 				closeRef.current = onClose;
 
@@ -424,6 +445,17 @@ window.__ModuleLoader__.load({
 						return next;
 					});
 				};
+				const toggleCollapsed = (name) => {
+					setCollapsed((prev) => {
+						const next = new Set(prev);
+						if (next.has(name)) next.delete(name);
+						else next.add(name);
+						return next;
+					});
+				};
+				const setAllCollapsed = (value) => {
+					setCollapsed(value ? new Set(servers.map((server) => server.name)) : new Set());
+				};
 				const save = () => {
 					setBusy(true);
 					setStatus(t("saving"));
@@ -449,6 +481,17 @@ window.__ModuleLoader__.load({
 				};
 
 				const servers = data.servers || [];
+				const q = query.trim().toLowerCase();
+				// 搜索时按名字/说明过滤工具；没有命中的服务器整块隐藏。
+				const visible = servers
+					.map((server) => ({
+						...server,
+						tools: q
+							? (server.tools || []).filter((tool) => tool.name.toLowerCase().includes(q) || tool.description.toLowerCase().includes(q))
+							: (server.tools || []),
+					}))
+					.filter((server) => !q || server.tools.length > 0);
+				const showToolbar = !data.loading && !data.error && servers.length > 0;
 				return react.createElement("div", {
 					className: "mcp-gate-backdrop",
 					onMouseDown: (event) => { if (event.target === event.currentTarget) onClose(); },
@@ -461,6 +504,19 @@ window.__ModuleLoader__.load({
 							),
 							react.createElement("button", { className: "mcp-gate-close", onClick: onClose, "aria-label": t("close") }, "×"),
 						),
+						showToolbar
+							? react.createElement("div", { className: "mcp-gate-toolbar" },
+								react.createElement("input", {
+									className: "mcp-gate-search",
+									type: "search",
+									value: query,
+									placeholder: t("search"),
+									onChange: (event) => setQuery(event.target.value),
+								}),
+								react.createElement("button", { className: "mcp-gate-mini", onClick: () => setAllCollapsed(false) }, t("expandAll")),
+								react.createElement("button", { className: "mcp-gate-mini", onClick: () => setAllCollapsed(true) }, t("collapseAll")),
+							)
+							: null,
 						react.createElement("div", { className: "mcp-gate-body" },
 							data.loading
 								? react.createElement("div", { className: "mcp-gate-empty" }, t("loading"))
@@ -468,37 +524,55 @@ window.__ModuleLoader__.load({
 									? react.createElement("div", { className: "mcp-gate-empty mcp-gate-error" }, data.error)
 									: servers.length === 0
 										? react.createElement("div", { className: "mcp-gate-empty" }, t("empty"))
-										: servers.map((server) => react.createElement("section", { className: "mcp-gate-server", key: server.name },
-											react.createElement("div", { className: "mcp-gate-server-head" },
-												react.createElement("span", { className: "mcp-gate-server-name", title: server.source || server.name }, server.name),
-												react.createElement("span", { className: "mcp-gate-tag" + (server.level === "project" ? " is-project" : "") },
-													server.level === "project" ? t("project") : t("user")),
-												server.mounted ? null : react.createElement("span", { className: "mcp-gate-tag is-off" }, t("offline")),
-												react.createElement("span", { className: "mcp-gate-server-actions" },
-													react.createElement("button", { className: "mcp-gate-mini", onClick: () => setServer(server, true) }, t("enableAll")),
-													react.createElement("button", { className: "mcp-gate-mini", onClick: () => setServer(server, false) }, t("disableAll")),
-												),
-											),
-											(server.tools || []).length === 0
-												? react.createElement("div", { className: "mcp-gate-empty" }, t("noTools"))
-												: react.createElement("ul", { className: "mcp-gate-tools" },
-													server.tools.map((tool) => react.createElement("li", { className: "mcp-gate-tool", key: tool.name },
-														react.createElement("label", null,
-															react.createElement("input", {
-																type: "checkbox",
-																checked: !draft.has(tool.name),
-																onChange: () => toggleTool(tool.name),
-															}),
-															react.createElement("span", { className: "mcp-gate-tool-text" },
-																react.createElement("span", { className: "mcp-gate-tool-name" }, tool.name),
-																tool.description
-																	? react.createElement("span", { className: "mcp-gate-tool-desc" }, tool.description)
-																	: null,
-															),
+										: visible.length === 0
+											? react.createElement("div", { className: "mcp-gate-empty" }, t("noMatch"))
+											: visible.map((server) => {
+												const disabledCount = (server.tools || []).filter((tool) => draft.has(tool.name)).length;
+												const open = q !== "" || !collapsed.has(server.name);
+												return react.createElement("section", { className: "mcp-gate-server", key: server.name },
+													react.createElement("div", { className: "mcp-gate-server-head" },
+														react.createElement("button", {
+															className: "mcp-gate-server-toggle",
+															onClick: () => toggleCollapsed(server.name),
+															"aria-expanded": open,
+															title: server.source || server.name,
+														},
+															react.createElement(ChevronIcon, { className: "mcp-gate-chevron" + (open ? "" : " is-closed") }),
+															react.createElement("span", { className: "mcp-gate-server-name" }, server.name),
+															react.createElement("span", { className: "mcp-gate-tag" + (server.level === "project" ? " is-project" : "") },
+																server.level === "project" ? t("project") : t("user")),
+															server.mounted ? null : react.createElement("span", { className: "mcp-gate-tag is-off" }, t("offline")),
+															react.createElement("span", { className: "mcp-gate-count" },
+																`${disabledCount}/${(server.tools || []).length}`),
 														),
-													)),
-												),
-										)),
+														react.createElement("span", { className: "mcp-gate-server-actions" },
+															react.createElement("button", { className: "mcp-gate-mini", onClick: () => setServer(server, true) }, t("enableAll")),
+															react.createElement("button", { className: "mcp-gate-mini", onClick: () => setServer(server, false) }, t("disableAll")),
+														),
+													),
+													open
+														? ((server.tools || []).length === 0
+															? react.createElement("div", { className: "mcp-gate-empty" }, t("noTools"))
+															: react.createElement("ul", { className: "mcp-gate-tools" },
+																server.tools.map((tool) => react.createElement("li", { className: "mcp-gate-tool", key: tool.name },
+																	react.createElement("label", null,
+																		react.createElement("input", {
+																			type: "checkbox",
+																			checked: !draft.has(tool.name),
+																			onChange: () => toggleTool(tool.name),
+																		}),
+																		react.createElement("span", { className: "mcp-gate-tool-text" },
+																			react.createElement("span", { className: "mcp-gate-tool-name" }, tool.name),
+																			tool.description
+																				? react.createElement("span", { className: "mcp-gate-tool-desc" }, tool.description)
+																				: null,
+																		),
+																	),
+																)),
+															))
+														: null,
+												);
+											}),
 						),
 						react.createElement("footer", { className: "mcp-gate-foot" },
 							react.createElement("button", { className: "mc-btn", onClick: save, disabled: busy || data.loading }, t("save")),
