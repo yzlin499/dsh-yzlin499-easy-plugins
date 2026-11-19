@@ -2,7 +2,7 @@
 // 关注三件事：cwd 归到哪个 workspace 根、条目怎么取、两层 deny 怎么合并。
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { buildUserMessage, describeSessionTools, describeWorkspaceTools, disabledToolsFor, mergeDeny, normalizeStore, renderCallTemplate, workspaceKeyOf } from '../index.js'
+import { buildUserMessage, describeSessionTools, describeWorkspaceTools, disabledToolsFor, mergeDeny, normalizeStore, renderCallTemplate, renderTemplate, workspaceKeyOf } from '../index.js'
 
 const ROOTS = ['D:\\work\\projA', 'D:\\work\\projA-sub', 'D:\\work\\projB']
 
@@ -260,3 +260,32 @@ test('normalizeStore：快捷卡片与上次参数缓存做形状校验', () => 
   assert.deepEqual(normalizeStore(undefined).shortcuts, [])
   assert.deepEqual(normalizeStore(undefined).lastArgs, {})
 })
+
+test('renderTemplate：变量 / 循环 / 条件 / 深层字段 / 兜底', () => {
+  const data = {
+    projectId: 'jxqyxh',
+    result: {
+      items: [
+        { issue_id: 'a', severity: 'high', notes: null },
+        { issue_id: 'b', severity: 'low', notes: '看这里' },
+      ],
+      total: 2,
+    },
+  }
+  const tpl = '项目 {{projectId}}（{{result.total}} 条）\n{{#each result.items}}- {{@index}} {{issue_id}}/{{severity}}{{#if notes}} 备注:{{notes}}{{/if}}\n{{/each}}{{^if result.items}}（无）{{/if}}'
+  const out = renderTemplate(tpl, data)
+  assert.match(out, /项目 jxqyxh（2 条）/)
+  assert.match(out, /- 0 a\/high/)
+  assert.match(out, /- 1 b\/low 备注:看这里/)
+  // 空数组走兜底
+  assert.equal(renderTemplate('{{#each list}}x{{/each}}{{^if list}}（无）{{/if}}', { list: [] }), '（无）')
+  // 缺字段 → 空串，不抛错
+  assert.equal(renderTemplate('[{{a.b.c}}]', {}), '[]')
+  // else 分支
+  assert.equal(renderTemplate('{{#if ok}}Y{{else}}N{{/if}}', { ok: false }), 'N')
+  // 注释被丢弃
+  assert.equal(renderTemplate('a{{! 忽略我 }}b', {}), 'ab')
+  // 对象值按 JSON 缩进输出
+  assert.match(renderTemplate('{{obj}}', { obj: { a: 1 } }), /"a": 1/)
+})
+

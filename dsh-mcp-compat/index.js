@@ -30,7 +30,7 @@ const execFileP = promisify(execFile)
 export const name = 'mcp-compat'
 // loader：经 loader 自己的解析拿 dsh-mcp-client（bundle 源目录在项目里，
 // 顶层裸 import '@deepseek-ai/dsh-mcp-client' 会按源目录解析失败）
-export const inject = ['workspaceRegistry', 'loader', 'tools', 'agents', 'commands', 'webServer', 'sessions']
+export const inject = ['workspaceRegistry', 'loader', 'tools', 'agents', 'commands', 'webServer', 'sessions', 'llm']
 
 const log = (...a) => console.log('[mcp-compat]', ...a)
 const reportedInvalidCommands = new Set()
@@ -660,6 +660,135 @@ const renderCallTemplate = (template, { server, tool, args, result }) => String(
   .replaceAll('{args}', typeof args === 'string' ? args : JSON.stringify(args ?? {}, null, 2))
   .replaceAll('{result}', String(result ?? ''))
 
+// ── 极简 Mustache 模板（输出模板用）──
+// 支持：{{path}} / {{{path}}} / {{#each path}}…{{else}}…{{/each}} /
+//       {{#if path}}…{{else}}…{{/if}} / {{^if path}}…{{/if}} / {{! 注释 }}
+// 不引入三方库：模板来自模型生成，必须是纯数据驱动的（绝不能 eval）。
+const TEMPLATE_TOKEN = /\{\{\{?\s*([#^/]?)([^}]*?)\s*\}?\}\}/g
+
+const templateLookup = (data, path) => {
+  const key = String(path || '').trim()
+  if (key === '' || key === 'this') return data
+  // {{.field}} / {{.}} —— Mustache 的「当前项」
+  if (key.startsWith('.')) {
+    const rest = key.slice(1)
+    if (rest === '') return data
+    return templateLookup(data !== null && typeof data === 'object' && '.' in data ? data['.'] : data, rest)
+  }
+  let current = data
+  for (const part of key.split('.')) {
+    if (current === null || current === undefined) return undefined
+    current = current[part]
+  }
+  return current
+}
+
+const templateTruthy = (value) => {
+  if (Array.isArray(value)) return value.length > 0
+  if (value === null || value === undefined || value === false || value === '' || value === 0) return false
+  return true
+}
+
+const templateText = (value) => {
+  if (value === null || value === undefined) return ''
+  if (typeof value === 'object') return JSON.stringify(value, null, 2)
+  return String(value)
+}
+
+/** 解析 {{#each path}} / {{#if path}} / {{#path}} 的块头。 */
+const splitTemplateBlock = (raw, inverted) => {
+  const text = String(raw).trim()
+  const each = text.match(/^each\s+(.+)$/)
+  if (each) return { name: each[1].trim(), mode: 'each', inverted }
+  const cond = text.match(/^if\s+(.+)$/)
+  if (cond) return { name: cond[1].trim(), mode: 'if', inverted }
+  return { name: text, mode: 'each', inverted }
+}
+
+/** 把模板字符串渲染成文本；语法错误时抛出（调用方负责回退到默认模板）。 */
+const renderTemplate = (template, data) => {
+  const tokens = []
+  let last = 0
+  TEMPLATE_TOKEN.lastIndex = 0
+  let match
+  while ((match = TEMPLATE_TOKEN.exec(String(template)))) {
+    if (match.index > last) tokens.push({ kind: 'text', value: String(template).slice(last, match.index) })
+    const sigil = match[1]
+    const name = match[2].trim()
+    if (name === 'else') tokens.push({ kind: 'else' })
+    else if (sigil === '#') tokens.push({ kind: 'open', ...splitTemplateBlock(name, false) })
+    else if (sigil === '^') tokens.push({ kind: 'open', ...splitTemplateBlock(name, true) })
+    else if (sigil === '/') tokens.push({ kind: 'close' })
+    else if (sigil === '' && name.startsWith('!')) tokens.push({ kind: 'comment' })
+    else tokens.push({ kind: 'var', name })
+    last = match.index + match[0].length
+  }
+  if (last < String(template).length) tokens.push({ kind: 'text', value: String(template).slice(last) })
+
+  const root = { kind: 'root', children: [], otherwise: [] }
+  const stack = [root]
+  for (const token of tokens) {
+    const top = stack[stack.length - 1]
+    if (token.kind === 'open') {
+      const section = {
+        kind: 'section',
+        name: token.name,
+        mode: token.mode || 'each',
+        inverted: token.inverted === true,
+        children: [],
+        otherwise: [],
+      }
+      top.children.push(section)
+      stack.push(section)
+    } else if (token.kind === 'else') {
+      if (top.kind === 'section') top.onElse = true
+    } else if (token.kind === 'close') {
+      if (stack.length > 1) stack.pop()
+    } else if (token.kind === 'comment') {
+      continue
+    } else {
+      const target = top.kind === 'section' && top.onElse ? top.otherwise : top.children
+      target.push(token)
+    }
+  }
+
+  const renderNodes = (nodes, context) => {
+    let out = ''
+    for (const node of nodes) {
+      if (node.kind === 'text') { out += node.value; continue }
+      if (node.kind === 'var') { out += templateText(templateLookup(context, node.name)); continue }
+      const value = templateLookup(context, node.name)
+      const truthy = templateTruthy(value)
+      if (node.mode === 'if') {
+        // {{^if x}} = 取反分支
+        const take = node.inverted ? !truthy : truthy
+        out += renderNodes(take ? node.children : node.otherwise, take && value !== null && typeof value === 'object' ? value : context)
+        continue
+      }
+      if (node.inverted) {
+        if (!truthy) out += renderNodes(node.children, context)
+        continue
+      }
+      if (Array.isArray(value)) {
+        value.forEach((item, index) => {
+          const child = item !== null && typeof item === 'object' && !Array.isArray(item)
+            ? { ...item, '@index': index, '@first': index === 0, '@last': index === value.length - 1 }
+            : { '.': item, '@index': index, '@first': index === 0, '@last': index === value.length - 1 }
+          out += renderNodes(node.children, child)
+        })
+        if (value.length === 0) out += renderNodes(node.otherwise, context)
+        continue
+      }
+      if (truthy) out += renderNodes(node.children, value !== null && typeof value === 'object' ? value : context)
+      else out += renderNodes(node.otherwise, context)
+    }
+    return out
+  }
+
+  return renderNodes(root.children, data)
+}
+
+
 // 构造一条合法的 user 消息（会话日志的恢复校验要求 id 非空字符串、role/source/content 齐全）。
 // 历史 bug：手动调用直接 append `{ role, content, source }` 而漏了 id，DSH 重启恢复会话时
 // adoptSessionEvent → assertMessageEventShape 抛「lacks an identified message」，
@@ -720,7 +849,7 @@ const GLOBAL_FILES = [
 ]
 
 // 测试钩子：node 脚本可直接 import 本模块做解析验证
-export { parseMcpJson, parseOpencodeJson, parseCodexToml, collectServers, windowsCommand, pathKey, cwdInWorkspace, denyListFor, workspaceKeyOf, disabledToolsFor, mergeDeny, describeWorkspaceTools, describeSessionTools, renderCallTemplate, normalizeStore, buildUserMessage, filterServersForWorkspaces, activeRootKeysFor, PROJECT_FILES, GLOBAL_FILES, isWsl, getWslHostIp, wslFallbackUrl, wslTunnelTarget, wslSubnetOf, winPortListeners, winPortProxyHas, winPortProxyLegacyHas, winFirewallHas, hostListenerState }
+export { parseMcpJson, parseOpencodeJson, parseCodexToml, collectServers, windowsCommand, pathKey, cwdInWorkspace, denyListFor, workspaceKeyOf, disabledToolsFor, mergeDeny, describeWorkspaceTools, describeSessionTools, renderCallTemplate, renderTemplate, normalizeStore, buildUserMessage, filterServersForWorkspaces, activeRootKeysFor, PROJECT_FILES, GLOBAL_FILES, isWsl, getWslHostIp, wslFallbackUrl, wslTunnelTarget, wslSubnetOf, winPortListeners, winPortProxyHas, winPortProxyLegacyHas, winFirewallHas, hostListenerState }
 
 // 支持按启用的 family（配置源体系）过滤。enabled 为空/未传时 = 全部开启（保持原行为）。
 // globalStdioCwd：用户级（主目录下）配置里 stdio 服务器的 cwd。用户级条目没有"项目"
@@ -812,6 +941,8 @@ const STORE_DEFAULTS = () => ({
   shortcuts: [],
   // 上次调用参数缓存：toolName -> { 参数: 值 }，表单 / 卡片默认回填
   lastArgs: {},
+  // 上次结果原文：toolName -> 结果文本（「AI 生成输出模板」的样本）
+  lastResults: {},
   callTemplate: '【MCP 手动调用】{server} / {tool}\n\n**参数**\n```json\n{args}\n```\n\n**结果**\n{result}',
 })
 // 把磁盘上的任意内容归一成合法 store（纯函数，便于单测；坏字段逐项回退默认值）。
@@ -860,6 +991,7 @@ const normalizeStore = (raw) => {
         name: String(entry.name).slice(0, 80),
         tool: entry.tool,
         fixed: entry.fixed && typeof entry.fixed === 'object' && !Array.isArray(entry.fixed) ? entry.fixed : {},
+        template: typeof entry.template === 'string' && entry.template.trim() !== '' ? entry.template.slice(0, 20000) : '',
         dynamic: (Array.isArray(entry.dynamic) ? entry.dynamic : [])
           .filter((param) => param && typeof param.name === 'string' && param.name !== '' && types.has(param.type))
           .map((param) => ({
@@ -882,6 +1014,15 @@ const normalizeStore = (raw) => {
       .filter(([name, value]) => typeof name === 'string' && name.startsWith('mcp__') && value && typeof value === 'object' && !Array.isArray(value))
       .slice(-200)
     base.lastArgs = Object.fromEntries(entries)
+  }
+  // 上次结果原文：只留 mcp__* 工具的字符串，单条截断 200000 字符
+  if (raw.lastResults && typeof raw.lastResults === 'object' && !Array.isArray(raw.lastResults)) {
+    base.lastResults = Object.fromEntries(
+      Object.entries(raw.lastResults)
+        .filter(([name, value]) => typeof name === 'string' && name.startsWith('mcp__') && typeof value === 'string')
+        .map(([name, value]) => [name, value.slice(0, 200000)])
+        .slice(-200),
+    )
   }
   if (typeof raw.callTemplate === 'string' && raw.callTemplate.trim() !== '') base.callTemplate = raw.callTemplate
   return base
@@ -1971,7 +2112,7 @@ export async function apply(ctx) {
   }
   // 手动调用一个 MCP 工具，**只返回预览**（不写会话）——由用户确认后再 commit。
   // 工具本身从不进入上下文：这正是「永远不可见、由我发起调用」那一档的用法。
-  const invokeTool = async (sessionId, toolName, rawArgs) => {
+  const invokeTool = async (sessionId, toolName, rawArgs, template) => {
     if (!toolName.startsWith('mcp__')) return { ok: false, error: '只支持调用 MCP 工具（mcp__*）' }
     let session
     try { session = ctx.sessions.get(sessionId) } catch {}
@@ -2004,12 +2145,28 @@ export async function apply(ctx) {
     }
     if (!outcome) return { ok: false, error: '调用没有返回结果' }
     const [, serverName = '', ...rest] = toolName.split('__')
-    const rendered = renderCallTemplate(callTemplate(), {
+    const resultText = contentToText(outcome.content) || (outcome.isError ? '(无输出)' : '(空结果)')
+    // 结果原文缓存：给「AI 生成输出模板」当样本（截断避免 store 膨胀）
+    try {
+      store.lastResults = { ...(store.lastResults || {}), [toolName]: resultText.slice(0, 200000) }
+      persist()
+    } catch {}
+    const fallback = () => renderCallTemplate(callTemplate(), {
       server: serverName,
       tool: rest.join('__'),
       args: JSON.stringify(args, null, 2),
-      result: contentToText(outcome.content) || (outcome.isError ? '(无输出)' : '(空结果)'),
+      result: resultText,
     })
+    let rendered = fallback()
+    // 卡片配了输出模板：按模板渲染（结果是结构化 JSON 时直接当模板上下文）
+    if (typeof template === 'string' && template.trim() !== '') {
+      let parsed = null
+      try { parsed = JSON.parse(resultText) } catch {}
+      const data = parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? { ...parsed, server: serverName, tool: rest.join('__') }
+        : { text: resultText, server: serverName, tool: rest.join('__') }
+      try { rendered = renderTemplate(template, data) } catch { rendered = fallback() }
+    }
     // 预览 = 将要写进会话的原文，避免「看到的和发出去的不一样」
     // 顺手缓存这次参数：下次表单 / 快捷卡片默认回填上次的值
     try {
@@ -2227,6 +2384,7 @@ export async function apply(ctx) {
               tool,
               fixed,
               dynamic,
+              template: typeof input.template === 'string' ? input.template.slice(0, 20000) : '',
             }
             // 同 id 覆盖；同工作区同名视为更新，避免卡片重复堆叠
             store.shortcuts = [
@@ -2241,6 +2399,79 @@ export async function apply(ctx) {
           sendJson(res, describeForSession(sessionId))
           return
         }
+        if (url.pathname === '/mcp-compat/panel/template' && req.method === 'POST') {
+          // 「AI 生成输出模板」：拿该工具最近一次结果当样本，让当前会话的模型写一个
+          // Mustache 模板（模板会含循环 / 条件 / 深层字段，手写太痛）。
+          const a = await readBody(req)
+          const sessionId = String(a.sessionId || '').trim()
+          const toolName = String(a.tool || '').trim()
+          if (!sessionId || !toolName) {
+            sendJson(res, { ok: false, error: '缺少 sessionId / tool' }, 400)
+            return
+          }
+          const sample = String(a.sample || (store.lastResults && store.lastResults[toolName]) || '')
+          if (sample.trim() === '') {
+            sendJson(res, { ok: false, error: '还没有该工具的调用结果：先「执行」一次，让结果落库再生成模板' }, 400)
+            return
+          }
+          let agent = null
+          try {
+            agent = ctx.agents.list().find((candidate) => candidate && candidate.session && candidate.session.id === sessionId) || null
+          } catch {}
+          let selection = null
+          try {
+            selection = agent && typeof agent.modelSelection === 'function' ? agent.modelSelection() : null
+          } catch {}
+          const provider = selection && selection.provider
+          const model = selection && selection.model
+          if (!provider || !model) {
+            sendJson(res, { ok: false, error: '拿不到当前会话的模型路由（agent 未激活？）' }, 400)
+            return
+          }
+          const system = [
+            '你是一个 Mustache 模板生成器。',
+            '输入是一个 MCP 工具最近一次调用的 JSON 结果，请输出一个**只含模板本身**的中文 Mustache 模板（不要解释、不要代码围栏）。',
+            '语法约束（必须严格遵守，只支持这些）：',
+            '- 变量：{{path.to.field}}（点号取深层字段；数组用 {{#each path}}…{{/each}}）',
+            '- 循环：{{#each items}} … {{/each}}，循环内用 {{.}} 表示当前项，{{@index}} 表示下标（从 0 开始）',
+            '- 条件：{{#if field}} … {{else}} … {{/if}}；取反：{{^if field}} … {{/if}}',
+            '- 注释：{{! … }}',
+            '- 不要使用 <script>、不要输出 HTML 标签、不要 eval 类表达式',
+            '输出要求：面向人阅读的紧凑文本；保留关键字段（id、标题、状态、时间、负责人等），省略冗长的代码/描述字段；',
+            '列表用 「- 」开头，字段之间用换行分隔；空数组/空值要有可读的兜底（例如「（无）」）。',
+          ].join('\n')
+          const prompt = `工具名：${toolName}\n\n最近一次调用结果（JSON 文本）：\n\n\`\`\`json\n${sample.slice(0, 30000)}\n\`\`\`\n\n请输出 Mustache 模板。`
+          let text = ''
+          try {
+            const stream = ctx.llm.stream({
+              provider,
+              model,
+              system,
+              messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
+              maxTokens: 4000,
+              purpose: 'mcp-template',
+            })
+            for await (const chunk of stream) {
+              if (chunk && chunk.type === 'text-delta' && typeof chunk.text === 'string') text += chunk.text
+              if (chunk && chunk.type === 'finish' && chunk.reason && chunk.reason.kind === 'error') {
+                sendJson(res, { ok: false, error: '模型生成失败: ' + String((chunk.reason.error && chunk.reason.error.message) || chunk.reason.error) }, 502)
+                return
+              }
+            }
+          } catch (e) {
+            sendJson(res, { ok: false, error: '生成失败: ' + String((e && e.message) || e) }, 500)
+            return
+          }
+          const fenced = text.match(/```(?:handlebars|mustache|hbs|text)?\s*([\s\S]*?)```/i)
+          const template = String(fenced ? fenced[1] : text).trim()
+          if (template === '') {
+            sendJson(res, { ok: false, error: '模型没有返回模板' }, 502)
+            return
+          }
+          log('已生成输出模板:', toolName, `${template.length} 字符`)
+          sendJson(res, { ok: true, template })
+          return
+        }
         if (url.pathname === '/mcp-compat/panel/call' && req.method === 'POST') {
           // 手动调用：执行该工具，把结果按模板作为一条 user 消息写进当前会话
           const a = await readBody(req)
@@ -2250,7 +2481,7 @@ export async function apply(ctx) {
             sendJson(res, { ok: false, error: '缺少 sessionId / name' }, 400)
             return
           }
-          sendJson(res, await invokeTool(sessionId, name, a.args))
+          sendJson(res, await invokeTool(sessionId, name, a.args, a.template))
           return
         }
         if (url.pathname === '/mcp-compat/panel/commit' && req.method === 'POST') {
@@ -2312,6 +2543,14 @@ export async function apply(ctx) {
     },
   })
 }
+
+
+
+
+
+
+
+
 
 
 

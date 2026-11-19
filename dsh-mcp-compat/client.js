@@ -414,6 +414,11 @@ window.__ModuleLoader__.load({
 					cardMax: "最大",
 					cardInteger: "整数",
 					cardExists: "已有同名卡片，保存会覆盖",
+					templateTitle: "输出模板",
+					templateHint: "Mustache 语法：{{path}} / {{#each 列表}}…{{/each}} / {{#if 字段}}…{{else}}…{{/if}}；留空则用默认模板",
+					generateTemplate: "AI 生成",
+					saveTemplate: "保存模板",
+					templateGenerated: "已生成，可直接编辑后再保存",
 					injectServer: "全部注入",
 					clearServer: "全部取消",
 				},
@@ -479,6 +484,11 @@ window.__ModuleLoader__.load({
 					cardMax: "max",
 					cardInteger: "integer",
 					cardExists: "A card with this name exists; saving overwrites it",
+					templateTitle: "Output template",
+					templateHint: "Mustache: {{path}} / {{#each list}}…{{/each}} / {{#if field}}…{{else}}…{{/if}}; empty = default template",
+					generateTemplate: "Generate with AI",
+					saveTemplate: "Save template",
+					templateGenerated: "Generated — edit then save",
 					injectServer: "Inject all",
 					clearServer: "Clear all",
 				},
@@ -906,6 +916,9 @@ window.__ModuleLoader__.load({
 				const [cardValues, setCardValues] = react.useState({});
 				const [cardPreview, setCardPreview] = react.useState(null);
 				const [draft, setDraft] = react.useState(null);
+				// 输出模板编辑（卡片结果格式化；可由 AI 生成）
+				const [cardTemplate, setCardTemplate] = react.useState("");
+				const [templateBusy, setTemplateBusy] = react.useState(false);
 
 				const load = () => {
 					if (!sessionId) {
@@ -1075,6 +1088,7 @@ window.__ModuleLoader__.load({
 							: param.type === "boolean" ? false : "";
 					}
 					setCardValues(next);
+					setCardTemplate(card.template || "");
 				};
 				const cardArgs = (card) => {
 					const args = { ...(card.fixed || {}) };
@@ -1100,7 +1114,7 @@ window.__ModuleLoader__.load({
 					requestJson("/mcp-compat/panel/call", {
 						method: "POST",
 						headers: { "content-type": "application/json" },
-						body: JSON.stringify({ sessionId, name: card.tool, args: JSON.stringify(cardArgs(card)) }),
+						body: JSON.stringify({ sessionId, name: card.tool, args: JSON.stringify(cardArgs(card)), template: card.template || "" }),
 					})
 						.then((payload) => {
 							setBusy(false);
@@ -1178,6 +1192,39 @@ window.__ModuleLoader__.load({
 						return { ...prev, rows };
 					});
 				};
+				/** 让 AI 根据上次结果写模板（模板含循环 / 条件 / 深层字段，手写太痛）。 */
+				const genTemplate = (card) => {
+					setTemplateBusy(true);
+					requestJson("/mcp-compat/panel/template", {
+						method: "POST",
+						headers: { "content-type": "application/json" },
+						body: JSON.stringify({ sessionId, tool: card.tool }),
+					})
+						.then((payload) => {
+							setTemplateBusy(false);
+							if (payload && payload.ok) {
+								setCardTemplate(String(payload.template || ""));
+								setStatus(t("templateGenerated"));
+							} else setStatus(errorText(payload && payload.error));
+						})
+						.catch((e) => { setTemplateBusy(false); setStatus(String((e && e.message) || t("saveFailed"))); });
+				};
+				const saveTemplate = (card) => {
+					setTemplateBusy(true);
+					requestJson("/mcp-compat/shortcuts", {
+						method: "POST",
+						headers: { "content-type": "application/json" },
+						body: JSON.stringify({ sessionId, op: "save", shortcut: { ...card, template: cardTemplate } }),
+					})
+						.then((payload) => {
+							setTemplateBusy(false);
+							if (payload && payload.ok) {
+								setCards(payload.shortcuts || []);
+								setStatus(t("cardSaved"));
+							} else setStatus(errorText(payload && payload.error));
+						})
+						.catch((e) => { setTemplateBusy(false); setStatus(String((e && e.message) || t("saveFailed"))); });
+				};
 				const saveDraft = () => {
 					if (!draft) return;
 					const fixed = {};
@@ -1231,8 +1278,23 @@ window.__ModuleLoader__.load({
 						.then((payload) => {
 							setBusy(false);
 							if (payload && payload.ok) {
-								setCards(payload.shortcuts || []);
+								const list = payload.shortcuts || [];
+								setCards(list);
+								const wantedName = draft.name.trim() || toolLabel(draft.tool.name);
+								const created = list.find((item) => item.name === wantedName && item.tool === draft.tool.name) || null;
 								setDraft(null);
+								// 建卡后直接进入下一步：编辑 / 生成输出模板
+								if (created) {
+									setActiveCardId(created.id);
+									setCardTemplate(created.template || "");
+									const seeded = {};
+									for (const param of created.dynamic || []) {
+										seeded[param.name] = param.default !== undefined && param.default !== null
+											? param.default
+											: param.type === "boolean" ? false : "";
+									}
+									setCardValues(seeded);
+								}
 								setStatus(t("cardSaved"));
 							} else setDraft((prev) => (prev ? { ...prev, error: errorText(payload && payload.error) } : prev));
 						})
@@ -1339,6 +1401,30 @@ window.__ModuleLoader__.load({
 					(card.dynamic || []).length === 0
 						? react.createElement("div", { className: "mcp-field-hint" }, t("cardNoDynamic"))
 						: (card.dynamic || []).map(renderCardParam),
+					// 输出模板：结果按模板格式化；模板可由 AI 依据上次结果生成
+					react.createElement("div", { className: "mcp-field" },
+						react.createElement("div", { className: "mcp-field-label" }, t("templateTitle")),
+						react.createElement("div", { className: "mcp-field-hint" }, t("templateHint")),
+						react.createElement("textarea", {
+							className: "mcp-panel-args",
+							value: cardTemplate,
+							spellCheck: false,
+							rows: 5,
+							onChange: (event) => setCardTemplate(event.target.value),
+						}),
+						react.createElement("div", { className: "mcp-panel-actions" },
+							react.createElement("button", {
+								className: "mcp-gate-mini",
+								onClick: () => genTemplate(card),
+								disabled: busy || templateBusy,
+							}, templateBusy ? t("calling") : t("generateTemplate")),
+							react.createElement("button", {
+								className: "mcp-gate-mini",
+								onClick: () => saveTemplate(card),
+								disabled: busy || templateBusy,
+							}, t("saveTemplate")),
+						),
+					),
 					cardPreview
 						? react.createElement("div", { className: "mcp-field" },
 							react.createElement("div", { className: "mcp-field-label" }, t("previewTitle")),
@@ -1617,6 +1703,9 @@ window.__ModuleLoader__.load({
 		return module.exports;
 	}
 });
+
+
+
 
 
 
