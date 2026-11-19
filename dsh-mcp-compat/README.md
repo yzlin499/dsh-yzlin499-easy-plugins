@@ -136,6 +136,9 @@ dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/ds
 一句话总结三档语义：**工作区里勾选的 = 全程可见（Agent 用）；面板里「注入」的 = 本会话
 临时可见；面板里「调用」的 = 永远不可见，只把调用结果写进对话。**
 
+每个服务器卡片的头部还有一个 **「全部注入 / 全部取消」** 开关：一下把该服务器的所有
+MCP 工具（比如 `yzl-dashboard` 的全部工具）注入当前会话，不用一个个点。
+
 ### 快捷卡片（固定参数 + 动态参数）
 
 有些工具你天天要用、但每次只改一两个参数。在面板里对着工具点「建卡」：
@@ -297,3 +300,4 @@ Windows 宿主机上跑的 MCP 服务（例如 UE 的 MCP、JetBrains IDE 的 MC
 ## License
 
 MIT
+

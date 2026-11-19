@@ -340,6 +340,9 @@ or type `/mcp-reconnect unreal` directly in the input box.
 MIT
 
 
+Every server card header also has an **"Inject all / Clear all"** switch: one click injects
+every MCP tool of that server (e.g. all of `yzl-dashboard`) into the current session.
+
 ### Shortcut cards (fixed + dynamic arguments)
 
 Some tools you call daily but change one or two arguments each time. Click "New card" on a
@@ -373,4 +376,5 @@ node scripts/repair-session-ids.cjs
 It scans `<DSH_HOME>/sessions/**/*.jsonl.zstd` and only patches `user/message` events
 that lack an `id` (every other byte is preserved), then drops the matching projection
 cache. Restart DSH afterwards.
+
 

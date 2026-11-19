@@ -106,6 +106,8 @@ window.__ModuleLoader__.load({
 			".mcp-panel-body{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;padding:8px 12px 12px;display:flex;flex-direction:column;gap:10px}",
 			".mcp-panel-server{flex:none;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;overflow:hidden}",
 			".mcp-panel-server-head{display:flex;align-items:center;gap:6px;padding:6px 10px;background:var(--dsw-alias-bg-module-platform);font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+			".mcp-server-toggle{margin-left:auto;font-weight:400}",
+			".mcp-server-toggle.is-on{color:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary)}",
 			".mcp-panel-tool{padding:7px 10px;border-top:1px solid var(--dsw-alias-border-l2);display:flex;flex-direction:column;gap:4px}",
 			".mcp-panel-tool-name{font-size:11.5px;word-break:break-all}",
 			".mcp-panel-tool-desc{font-size:10.5px;color:var(--dsw-alias-label-tertiary);line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}",
@@ -412,6 +414,8 @@ window.__ModuleLoader__.load({
 					cardMax: "最大",
 					cardInteger: "整数",
 					cardExists: "已有同名卡片，保存会覆盖",
+					injectServer: "全部注入",
+					clearServer: "全部取消",
 				},
 				en: {
 					menuLabel: "MCP tools…",
@@ -475,6 +479,8 @@ window.__ModuleLoader__.load({
 					cardMax: "max",
 					cardInteger: "integer",
 					cardExists: "A card with this name exists; saving overwrites it",
+					injectServer: "Inject all",
+					clearServer: "Clear all",
 				},
 			};
 			const localeOf = (() => {
@@ -945,6 +951,18 @@ window.__ModuleLoader__.load({
 							setBusy(false);
 							setStatus(String((e && e.message) || t("saveFailed")));
 						});
+				};
+				/** 整张服务器卡片一键注入 / 取消（例如把 yzl-dashboard 的 MCP 全部注入）。 */
+				const toggleServer = (server) => {
+					const names = (server.tools || []).map((tool) => tool.name);
+					if (names.length === 0) return;
+					const next = new Set(currentInjected());
+					const allIn = names.every((name) => next.has(name));
+					for (const name of names) {
+						if (allIn) next.delete(name);
+						else next.add(name);
+					}
+					applyInject([...next]);
 				};
 				const toggleInject = (tool) => {
 					const next = new Set(currentInjected());
@@ -1467,6 +1485,11 @@ window.__ModuleLoader__.load({
 												react.createElement("span", { className: "mcp-gate-server-name" }, server.name),
 												react.createElement("span", { className: "mcp-gate-tag" + (server.level === "project" ? " is-project" : "") },
 													server.level === "project" ? t("project") : t("user")),
+												react.createElement("button", {
+													className: "mcp-gate-mini mcp-server-toggle" + (server.tools.every((tool) => tool.injected) ? " is-on" : ""),
+													onClick: () => toggleServer(server),
+													disabled: busy || server.tools.length === 0,
+												}, server.tools.every((tool) => tool.injected) ? t("clearServer") : t("injectServer")),
 											),
 											server.tools.map((tool) => react.createElement("div", { className: "mcp-panel-tool", key: tool.name },
 												react.createElement("div", { className: "mcp-panel-tool-name" }, tool.name),
@@ -1594,6 +1617,7 @@ window.__ModuleLoader__.load({
 		return module.exports;
 	}
 });
+
 
 
 
