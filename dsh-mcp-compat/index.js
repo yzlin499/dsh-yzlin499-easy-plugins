@@ -992,6 +992,8 @@ const normalizeStore = (raw) => {
         tool: entry.tool,
         fixed: entry.fixed && typeof entry.fixed === 'object' && !Array.isArray(entry.fixed) ? entry.fixed : {},
         template: typeof entry.template === 'string' && entry.template.trim() !== '' ? entry.template.slice(0, 20000) : '',
+        // 输出方式：auto = JSON 走模板、非 JSON 只发结果；template = 总是模板；result = 只发结果
+        mode: ['auto', 'template', 'result'].includes(entry.mode) ? entry.mode : 'auto',
         dynamic: (Array.isArray(entry.dynamic) ? entry.dynamic : [])
           .filter((param) => param && typeof param.name === 'string' && param.name !== '' && types.has(param.type))
           .map((param) => ({
@@ -2112,7 +2114,7 @@ export async function apply(ctx) {
   }
   // 手动调用一个 MCP 工具，**只返回预览**（不写会话）——由用户确认后再 commit。
   // 工具本身从不进入上下文：这正是「永远不可见、由我发起调用」那一档的用法。
-  const invokeTool = async (sessionId, toolName, rawArgs, template) => {
+  const invokeTool = async (sessionId, toolName, rawArgs, template, mode) => {
     if (!toolName.startsWith('mcp__')) return { ok: false, error: '只支持调用 MCP 工具（mcp__*）' }
     let session
     try { session = ctx.sessions.get(sessionId) } catch {}
@@ -2158,14 +2160,23 @@ export async function apply(ctx) {
       result: resultText,
     })
     let rendered = fallback()
-    // 卡片配了输出模板：按模板渲染（结果是结构化 JSON 时直接当模板上下文）
-    if (typeof template === 'string' && template.trim() !== '') {
-      let parsed = null
-      try { parsed = JSON.parse(resultText) } catch {}
-      const data = parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
-        ? { ...parsed, server: serverName, tool: rest.join('__') }
-        : { text: resultText, server: serverName, tool: rest.join('__') }
-      try { rendered = renderTemplate(template, data) } catch { rendered = fallback() }
+    let parsed = null
+    try { parsed = JSON.parse(resultText) } catch {}
+    const structured = parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
+    const outputMode = ['auto', 'template', 'result'].includes(mode) ? mode : 'auto'
+    // result 模式：只发结果原文（非 JSON 结果最实用，不带参数噪声）
+    if (outputMode === 'result') {
+      rendered = resultText
+    } else if (typeof template === 'string' && template.trim() !== '') {
+      // auto：非结构化结果直接发原文——模板只对 JSON 有意义
+      if (outputMode === 'auto' && !structured) {
+        rendered = resultText
+      } else {
+        const data = structured
+          ? { ...parsed, server: serverName, tool: rest.join('__') }
+          : { text: resultText, server: serverName, tool: rest.join('__') }
+        try { rendered = renderTemplate(template, data) } catch { rendered = fallback() }
+      }
     }
     // 预览 = 将要写进会话的原文，避免「看到的和发出去的不一样」
     // 顺手缓存这次参数：下次表单 / 快捷卡片默认回填上次的值
@@ -2372,10 +2383,7 @@ export async function apply(ctx) {
                 }
               })
             const fixed = input.fixed && typeof input.fixed === 'object' && !Array.isArray(input.fixed) ? input.fixed : {}
-            if (dynamic.length === 0 && Object.keys(fixed).length === 0) {
-              sendJson(res, { ok: false, error: '卡片至少需要固定参数或动态参数' }, 400)
-              return
-            }
+            // 无参数的工具也允许建卡（直接执行即可，不强制固定/动态参数）
             const id = String(input.id || '').trim() || `sc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
             const next = {
               id,
@@ -2385,6 +2393,8 @@ export async function apply(ctx) {
               fixed,
               dynamic,
               template: typeof input.template === 'string' ? input.template.slice(0, 20000) : '',
+              // 输出方式：auto = JSON 走模板、非 JSON 只发结果；template = 总是模板；result = 只发结果
+              mode: ['auto', 'template', 'result'].includes(input.mode) ? input.mode : 'auto',
             }
             // 同 id 覆盖；同工作区同名视为更新，避免卡片重复堆叠
             store.shortcuts = [
@@ -2481,7 +2491,7 @@ export async function apply(ctx) {
             sendJson(res, { ok: false, error: '缺少 sessionId / name' }, 400)
             return
           }
-          sendJson(res, await invokeTool(sessionId, name, a.args, a.template))
+          sendJson(res, await invokeTool(sessionId, name, a.args, a.template, a.mode))
           return
         }
         if (url.pathname === '/mcp-compat/panel/commit' && req.method === 'POST') {
@@ -2543,6 +2553,7 @@ export async function apply(ctx) {
     },
   })
 }
+
 
 
 

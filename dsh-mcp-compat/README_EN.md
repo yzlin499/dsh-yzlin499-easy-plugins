@@ -379,6 +379,16 @@ Supported syntax (data-only, never evaluated):
 
 An empty template (or a render failure) falls back to the default `【MCP 手动调用】…` text.
 
+Each card also has an **output mode** (default "Auto"):
+
+| Mode | Behaviour |
+|---|---|
+| Auto | JSON result → template; **non-JSON → the raw result only** (e.g. `get_wps_content`'s single "saved to: …" line) |
+| Always template | Always render through the template (`{{text}}` gives the raw text for non-JSON) |
+| Result only | Ignore arguments and template; write the raw result into the chat |
+
+> Tools without arguments (e.g. `list_projects`) can be pinned too — just run the card.
+
 ### Troubleshooting: sessions broken by 0.12.0 ~ 0.12.4
 
 Those versions implemented "Send to session" as `session.append('user/message', …)`
@@ -398,6 +408,7 @@ node scripts/repair-session-ids.cjs
 It scans `<DSH_HOME>/sessions/**/*.jsonl.zstd` and only patches `user/message` events
 that lack an `id` (every other byte is preserved), then drops the matching projection
 cache. Restart DSH afterwards.
+
 
 
 

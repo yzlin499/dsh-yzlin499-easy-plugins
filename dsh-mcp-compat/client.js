@@ -419,6 +419,10 @@ window.__ModuleLoader__.load({
 					generateTemplate: "AI 生成",
 					saveTemplate: "保存模板",
 					templateGenerated: "已生成，可直接编辑后再保存",
+					outputMode: "输出方式",
+					modeAuto: "自动（JSON 用模板 / 其它只发结果）",
+					modeTemplate: "总是用模板",
+					modeResult: "只发结果（忽略参数与模板）",
 					injectServer: "全部注入",
 					clearServer: "全部取消",
 				},
@@ -489,6 +493,10 @@ window.__ModuleLoader__.load({
 					generateTemplate: "Generate with AI",
 					saveTemplate: "Save template",
 					templateGenerated: "Generated — edit then save",
+					outputMode: "Output",
+					modeAuto: "Auto (template for JSON, raw result otherwise)",
+					modeTemplate: "Always template",
+					modeResult: "Result only (ignore args and template)",
 					injectServer: "Inject all",
 					clearServer: "Clear all",
 				},
@@ -1114,7 +1122,7 @@ window.__ModuleLoader__.load({
 					requestJson("/mcp-compat/panel/call", {
 						method: "POST",
 						headers: { "content-type": "application/json" },
-						body: JSON.stringify({ sessionId, name: card.tool, args: JSON.stringify(cardArgs(card)), template: card.template || "" }),
+						body: JSON.stringify({ sessionId, name: card.tool, args: JSON.stringify(cardArgs(card)), template: card.template || "", mode: card.mode || "auto" }),
 					})
 						.then((payload) => {
 							setBusy(false);
@@ -1225,6 +1233,19 @@ window.__ModuleLoader__.load({
 						})
 						.catch((e) => { setTemplateBusy(false); setStatus(String((e && e.message) || t("saveFailed"))); });
 				};
+				/** 切换卡片的输出方式（auto / template / result），立即落库。 */
+				const saveCardMode = (card, mode) => {
+					requestJson("/mcp-compat/shortcuts", {
+						method: "POST",
+						headers: { "content-type": "application/json" },
+						body: JSON.stringify({ sessionId, op: "save", shortcut: { ...card, mode } }),
+					})
+						.then((payload) => {
+							if (payload && payload.ok) setCards(payload.shortcuts || []);
+							else setStatus(errorText(payload && payload.error));
+						})
+						.catch((e) => setStatus(String((e && e.message) || t("saveFailed"))));
+				};
 				const saveDraft = () => {
 					if (!draft) return;
 					const fixed = {};
@@ -1256,10 +1277,7 @@ window.__ModuleLoader__.load({
 							default: text === "" ? undefined : text,
 						});
 					}
-					if (Object.keys(fixed).length === 0 && dynamic.length === 0) {
-						setDraft((prev) => (prev ? { ...prev, error: t("invalidArgs") + t("cardNoDynamic") } : prev));
-						return;
-					}
+					// 无参数的工具也允许建卡（直接执行即可）
 					setBusy(true);
 					requestJson("/mcp-compat/shortcuts", {
 						method: "POST",
@@ -1401,6 +1419,19 @@ window.__ModuleLoader__.load({
 					(card.dynamic || []).length === 0
 						? react.createElement("div", { className: "mcp-field-hint" }, t("cardNoDynamic"))
 						: (card.dynamic || []).map(renderCardParam),
+					// 输出方式：自动 / 总是模板 / 只发结果
+					react.createElement("div", { className: "mcp-field" },
+						react.createElement("div", { className: "mcp-field-label" }, t("outputMode")),
+						react.createElement("select", {
+							className: "mcp-select",
+							value: card.mode || "auto",
+							onChange: (event) => saveCardMode(card, event.target.value),
+						},
+							react.createElement("option", { value: "auto" }, t("modeAuto")),
+							react.createElement("option", { value: "template" }, t("modeTemplate")),
+							react.createElement("option", { value: "result" }, t("modeResult")),
+						),
+					),
 					// 输出模板：结果按模板格式化；模板可由 AI 依据上次结果生成
 					react.createElement("div", { className: "mcp-field" },
 						react.createElement("div", { className: "mcp-field-label" }, t("templateTitle")),
@@ -1703,6 +1734,8 @@ window.__ModuleLoader__.load({
 		return module.exports;
 	}
 });
+
+
 
 
 
