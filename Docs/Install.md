@@ -15,6 +15,7 @@
 | `dsh-win-notify` | Windows 原生吐司通知（权限申请 / 提问 / 运行结束） | `dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-win-notify"` |
 | `dsh-recent-tps` | 会话统计面板加一行「最近 30 秒速度」（官方读数与样式原样保留） | `dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-recent-tps"` |
 | `dsh-ark-quota-guard` | 火山方舟额度守护：撞 429 后挂起，重置时刻 + 10 秒自动续跑 | `dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-ark-quota-guard"` |
+| `dsh-trajectory-edit` | 轨迹面板右键：编辑 / 自动清理某条记录（帧级日志手术，备份 + 复读校验 + 回滚） | `dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/dsh-trajectory-edit"` |
 
 > 各插件的具体用法见插件自身的 `README.md` / `README_EN.md`，不在这里重复。
 > 已下线的插件（工作区自动审批、Everything 文件搜索、插件管理器）见根 [README.md](../README.md)「已下线」。
@@ -41,6 +42,7 @@ dsh plugin --profile web remove dsh-ctx-menu
 dsh plugin --profile web remove dsh-win-notify
 dsh plugin --profile web remove dsh-recent-tps
 dsh plugin --profile web remove dsh-ark-quota-guard
+dsh plugin --profile web remove dsh-trajectory-edit
 ```
 
 ## 本地联调（改插件代码时）

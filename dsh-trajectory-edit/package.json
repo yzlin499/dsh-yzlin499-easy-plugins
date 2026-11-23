@@ -1,0 +1,48 @@
+{
+  "name": "dsh-trajectory-edit",
+  "version": "0.1.0",
+  "description": "轨迹面板右键：编辑 / 自动清理某条会话记录（帧级日志手术，带备份与回滚）。",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "lib",
+    "scripts",
+    "test",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "README.md",
+    "README_EN.md"
+  ],
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\"",
+    "check": "node scripts/check.mjs"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "trajectory",
+    "session-log",
+    "cleanup"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "slots",
+        "locale",
+        "contextMenus"
+      ],
+      "platform": "web"
+    }
+  },
+  "license": "MIT"
+}

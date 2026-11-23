@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Trajectory edit & cleanup",
+    "description": "Right-click any record in the trajectory panel to edit its text or fold degenerate repetition automatically. Rewrites are frame-scoped and keep the event structure intact; every write is backed up, re-read and verified, and rolls back on failure."
+  }
+}
