@@ -21,13 +21,24 @@ Or add the package to the profile's bundle list / insert a `name: 'dsh-trajector
 ## Usage
 
 1. Open a session and switch to the **Trajectory** tab.
-2. **Right-click** any record.
+2. Any of three entry points:
+   - **Right-click** any record;
+   - or focus a record and press **Shift+F10** (or the Menu key);
+   - or **click** a record — an "Edit record" button appears at the bottom right.
 3. Two entries:
    - **Edit** — opens a dialog with the record's text (assistant reasoning/message, user message); saving writes the log.
    - **Clean up** — submenu with **This record** (default) or **Entire session**; shows a preview first, then writes on confirm.
 4. After a successful write the dialog shows the backup path and the reminder: **restart DSH (or reopen the session) for it to take effect**.
 
 Tool records (`tool/call` / `tool/result`) are not editable; collapsed-summary rows and request-only rows are skipped.
+
+### Troubleshooting
+
+If right-click does nothing, run `window.__TRAJECTORY_EDIT__` in the console:
+
+- empty / `undefined` → the client half did not load (plugin disabled or DSH not restarted);
+- `phase: 'no-contextMenus'` → the official context-menu service is missing;
+- `skips` lists why each gesture was skipped (`no-row` / `timeline` / `no-session-id` / `summary-or-boundary` …).
 
 ## Cleaning rules
 

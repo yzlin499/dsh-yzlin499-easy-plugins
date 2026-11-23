@@ -1,6 +1,6 @@
 {
   "name": "dsh-trajectory-edit",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "轨迹面板右键：编辑 / 自动清理某条会话记录（帧级日志手术，带备份与回滚）。",
   "type": "module",
   "main": "index.js",

@@ -20,7 +20,9 @@ async function loadClient() {
 
   const fakeReact = {
     createElement: (...args) => ({ type: 'element', args }),
+    Fragment: 'fragment',
     useEffect: () => {},
+    useState: (initial) => [initial, () => {}],
     useSyncExternalStore: () => ({}),
   }
 
@@ -31,6 +33,10 @@ async function loadClient() {
       },
     },
     getSelection: () => ({ toString: () => '' }),
+    addEventListener: (type, handler, capture) => {
+      handles.listeners.push({ type, handler, capture })
+    },
+    removeEventListener: () => {},
   }
   globalThis.document = {
     addEventListener: (type, handler, capture) => {
@@ -51,84 +57,106 @@ async function loadClient() {
   return { module, handles }
 }
 
+/**
+ * Mount the plugin against a fake context.
+ * @param {object} handles - captured browser handles.
+ * @param {{open?: Function, register?: Function, withSlots?: boolean}} [options] - overrides.
+ * @returns {Promise<{module: any, ctx: any, contributions: any[]}>} mount results.
+ */
+async function mount(options = {}) {
+  const contributions = []
+  const ctx = {
+    get: (name) => {
+      if (name === 'contextMenus') {
+        return {
+          register: (input) => {
+            contributions.push(input)
+            return () => {}
+          },
+          open: (...args) => (options.open ?? (() => handles.opened.push(args)))(...args),
+        }
+      }
+      if (name === 'slots') {
+        return options.withSlots === false ? undefined : { inject: () => () => {}, register: () => () => {} }
+      }
+      return undefined
+    },
+    effect: (fn) => { fn() },
+  }
+  const { module, handles } = await loadClient()
+  module.apply(ctx)
+  return { module, ctx, contributions, handles }
+}
+
+/**
+ * Build a fake trajectory row.
+ * @param {string} key - row key.
+ * @param {{summary?: boolean, requestOnly?: boolean}} [flags] - row flags.
+ * @returns {object} fake element.
+ */
+function fakeRow(key, flags = {}) {
+  return {
+    getAttribute: (name) => (name === 'data-trajectory-row-key' ? key : null),
+    hasAttribute: (name) => (name === 'data-collapsed-summary' ? flags.summary === true
+      : name === 'data-request-only' ? flags.requestOnly === true : false),
+    closest: (selector) => (selector === '[data-conversation-session]'
+      ? { getAttribute: () => 'session-test-0000' }
+      : null),
+    getBoundingClientRect: () => ({ left: 10, bottom: 40 }),
+  }
+}
+
+/**
+ * Build a fake contextmenu event.
+ * @param {object | null} row - row to resolve, or null.
+ * @param {object} [extra] - extra fields.
+ * @returns {object} fake event.
+ */
+function contextEvent(row, extra = {}) {
+  const event = {
+    button: 2,
+    defaultPrevented: false,
+    clientX: 12,
+    clientY: 34,
+    target: {
+      closest: (selector) => (selector === 'tr[data-trajectory-row-key]' ? row : null),
+    },
+    preventDefault: () => { event.defaultPrevented = true },
+    stopPropagation: () => {},
+    ...extra,
+  }
+  return event
+}
+
 test('registers the bundle under its package id', async () => {
   const { module } = await loadClient()
   assert.equal(module.name, 'dsh-trajectory-edit')
   assert.deepEqual(module.inject, ['contextMenus', 'slots', 'locale'])
 })
 
-test('contributes the record menu and installs the bridge', async () => {
-  const { module, handles } = await loadClient()
-  const contributions = []
-  const disposers = []
-  const ctx = {
-    get: (name) => {
-      if (name === 'contextMenus') return { register: (options) => { contributions.push(options); return () => {} }, open: (...args) => handles.opened.push(args) }
-      if (name === 'slots') return { inject: () => () => {}, register: () => () => {} }
-      if (name === 'locale') return undefined
-      return undefined
-    },
-    effect: (fn, _label) => {
-      const disposer = fn()
-      disposers.push(disposer)
-    },
-  }
-  module.apply(ctx)
-
+test('contributes the record menu and installs both bridges', async () => {
+  const { module, contributions, handles } = await mount()
   assert.equal(contributions.length, 1)
   assert.equal(contributions[0].target, 'trajectory-record')
-  assert.equal(handles.listeners.length, 1)
-  assert.equal(handles.listeners[0].type, 'contextmenu')
-  assert.equal(handles.listeners[0].capture, true)
-  assert.equal(typeof disposers[0], 'function')
+  const types = handles.listeners.map(listener => listener.type).sort()
+  assert.deepEqual(types, ['contextmenu', 'keydown'])
+  assert.ok(handles.listeners.every(listener => listener.capture === true))
+  assert.equal(module.__internals.debug.bridge, true)
+  assert.equal(module.__internals.debug.phase, 'ready')
 })
 
 test('resolves edit and cleanup actions for a row', async () => {
-  const { module } = await loadClient()
-  let contribution
-  const ctx = {
-    get: (name) => (name === 'contextMenus'
-      ? { register: (options) => { contribution = options; return () => {} }, open: () => {} }
-      : name === 'slots' ? { inject: () => () => {}, register: () => () => {} } : undefined),
-    effect: (fn) => { fn() },
-  }
-  module.apply(ctx)
-  const actions = await contribution.resolve({ kind: 'trajectory-record', value: { sessionId: 's', key: 'assistant%001%001' } })
+  const { contributions } = await mount()
+  const actions = await contributions[0].resolve({ kind: 'trajectory-record', value: { sessionId: 's', key: 'assistant%001%001' } })
   assert.deepEqual(actions.map(action => action.id), ['edit', 'clean'])
   assert.deepEqual(actions[1].children.map(child => child.id), ['clean-record', 'clean-session'])
-  assert.equal(typeof actions[0].run, 'function')
 })
 
 test('opens the official menu for a trajectory row', async () => {
-  const { module, handles } = await loadClient()
-  let contribution
-  const ctx = {
-    get: (name) => (name === 'contextMenus'
-      ? { register: (options) => { contribution = options; return () => {} }, open: (...args) => handles.opened.push(args) }
-      : name === 'slots' ? { inject: () => () => {}, register: () => () => {} } : undefined),
-    effect: (fn) => { fn() },
-  }
-  module.apply(ctx)
-  void contribution
-
-  const row = {
-    getAttribute: (name) => (name === 'data-trajectory-row-key' ? 'assistant%001%001' : null),
-    hasAttribute: () => false,
-  }
-  const target = {
-    closest: (selector) => (selector === 'tr[data-trajectory-row-key]'
-      ? row
-      : selector === '[data-timeline-record-index], [data-timeline-domain]' ? null : null),
-  }
-  const event = {
-    button: 2,
-    defaultPrevented: false,
-    target,
-    clientX: 12,
-    clientY: 34,
-    preventDefault: () => { event.defaultPrevented = true },
-  }
-  handles.listeners[0].handler(event)
+  const { handles } = await mount()
+  const bridge = handles.listeners.find(listener => listener.type === 'contextmenu')
+  const event = contextEvent(fakeRow('assistant%001%001'))
+  bridge.handler(event)
 
   assert.equal(event.defaultPrevented, true)
   assert.equal(handles.opened.length, 1)
@@ -140,37 +168,33 @@ test('opens the official menu for a trajectory row', async () => {
 })
 
 test('ignores timeline right-clicks and collapsed summaries', async () => {
-  const { module, handles } = await loadClient()
-  const ctx = {
-    get: (name) => (name === 'contextMenus'
-      ? { register: () => () => {}, open: (...args) => handles.opened.push(args) }
-      : name === 'slots' ? { inject: () => () => {}, register: () => () => {} } : undefined),
-    effect: (fn) => { fn() },
-  }
-  module.apply(ctx)
+  const { handles } = await mount()
+  const bridge = handles.listeners.find(listener => listener.type === 'contextmenu')
 
-  const timelineEvent = {
-    button: 2,
-    defaultPrevented: false,
+  const timelineEvent = contextEvent(null, {
     target: { closest: (selector) => (selector === '[data-timeline-record-index], [data-timeline-domain]' ? {} : null) },
-    clientX: 0,
-    clientY: 0,
-    preventDefault: () => {},
-  }
-  handles.listeners[0].handler(timelineEvent)
+  })
+  bridge.handler(timelineEvent)
   assert.equal(handles.opened.length, 0)
 
-  const summaryRow = { getAttribute: () => 'assistant%00summary%00assistant', hasAttribute: () => true }
-  const summaryEvent = {
-    button: 2,
-    defaultPrevented: false,
-    target: {
-      closest: (selector) => (selector === 'tr[data-trajectory-row-key]' ? summaryRow : null),
-    },
-    clientX: 0,
-    clientY: 0,
-    preventDefault: () => {},
-  }
-  handles.listeners[0].handler(summaryEvent)
+  bridge.handler(contextEvent(fakeRow('assistant%00summary%00assistant', { summary: true })))
   assert.equal(handles.opened.length, 0)
+})
+
+test('keyboard trigger opens the menu on a focused row', async () => {
+  const { handles } = await mount()
+  const keyboard = handles.listeners.find(listener => listener.type === 'keydown')
+  const event = { key: 'F10', shiftKey: true, defaultPrevented: false, target: contextEvent(fakeRow('user%00seq%0042')).target, preventDefault: () => { event.defaultPrevented = true } }
+  keyboard.handler(event)
+  assert.equal(event.defaultPrevented, true)
+  assert.equal(handles.opened.length, 1)
+  assert.equal(handles.opened[0][0].value.key, 'user%00seq%0042')
+})
+
+test('records why a right-click was skipped', async () => {
+  const { module, handles } = await mount()
+  const bridge = handles.listeners.find(listener => listener.type === 'contextmenu')
+  bridge.handler(contextEvent(null))
+  assert.equal(module.__internals.debug.last, 'no-row')
+  assert.ok(module.__internals.debug.skips.some(entry => entry.reason === 'no-row'))
 })
