@@ -109,9 +109,6 @@
                   thresholdChars: 8192
                   headChars: 4096
                   tailChars: 1024
-          # 主 agent 的三个工具：fold_context / ask_folded / expand_folded
-          - id: context-optimize-tools
-            name: 'dsh-context-optimize/tools'
           - id: delegation
             name: cordis:group
             group: true

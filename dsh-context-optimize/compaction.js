@@ -198,4 +198,13 @@ export async function apply(ctx, config = {}) {
   }
 
   ctx.plugin(ContextOptimizeCompaction)
+
+  // 三个工具与压缩后端同 realm 注册：不再在 preset 里单独挂一行插件
+  // （多那一行会让 preset 组合失败，模式直接从选择器里消失）。
+  try {
+    const { registerTools } = await import('./tools.js')
+    await registerTools(ctx)
+  } catch (error) {
+    ctx.logger?.warn?.(`[context-optimize] 工具注册失败（不影响折叠）：${String(error?.message ?? error)}`)
+  }
 }

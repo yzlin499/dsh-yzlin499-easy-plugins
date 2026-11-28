@@ -59,6 +59,15 @@ function sessionIdOf(ctx) {
 }
 
 export async function apply(ctx) {
+  return registerTools(ctx)
+}
+
+/**
+ * 在调用方已经拿到 ctx 的场合直接注册（压缩后端会调用它，避免在 preset 里
+ * 多挂一行插件——那一行曾让整个 preset 组合失败，模式直接消失）。
+ */
+export async function registerTools(ctx) {
+  if (!ctx || !ctx.tools || typeof ctx.tools.register !== 'function') return
   const llmMod = await ctx.loader.import('@deepseek-ai/dsh-llm')
   const BlockAssembler = llmMod?.BlockAssembler
 
