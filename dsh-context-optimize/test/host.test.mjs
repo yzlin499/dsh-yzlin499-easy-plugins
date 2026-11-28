@@ -76,6 +76,8 @@ test('compaction/summary 事件进账本，接口按会话汇总', () => {
   assert.equal(body.folded, 2)
   assert.equal(body.tokens, 56213)
   assert.equal(body.nodes, 5)
+  // 客户端靠 preset 判断该不该显示大纲；假 ctx 里没有 agents，应为 null
+  assert.equal(body.preset, null)
   assert.deepEqual(body.entries[0], { tokens: 48213, nodes: 3, start: 1, end: 3, at: 1795858988000 })
 
   const other = makeRes()

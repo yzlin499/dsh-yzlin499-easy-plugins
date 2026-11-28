@@ -21,6 +21,8 @@ window.__ModuleLoader__.load({
     const NS = 'dsh-context-optimize'
     const VERSION = '0.1.0'
     const ENDPOINT = '/context-optimize/outline'
+    /** 只有这个 preset 才有折叠，其它模式看大纲没有意义。 */
+    const OPTIMIZE_PRESET = 'context-optimize'
     const POLL_MS = 5000
     const log = (...args) => console.log('[context-optimize]', ...args)
 
@@ -39,6 +41,10 @@ window.__ModuleLoader__.load({
         triggerOverflow: '溢出恢复',
         loadFailed: '读取折叠状态失败',
         unknown: '—',
+        mode: '当前模式：{name}',
+        modeHint: '这一页只对「上下文优化」模式有意义；当前模式不折叠历史，所以没有大纲可看。',
+        optimizeName: '上下文优化',
+        unknownMode: '未知',
       },
       en: {
         tab: 'Context outline',
@@ -54,6 +60,10 @@ window.__ModuleLoader__.load({
         triggerOverflow: 'overflow recovery',
         loadFailed: 'failed to read folding state',
         unknown: '—',
+        mode: 'Mode: {name}',
+        modeHint: 'This page only matters in the Context Optimize mode; the current mode does not fold history.',
+        optimizeName: 'Context Optimize',
+        unknownMode: 'unknown',
       },
     }
 
@@ -71,6 +81,7 @@ window.__ModuleLoader__.load({
 .dco-panel__entry { font-variant-numeric: tabular-nums; color: var(--dsw-alias-label-primary, rgba(0,0,0,.8)); }
 .dco-panel__meta { opacity: .7; }
 .dco-panel__gate { margin-top: auto; padding-top: 8px; opacity: .8; }
+.dco-panel__mode { font-variant-numeric: tabular-nums; opacity: .9; }
 .dco-panel__err { color: var(--dsw-alias-label-warning, #b45309); }
 `
 
@@ -152,34 +163,51 @@ window.__ModuleLoader__.load({
       const folded = Number(state?.folded ?? 0)
       const rows = outlineRows(state)
       const gate = gateState(state)
+      const modeView = describeMode(dict, state?.preset)
 
-      return React.createElement('div', { className: 'dco-panel', hidden: visible === false && false },
+      return React.createElement('div', { className: 'dco-panel' },
         React.createElement('div', { className: 'dco-panel__head' },
           React.createElement('span', { className: 'dco-panel__title' }, dict.title),
           React.createElement('span', { className: 'dco-panel__sum' },
-            folded > 0
+            modeView.optimize && folded > 0
               ? translate(dict, 'summary', { n: folded, t: formatTokens(Number(state?.tokens)), nodes: Number(state?.nodes ?? 0) })
               : '')),
 
+        // 模式判定：不是「上下文优化」模式就没有折叠，不显示大纲，只说明一句。
+        React.createElement('div', { className: 'dco-panel__mode' },
+          translate(dict, 'mode', { name: modeView.label })),
+
         error !== null ? React.createElement('div', { className: 'dco-panel__err' }, `${dict.loadFailed}: ${error}`) : null,
 
-        folded === 0
-          ? React.createElement('div', null,
-            React.createElement('div', null, dict.none),
-            React.createElement('div', { className: 'dco-panel__meta' },
-              translate(dict, 'noneHint', { n: gate.min || 6 })))
-          : React.createElement('div', { className: 'dco-panel__axis' },
-            rows.map((row, index) => React.createElement('div', { className: 'dco-panel__node', key: index },
-              React.createElement('span', { className: 'dco-panel__dot' }),
-              React.createElement('div', { className: 'dco-panel__entry' },
-                translate(dict, 'entry', { t: row.tokens, nodes: row.nodes, time: row.time })),
+        !modeView.optimize
+          ? React.createElement('div', { className: 'dco-panel__meta' }, dict.modeHint)
+          : folded === 0
+            ? React.createElement('div', null,
+              React.createElement('div', null, dict.none),
               React.createElement('div', { className: 'dco-panel__meta' },
-                row.trigger === 'overflow' ? dict.triggerOverflow : dict.triggerPressure)))),
+                translate(dict, 'noneHint', { n: gate.min || 6 })))
+            : React.createElement('div', { className: 'dco-panel__axis' },
+              rows.map((row, index) => React.createElement('div', { className: 'dco-panel__node', key: index },
+                React.createElement('span', { className: 'dco-panel__dot' }),
+                React.createElement('div', { className: 'dco-panel__entry' },
+                  translate(dict, 'entry', { t: row.tokens, nodes: row.nodes, time: row.time })),
+                React.createElement('div', { className: 'dco-panel__meta' },
+                  row.trigger === 'overflow' ? dict.triggerOverflow : dict.triggerPressure)))),
 
-        React.createElement('div', { className: 'dco-panel__gate' },
-          gate.ready
-            ? translate(dict, 'gateReady', { n: gate.steps })
-            : translate(dict, 'gateWait', { n: gate.remaining })))
+        modeView.optimize
+          ? React.createElement('div', { className: 'dco-panel__gate' },
+            gate.ready
+              ? translate(dict, 'gateReady', { n: gate.steps })
+              : translate(dict, 'gateWait', { n: gate.remaining }))
+          : null)
+    }
+
+    /** 当前模式是否上下文优化；preset id 读不到时按「不是」处理（宁可少显示）。 */
+    function describeMode(dict, preset) {
+      const id = typeof preset === 'string' ? preset : ''
+      if (id === '') return { id, optimize: false, label: dict.unknownMode }
+      if (id === OPTIMIZE_PRESET) return { id, optimize: true, label: dict.optimizeName }
+      return { id, optimize: false, label: id }
     }
 
     // ── 公共 ───────────────────────────────────────────────────────────────
@@ -233,8 +261,8 @@ window.__ModuleLoader__.load({
 
     // 仅供 test/ 使用：不参与运行时契约。
     const __internals = {
-      NS, VERSION, DICT, ENDPOINT,
-      formatTokens, formatTime, translate, outlineRows, gateState,
+      NS, VERSION, DICT, ENDPOINT, OPTIMIZE_PRESET,
+      formatTokens, formatTime, translate, outlineRows, gateState, describeMode,
     }
 
     return { name: NS, inject, apply, __internals }

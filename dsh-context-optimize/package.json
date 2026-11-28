@@ -1,6 +1,6 @@
 {
   "name": "dsh-context-optimize",
-  "version": "0.2.2",
+  "version": "0.2.4",
   "private": true,
   "description": "上下文优化模式：以「卡片折叠」替换官方压缩后端，折叠由巡航判定、卡片可询问，并在输入框下显示上下文大纲轴。",
   "type": "module",

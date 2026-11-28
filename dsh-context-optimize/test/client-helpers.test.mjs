@@ -12,7 +12,7 @@ globalThis.window = { __ModuleLoader__: { load(spec) { factory = spec.factory } 
 
 await import('../client.js')
 const mod = factory(() => ({ createElement() {}, useEffect() {}, useState() {} }))
-const { formatTokens, formatTime, translate, outlineRows, gateState, DICT, ENDPOINT } = mod.__internals
+const { formatTokens, formatTime, translate, outlineRows, gateState, describeMode, DICT, ENDPOINT, OPTIMIZE_PRESET } = mod.__internals
 
 function makeCtx({ sidebar } = {}) {
   const calls = { effects: 0, tabs: [], injects: [] }
@@ -93,4 +93,22 @@ test('formatTokens / formatTime / translate 的边界', () => {
   assert.equal(translate(DICT.zh, 'gateWait', { n: 3 }), '距下次可折还需 3 个工具步')
   assert.equal(translate(DICT.en, 'none', {}), 'Nothing folded in this session yet.')
   assert.equal(translate(DICT.zh, 'missing-key', {}), 'missing-key')
+})
+
+test('describeMode：只有 context-optimize 才显示大纲', () => {
+  assert.equal(OPTIMIZE_PRESET, 'context-optimize')
+  const ours = describeMode(DICT.zh, 'context-optimize')
+  assert.equal(ours.optimize, true)
+  assert.equal(ours.label, '上下文优化')
+
+  const standard = describeMode(DICT.zh, 'standard')
+  assert.equal(standard.optimize, false)
+  assert.equal(standard.label, 'standard')
+
+  // 读不到 preset（老宿主 / 请求失败）时按「不是」处理，宁可少显示
+  for (const value of [undefined, null, '', 42]) {
+    const view = describeMode(DICT.zh, value)
+    assert.equal(view.optimize, false)
+    assert.equal(view.label, DICT.zh.unknownMode)
+  }
 })

@@ -78,8 +78,10 @@ Data comes from this plugin's host half: `GET /context-optimize/outline?session=
 history the backend itself recorded (`CompactionResult.shadowedTokenCount` / `shadowedSeqs`), not a
 client-side guess. Unknown values render as `—`.
 
-- Without `dsh-better-sidebar` it falls back to a slim row in the composer dock (official slot
-  surface: `useProjection('sessionStats')` + the `useChat` node stream);
+- The page **checks the session's mode first**: only the Context Optimize mode shows an outline; other
+  modes show a single `Mode: standard` line plus one sentence (the host reads `agentPreset` from the
+  session header and treats a missing value as non-optimize).
+- Without `dsh-better-sidebar` the page is not mounted at all (the composer-dock fallback is gone).
 - the client half does not hot-reload unless `pnpm run dev:web` is running — **refresh the page**.
 
 ## How it works

@@ -82,8 +82,9 @@ dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/ds
 压缩后端自己记下的折叠历史（`CompactionResult.shadowedTokenCount` / `shadowedSeqs`），
 **不是**客户端估算。拿不到的数字显示 `—`。
 
-- 没装 `dsh-better-sidebar` 时自动回退成输入框 dock 里的一行窄轴（官方插槽注入面，
-  `useProjection('sessionStats')` + `useChat` 节点流）；
+- 这一页会**先判断会话当前模式**：只有「上下文优化」模式才显示大纲；其它模式只显示
+  「当前模式：标准」+ 一句说明（Host 从会话头文件的 `agentPreset` 判定，读不到就按非优化模式处理）。
+- 没装 `dsh-better-sidebar` 时这一页不挂载（已去掉输入框 dock 的回退）。
 - 客户端半侧不走 HMR（除非同时跑 `pnpm run dev:web`），装完 / 改完**刷新一次页面**。
 
 ## 工作原理

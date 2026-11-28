@@ -11,8 +11,60 @@
 
 export const name = 'dsh-context-optimize-host'
 
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+import { zstdDecompressSync } from 'node:zlib'
+
 const ENDPOINT = '/context-optimize/outline'
 const MAX_ENTRIES = 50
+
+/** 这个会话跑在哪个模式（agent preset）上。
+ *
+ *  先问服务（内存里最准），拿不到再退到会话头文件——头文件第一帧就写着
+ *  `agentPreset`，新会话只有几百字节，读一次就能判定，不依赖任何服务可见性。
+ */
+const presetCache = new Map()
+const PRESET_TTL_MS = 30_000
+
+function presetFromServices(ctx, sessionId) {
+  try {
+    const agent = ctx.agents?.get?.(sessionId)
+    if (agent === undefined || agent === null) return null
+    const preset = ctx.agentPresets?.presetForSession?.(agent.session)
+    return typeof preset === 'string' && preset.length > 0 ? preset : null
+  } catch {
+    return null
+  }
+}
+
+function presetFromDisk(sessionId) {
+  const hit = presetCache.get(sessionId)
+  if (hit !== undefined && Date.now() - hit.at < PRESET_TTL_MS) return hit.preset
+  try {
+    const home = process.env.DSH_HOME && process.env.DSH_HOME.length > 0
+      ? process.env.DSH_HOME
+      : join(homedir(), '.dsh')
+    const sessionsRoot = join(home, 'sessions')
+    let preset = null
+    for (const project of readdirSync(sessionsRoot)) {
+      const file = join(sessionsRoot, project, sessionId, 'session.v4.jsonl.zstd')
+      if (!existsSync(file)) continue
+      const header = zstdDecompressSync(readFileSync(file)).toString('utf8').split('\n')[0]
+      const parsed = JSON.parse(header)
+      preset = typeof parsed.agentPreset === 'string' ? parsed.agentPreset : null
+      break
+    }
+    presetCache.set(sessionId, { preset, at: Date.now() })
+    return preset
+  } catch {
+    return null
+  }
+}
+
+function presetOf(ctx, sessionId) {
+  return presetFromServices(ctx, sessionId) ?? presetFromDisk(sessionId)
+}
 
 export function apply(ctx) {
   /** sessionId → [{ tokens, nodes, start, end, at }] */
@@ -58,6 +110,8 @@ export function apply(ctx) {
           tokens: entries.reduce((sum, entry) => sum + entry.tokens, 0),
           nodes: entries.reduce((sum, entry) => sum + entry.nodes, 0),
           entries,
+          // 客户端拿它判断「这一页该不该显示大纲」：只有上下文优化模式才有意义。
+          preset: presetOf(ctx, sessionId),
         }
         res.setHeader('content-type', 'application/json; charset=utf-8')
         res.setHeader('cache-control', 'no-store')
