@@ -5,10 +5,9 @@ every plugin of the shipped `standard` preset and replaces only the **compaction
 backend**: instead of an eight-section prose summary, an earlier span of history is
 folded into a **single card**.
 
-> Status: **v0.1 preview**. This release ships the card-shaped backend plus a fold
-> admission gate. The `ask` / `expand` retrieval tools land in v0.2, so cards do
-> **not** advertise "ask me" yet — promising a tool that does not exist teaches the
-> model to call it.
+> Status: **v0.2**. Ships the card-shaped compaction backend, a fold admission gate,
+> three agent tools (`fold_context`, `ask_folded`, `expand_folded`) backed by a local
+> archive, and a sidebar page. In-place restore of a folded span is v0.3.
 
 ## Why
 
@@ -22,10 +21,24 @@ This mode instead:
 
 - **renders a card** with a fixed skeleton (what happened / original request / files /
   commands / errors / still open / dead ends), so the model can skim it;
+- **archives the original span** (memory + `~/.dsh/storages/context-optimize/spans/…`)
+  so the agent can ask about it or read it back;
 - **asks a low-effort "cruise" call** for the one-line claim, the conclusions and the
   open items, while files, commands and errors are **extracted deterministically by code**;
 - **gates folding**: the first fold always passes, later folds require another N tool
-  steps (default 6), so the agent cannot fold after every single step.
+  steps (default 6).
+
+## Agent tools
+
+| Tool | What it does | When |
+|---|---|---|
+| `fold_context` | Queue a fold of the oldest span (applies **next step**) | after many consecutive tool calls, when context has grown |
+| `ask_folded` | Ask a folded span a question → answer / confidence / what it still needs | **first choice**: cheap, keeps the raw text out of the context |
+| `expand_folded` | Read back the archived text (`offset`/`limit` paging) | fallback when asking fails |
+
+`ask_folded` feeds only the card plus keyword-picked archive excerpts to one low-effort
+call. `expand_folded` returns the text **into the tool result** — in-place restore needs a
+verified Session append/replace path and is scheduled for v0.3.
 
 ## Install
 

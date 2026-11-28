@@ -22,7 +22,7 @@
 | `dsh-recent-tps` | 0.1.2 | 会话统计面板加一行「最近 30 秒速度」（同 id 顶替官方 `activity` 读数） | 是 | 是 |
 | `dsh-ark-quota-guard` | 0.1.0 | 火山方舟额度守护：撞 429 挂起会话，重置时刻 + 10 秒自动 `followup` 续跑（CP/AP 双套餐） | 否 | 是 |
 | `dsh-trajectory-edit` | 0.1.1 | 轨迹面板右键：编辑 / 自动清理某条记录（帧级日志手术，备份 + 复读校验 + 回滚） | 是 | 是 |
-| `dsh-context-optimize` | 0.1.0 | 新增「上下文优化」会话模式（preset，继承官方 `standard`），压缩后端换成卡片折叠 + 折叠准入；Client 半侧给侧边栏加一页「上下文大纲」（`ctx.betterSidebar.registerTab`，数据来自 Host 的 `/context-optimize/outline`）；v0.1 无 `ask`/`expand` 工具 | 是 | 是 |
+| `dsh-context-optimize` | 0.2.0 | 「上下文优化」会话模式（preset，继承官方 `standard`）：压缩后端换成卡片折叠 + 折叠准入，主 agent 得到 `fold_context` / `ask_folded` / `expand_folded` 三个工具（带本地归档），侧边栏一页「上下文大纲」（Host 的 `/context-optimize/outline`） | 是 | 是 |
 
 ## 仓库结构
 

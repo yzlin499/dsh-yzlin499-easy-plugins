@@ -129,8 +129,10 @@ test('summarize 产出卡片：claim 来自巡航，文件/错误由代码抽取
   assert.ok(text.includes('## 原始请求'), '缺少原始请求段')
   assert.ok(text.includes('ERR_MODULE_NOT_FOUND'), '缺少错误抽取')
   assert.ok(text.includes('## 未闭合\n- Windows 路径没验'), '缺少未闭合项')
-  // 没有 ask/expand 工具时不许渲染取回段
-  assert.ok(!text.includes('## 取回'))
+  // v0.2 有了 fold/ask/expand 工具：卡片必须渲染取回段，并带 sp_ 身份
+  assert.ok(text.includes('## 取回'), '缺少取回段')
+  assert.match(text, /sp_[0-9a-f]{8}/, '卡片身份行应是 span id')
+  assert.ok(text.includes('ask sp_'), '取回段要指向 ask')
 })
 
 test('summarize 在巡航失败时降级为确定性卡片，不抛错', async () => {

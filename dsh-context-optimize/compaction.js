@@ -20,6 +20,10 @@ import {
   parseClaim,
   renderCard,
 } from './lib/card.js'
+import { archiveRoot, persistSpan, renderTranscript, spanIdOf } from './lib/archive.js'
+import { consumeFoldRequest, getSpan, hasFoldRequest, recordSpan } from './lib/store.js'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 
 export const name = 'dsh-context-optimize-compaction'
 
@@ -33,8 +37,8 @@ const DEFAULTS = {
   maxTokens: 2000,
   /** 卡片语言；'zh' | 'en'。 */
   locale: 'zh',
-  /** v0.2 提供 ask/expand 工具后再打开；关闭时卡片不渲染「取回」段。 */
-  retrievalTools: false,
+  /** v0.2 起提供 fold/ask/expand 工具，卡片默认渲染「取回」段。 */
+  retrievalTools: true,
 }
 
 export async function apply(ctx, config = {}) {
@@ -70,9 +74,11 @@ export async function apply(ctx, config = {}) {
       })
     }
 
-    /** 折叠准入：首折放行；之后要求「连续做过若干工具步」，溢出恢复永远放行。 */
+    /** 折叠准入：首折放行；之后要求「连续做过若干工具步」，溢出恢复永远放行。
+     *  主 agent 主动调 fold_context 也放行（那是它自己的判断）。 */
     admitted(agent) {
       const key = agent.session.id
+      if (hasFoldRequest(key)) return true
       if (options.minToolStepsBetweenFolds <= 0) return true
       if (!this.hasFolded.has(key)) return true
       return (this.toolStepsSinceFold.get(key) ?? 0) >= options.minToolStepsBetweenFolds
@@ -80,11 +86,21 @@ export async function apply(ctx, config = {}) {
 
     async compactIfNeeded(agent, trigger, signal) {
       if (trigger === 'pressure' && !this.admitted(agent)) return null
+      const sessionId = agent.session.id
+      consumeFoldRequest(sessionId)
       const result = await super.compactIfNeeded(agent, trigger, signal)
       if (result !== null && result !== undefined) {
-        const key = agent.session.id
-        this.hasFolded.add(key)
-        this.toolStepsSinceFold.set(key, 0)
+        this.hasFolded.add(sessionId)
+        this.toolStepsSinceFold.set(sessionId, 0)
+        // summarize() 先把归档按时间记下；拿到真实位置后回填，工具才能按 span 定位。
+        const latest = [...(getSpan(sessionId) ? [getSpan(sessionId)] : [])][0]
+        if (latest !== undefined) recordSpan(sessionId, {
+          ...latest,
+          start: result.shadowedRange?.start ?? latest.start,
+          end: result.shadowedRange?.end ?? latest.end,
+          tokens: Number(result.shadowedTokenCount) || latest.tokens,
+          nodes: Array.isArray(result.shadowedSeqs) ? result.shadowedSeqs.length : latest.nodes,
+        })
       }
       return result
     }
@@ -104,14 +120,25 @@ export async function apply(ctx, config = {}) {
       }
 
       const { claim, open } = await this.writeClaim(input, agent, signal, provider, model)
+      // 归档：折叠时把区域原文自己留一份（含磁盘），给 ask/expand 用。
+      const transcript = renderTranscript(input.messages)
+      const spanId = spanIdOf(input.messages, { at: Date.now() })
       const text = renderCard(facts, {
-        id: cardId(facts, { turns: undefined }),
+        id: spanId,
         claim,
         open,
         locale: options.locale,
         tokens: estimateTokens(JSON.stringify(input.messages)),
         retrieval: options.retrievalTools,
       })
+      const entry = recordSpan(agent.session.id, {
+        id: spanId,
+        card: text,
+        text: transcript,
+        tokens: estimateTokens(JSON.stringify(input.messages)),
+        at: Date.now(),
+      })
+      void this.persistArchive(agent.session.id, spanId, transcript, entry)
       this.lastCard.set(agent.session.id, text)
       return {
         summary: [{ type: 'text', text }],
@@ -120,6 +147,17 @@ export async function apply(ctx, config = {}) {
         provider,
         model,
         maxTokens: options.maxTokens,
+      }
+    }
+
+    /** 落盘一份归档原文；失败只记日志，不影响折叠本身。 */
+    async persistArchive(sessionId, spanId, text, entry) {
+      try {
+        const root = archiveRoot(process.env, process.env.USERPROFILE ?? process.env.HOME ?? '')
+        const file = await persistSpan({ mkdir, writeFile }, { join }, root, sessionId, spanId, text)
+        if (file !== null && entry !== undefined) entry.path = file
+      } catch (error) {
+        this.ctx.logger?.warn?.(`[context-optimize] 归档落盘失败（不影响折叠）：${String(error?.message ?? error)}`)
       }
     }
 
