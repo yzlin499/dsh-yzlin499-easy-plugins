@@ -50,15 +50,22 @@ dsh plugin --profile web add "github:yzlin499/dsh-yzlin499-easy-plugins#path:/ds
 2. 正常干活。token 压力上来时，历史里的早期任务段会被折成一页卡片。
 3. `/compact` 仍然可用（官方命令，走同一个后端）。
 
-## 界面：上下文大纲轴
+## 界面：侧边栏「上下文大纲」
 
-输入框下方的 dock 里多一行「上下文大纲」：**每一轮一格**，深色格表示该轮所在的区间已被折成卡片；
-右侧显示「已折叠 N 段 · X tok」与总轮数，悬停有说明。
+装好后**侧边栏多一页「上下文大纲」**（通过 `dsh-better-sidebar` 的 `ctx.betterSidebar.registerTab`
+注册，和你现在侧栏里的其它页同一套 API）：
 
-- 数据只来自官方插槽注入面：`useProjection('sessionStats')`（轮数）+ `useChat` 的节点流（数折叠点）。
-- **不显示占用百分比**：客户端拿不到 `contextWindow` 与实时压力（那在 host 侧 `tokenMeter` 上），
-  所以宁可不显示，也不编一个数字。
-- 折叠 token 读不到时显示 `—`，同样不猜。
+- 顶部一行汇总：`已折叠 N 段 · X tok · Y 节点`；
+- 下面是一条竖轴，每次折叠一个节点：`48.2K tok · 546 节点 · 20:31`，并标注触发来源
+  （压力触发 / 溢出恢复）；
+- 底部是闸门倒计时：`距下次可折还需 N 个工具步`，或者 `现在可折（已过 N 个工具步）`。
+
+数据来自本插件 Host 半侧的 `GET /context-optimize/outline?session=<id>` —— 也就是
+压缩后端自己记下的折叠历史（`CompactionResult.shadowedTokenCount` / `shadowedSeqs`），
+**不是**客户端估算。拿不到的数字显示 `—`。
+
+- 没装 `dsh-better-sidebar` 时自动回退成输入框 dock 里的一行窄轴（官方插槽注入面，
+  `useProjection('sessionStats')` + `useChat` 节点流）；
 - 客户端半侧不走 HMR（除非同时跑 `pnpm run dev:web`），装完 / 改完**刷新一次页面**。
 
 ## 工作原理

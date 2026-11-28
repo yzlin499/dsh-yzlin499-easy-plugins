@@ -51,18 +51,23 @@ Restart DSH; the mode picker then offers **上下文优化**.
 2. Work as usual. Under token pressure, older task spans are folded into a card.
 3. `/compact` still works — it drives the same backend.
 
-## UI: context outline axis
+## UI: sidebar "Context outline" page
 
-A slim row appears in the composer dock: **one cell per turn**, dark cells mark turns inside a folded
-span, and the right side shows "N spans folded · X tok" plus the turn count. Hover for the legend.
+The plugin adds **a page of its own to the sidebar** (registered through
+`dsh-better-sidebar`'s `ctx.betterSidebar.registerTab`, the same API its built-in pages use):
 
-- Data comes only from the sanctioned slot surface: `useProjection('sessionStats')` for turns and the
-  `useChat` node stream for fold points.
-- **No occupancy percentage**: the client cannot see `contextWindow` or live pressure (those live on
-  the host `tokenMeter`), so we show nothing rather than invent a number.
-- Unknown folded token counts render as `—` for the same reason.
-- The client half does not hot-reload unless `pnpm run dev:web` is running — **refresh the page** after
-  installing or changing it.
+- a summary line: `N spans folded · X tok · Y nodes`;
+- a vertical axis, one node per fold: `48.2K tok · 546 nodes · 20:31`, tagged with the trigger
+  (pressure / overflow recovery);
+- a gate countdown: `N more tool steps before the next fold`, or `foldable now (N tool steps)`.
+
+Data comes from this plugin's host half: `GET /context-optimize/outline?session=<id>` — the fold
+history the backend itself recorded (`CompactionResult.shadowedTokenCount` / `shadowedSeqs`), not a
+client-side guess. Unknown values render as `—`.
+
+- Without `dsh-better-sidebar` it falls back to a slim row in the composer dock (official slot
+  surface: `useProjection('sessionStats')` + the `useChat` node stream);
+- the client half does not hot-reload unless `pnpm run dev:web` is running — **refresh the page**.
 
 ## How it works
 

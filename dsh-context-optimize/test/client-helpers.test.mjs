@@ -2,76 +2,96 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 /**
- * client.js 是 __ModuleLoader__ 静态格式的模块：它一被执行就调用
- * `window.__ModuleLoader__.load({ factory })`。这里用一个假 window 把 factory
- * 接住，再直接测 factory 暴露的纯函数（避免为了测试在浏览器里跑一遍）。
+ * client.js 是 __ModuleLoader__ 静态格式的模块：一执行就调用
+ * `window.__ModuleLoader__.load({ factory })`。用假 window 接住 factory，
+ * 再测它暴露的纯函数与两条挂载路径（侧边栏 / dock 回退）。
  */
 
 let factory
-globalThis.window = {
-  __ModuleLoader__: {
-    load(spec) { factory = spec.factory },
-  },
-}
+globalThis.window = { __ModuleLoader__: { load(spec) { factory = spec.factory } } }
 
 await import('../client.js')
-const mod = factory(() => ({ createElement() {}, useMemo: (fn) => fn() }))
-const { summarizeNodes, axisCells, formatTokens, translate, DICT, NS } = mod.__internals
+const mod = factory(() => ({ createElement() {}, useEffect() {}, useState() {} }))
+const { formatTokens, formatTime, translate, outlineRows, gateState, DICT, ENDPOINT } = mod.__internals
 
-test('插件自报 id 与服务注入面', () => {
-  assert.equal(NS, 'dsh-context-optimize')
+function makeCtx({ sidebar, slots } = {}) {
+  const calls = { effects: 0, tabs: [], dockInject: [] }
+  const ctx = {
+    get(name) {
+      if (name === 'betterSidebar') return sidebar
+      return undefined
+    },
+    effect(fn) { calls.effects += 1; return fn() },
+    slots: slots ?? {
+      inject(key, cb) { calls.dockInject.push(key); return cb() },
+      register(spec) { calls.dockInject.push(`register:${spec.id}`); return () => {} },
+    },
+  }
+  return { ctx, calls }
+}
+
+test('插件 id / 注入面 / 接口路径', () => {
+  assert.equal(mod.name, 'dsh-context-optimize')
   assert.deepEqual(mod.inject, ['slots', 'locale'])
+  assert.equal(ENDPOINT, '/context-optimize/outline')
   assert.equal(typeof mod.apply, 'function')
 })
 
-test('summarizeNodes 只数 compaction 节点，并尽量读出折叠 token', () => {
-  const nodes = [
-    { kind: 'user' },
-    { kind: 'step' },
-    { kind: 'compaction', turn: 3, data: { shadowedTokenCount: 1200 } },
-    { kind: 'tool-call' },
-    { kind: 'manual-compaction', turn: 5, data: { shadowedTokenCount: 800 } },
-    { kind: 'assistant-step', tokens: 999 },
-  ]
-  const summary = summarizeNodes(nodes)
-  assert.equal(summary.folded, 2)
-  assert.equal(summary.foldedTokens, 2000)
-  assert.deepEqual([...summary.foldedTurns].sort((a, b) => a - b), [3, 5])
+test('有 betterSidebar 时注册成侧边栏 tab，不碰 dock', () => {
+  const sidebar = { registerTab(descriptor) { this.captured = descriptor; return () => {} } }
+  const { ctx, calls } = makeCtx({ sidebar })
+  mod.apply(ctx)
+  assert.equal(sidebar.captured.id, 'dsh-context-optimize:outline')
+  assert.equal(typeof sidebar.captured.title(), 'string')
+  assert.equal(typeof sidebar.captured.description(), 'string')
+  assert.equal(sidebar.captured.order, 60)
+  assert.equal(typeof sidebar.captured.component, 'function')
+  assert.deepEqual(calls.dockInject, [], '有侧边栏时不该再往 dock 挂东西')
 })
 
-test('summarizeNodes 读不到 token 时给 null，不猜数字', () => {
-  const summary = summarizeNodes([{ kind: 'compaction', turn: 2 }])
-  assert.equal(summary.folded, 1)
-  assert.equal(summary.foldedTokens, null)
+test('没有 betterSidebar 时回退到 dock 一行', () => {
+  const { ctx, calls } = makeCtx({ sidebar: undefined })
+  mod.apply(ctx)
+  assert.ok(calls.dockInject.includes('conversation.composer.dock'))
+  assert.ok(calls.dockInject.some((value) => String(value).startsWith('register:context-optimize-axis')))
 })
 
-test('summarizeNodes 对空值/非数组不抛错', () => {
-  for (const input of [undefined, null, [], 'x', 42]) {
-    const summary = summarizeNodes(input)
-    assert.equal(summary.folded, 0)
-    assert.equal(summary.foldedTokens, null)
-  }
+test('outlineRows 把 Host 载荷整理成行，缺字段降级', () => {
+  const rows = outlineRows({
+    entries: [
+      { tokens: 48213, nodes: 546, at: Date.UTC(2026, 10, 28, 12, 30), trigger: 'pressure' },
+      { tokens: 8000, nodes: 120, at: 0, trigger: 'context-overflow' },
+      {},
+    ],
+  })
+  assert.equal(rows.length, 3)
+  assert.equal(rows[0].tokens, '48.2K')
+  assert.equal(rows[0].nodes, '546')
+  assert.equal(rows[0].trigger, 'pressure')
+  assert.equal(rows[1].trigger, 'overflow')
+  assert.equal(rows[2].tokens, '—')
+  assert.equal(rows[2].nodes, '—')
+  assert.equal(rows[2].time, '—')
+  assert.deepEqual(outlineRows(undefined), [])
 })
 
-test('axisCells 每轮一格，折叠区间标暗，最后一格标 now', () => {
-  const cells = axisCells(4, new Set([2]))
-  assert.equal(cells.length, 4)
-  assert.deepEqual(cells.map((cell) => cell.folded), [false, true, false, false])
-  assert.deepEqual(cells.map((cell) => cell.now), [false, false, false, true])
+test('gateState 与 Host 闸门口径一致', () => {
+  assert.deepEqual(gateState({ minToolSteps: 6, stepsSinceFold: 6 }), { ready: true, remaining: 0, min: 6, steps: 6 })
+  assert.deepEqual(gateState({ minToolSteps: 6, stepsSinceFold: 2 }), { ready: false, remaining: 4, min: 6, steps: 2 })
+  // min = 0 表示不设闸门
+  assert.equal(gateState({ minToolSteps: 0, stepsSinceFold: 0 }).ready, true)
+  // 缺字段时按「可折」处理，不阻塞展示
+  assert.equal(gateState({}).ready, true)
 })
 
-test('axisCells 对异常轮数收敛（负数/NaN/超大）', () => {
-  assert.equal(axisCells(-3, new Set()).length, 0)
-  assert.equal(axisCells(Number.NaN, new Set()).length, 0)
-  assert.equal(axisCells(10000, new Set()).length, 80)
-})
-
-test('formatTokens 与 translate 的边界', () => {
+test('formatTokens / formatTime / translate 的边界', () => {
   assert.equal(formatTokens(999), '999')
   assert.equal(formatTokens(148200), '148.2K')
   assert.equal(formatTokens(undefined), '—')
-  assert.equal(translate(DICT.zh, 'folded', { n: 3 }), '已折叠 3 段')
-  assert.equal(translate(DICT.en, 'noFold', {}), 'nothing folded yet')
-  // 未知模板原样返回，避免渲染出 undefined
+  assert.equal(formatTime(Number.NaN), '—')
+  assert.equal(formatTime('not-a-date'), '—')
+  assert.match(formatTime(Date.now()), /^\d{2}:\d{2}$/)
+  assert.equal(translate(DICT.zh, 'gateWait', { n: 3 }), '距下次可折还需 3 个工具步')
+  assert.equal(translate(DICT.en, 'none', {}), 'Nothing folded in this session yet.')
   assert.equal(translate(DICT.zh, 'missing-key', {}), 'missing-key')
 })
