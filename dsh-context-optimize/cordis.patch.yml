@@ -1,3 +1,8 @@
+# 注意：本文件的插件清单是**静态**的（不写 !!js 表达式）。
+# 官方 standard.patch.yml 里用到 !!js / baseUrl 的行（tool-bash、tool-pwsh、
+# skill-filesystem.customSkillDirs、tool-plugin-manager 的 disabled）在这里都换成了
+# 固定值：跨 bundle 求值 baseUrl/ctx 会失败，导致 preset 组合不完整、模式不出现。
+# 因此本 preset 目前按 Windows 布局写死（bash 关、pwsh 开）。跨平台需要改这几行。
 # 上下文优化模式（context-optimize）
 #
 # 声明一个新的 agent preset（模式），插件清单照抄官方 `standard` preset：
@@ -32,10 +37,10 @@
             name: '@deepseek-ai/dsh-time-context'
           - id: tool-bash
             name: '@deepseek-ai/dsh-tool-bash'
-            disabled: !!js process.platform === 'win32'
+            disabled: true
           - id: tool-pwsh
             name: '@deepseek-ai/dsh-tool-pwsh'
-            disabled: !!js process.platform !== 'win32'
+            disabled: false
           - id: tool-fs
             name: '@deepseek-ai/dsh-tool-fs'
             config:
@@ -50,9 +55,6 @@
             name: '@deepseek-ai/dsh-tool-schedule'
           - id: skill-filesystem
             name: '@deepseek-ai/dsh-skill-filesystem'
-            config:
-              customSkillDirs:
-                - !!js process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:path').dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('@deepseek-ai/dsh-agent-preset/package.json')), 'skills')
           - id: tool-skill
             name: '@deepseek-ai/dsh-tool-skill'
           - id: command-goal
@@ -155,7 +157,7 @@
             name: '@deepseek-ai/dsh-tool-office'
           - id: tool-plugin-manager
             name: '@deepseek-ai/dsh-plugin-manager/tools'
-            disabled: !!js "!ctx.get('profileContext')"
+            disabled: true
           - id: tool-plugin-market
             name: '@deepseek-ai/dsh-plugin-market/tools'
             disabled: true

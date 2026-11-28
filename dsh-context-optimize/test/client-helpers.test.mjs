@@ -14,17 +14,16 @@ await import('../client.js')
 const mod = factory(() => ({ createElement() {}, useEffect() {}, useState() {} }))
 const { formatTokens, formatTime, translate, outlineRows, gateState, DICT, ENDPOINT } = mod.__internals
 
-function makeCtx({ sidebar, slots } = {}) {
-  const calls = { effects: 0, tabs: [], dockInject: [] }
+function makeCtx({ sidebar } = {}) {
+  const calls = { effects: 0, tabs: [], injects: [] }
   const ctx = {
-    get(name) {
-      if (name === 'betterSidebar') return sidebar
-      return undefined
-    },
+    get() { return undefined },
     effect(fn) { calls.effects += 1; return fn() },
-    slots: slots ?? {
-      inject(key, cb) { calls.dockInject.push(key); return cb() },
-      register(spec) { calls.dockInject.push(`register:${spec.id}`); return () => {} },
+    inject(services, callback) {
+      calls.injects.push(services.join(','))
+      // 模拟 betterSidebar 出现后才回调；没有该服务时不回调（与服务缺失时的真实行为一致）
+      if (sidebar !== undefined) callback({ betterSidebar: sidebar, effect: (fn) => fn() })
+      return () => {}
     },
   }
   return { ctx, calls }
@@ -32,28 +31,28 @@ function makeCtx({ sidebar, slots } = {}) {
 
 test('插件 id / 注入面 / 接口路径', () => {
   assert.equal(mod.name, 'dsh-context-optimize')
-  assert.deepEqual(mod.inject, ['slots', 'locale'])
+  assert.deepEqual(mod.inject, ['locale'])
   assert.equal(ENDPOINT, '/context-optimize/outline')
   assert.equal(typeof mod.apply, 'function')
 })
 
-test('有 betterSidebar 时注册成侧边栏 tab，不碰 dock', () => {
+test('等 betterSidebar 出现后注册成侧边栏 tab', () => {
   const sidebar = { registerTab(descriptor) { this.captured = descriptor; return () => {} } }
   const { ctx, calls } = makeCtx({ sidebar })
   mod.apply(ctx)
+  assert.deepEqual(calls.injects, ['betterSidebar'], '必须走服务注入，不能 apply 时 ctx.get 一次')
   assert.equal(sidebar.captured.id, 'dsh-context-optimize:outline')
   assert.equal(typeof sidebar.captured.title(), 'string')
   assert.equal(typeof sidebar.captured.description(), 'string')
   assert.equal(sidebar.captured.order, 60)
   assert.equal(typeof sidebar.captured.component, 'function')
-  assert.deepEqual(calls.dockInject, [], '有侧边栏时不该再往 dock 挂东西')
 })
 
-test('没有 betterSidebar 时回退到 dock 一行', () => {
+test('betterSidebar 缺失时不注册任何东西（不再落回 dock）', () => {
   const { ctx, calls } = makeCtx({ sidebar: undefined })
   mod.apply(ctx)
-  assert.ok(calls.dockInject.includes('conversation.composer.dock'))
-  assert.ok(calls.dockInject.some((value) => String(value).startsWith('register:context-optimize-axis')))
+  assert.deepEqual(calls.injects, ['betterSidebar'])
+  assert.equal(calls.effects >= 1, true, 'locale 订阅仍然建立')
 })
 
 test('outlineRows 把 Host 载荷整理成行，缺字段降级', () => {

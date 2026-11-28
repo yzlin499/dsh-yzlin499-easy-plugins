@@ -72,14 +72,6 @@ window.__ModuleLoader__.load({
 .dco-panel__meta { opacity: .7; }
 .dco-panel__gate { margin-top: auto; padding-top: 8px; opacity: .8; }
 .dco-panel__err { color: var(--dsw-alias-label-warning, #b45309); }
-.dco-axis { display: flex; align-items: center; gap: 8px; width: 100%; padding: 2px 4px;
-  font-size: 11px; line-height: 16px; color: var(--dsw-alias-label-secondary, rgba(0,0,0,.6));
-  font-variant-numeric: tabular-nums; user-select: none; }
-.dco-axis__title { font-weight: 600; color: var(--dsw-alias-label-primary, rgba(0,0,0,.85)); }
-.dco-axis__cells { display: flex; flex: 1; gap: 2px; min-width: 80px; max-width: 420px; }
-.dco-axis__cell { flex: 1; height: 6px; border-radius: 2px; background: var(--dsw-alias-bg-layer-3, rgba(0,0,0,.08)); }
-.dco-axis__cell--folded { background: var(--dsw-alias-interactive-bg-hover, rgba(0,0,0,.35)); }
-.dco-axis__meta { white-space: nowrap; opacity: .85; }
 `
 
     function injectStyleOnce() {
@@ -190,41 +182,6 @@ window.__ModuleLoader__.load({
             : translate(dict, 'gateWait', { n: gate.remaining })))
     }
 
-    // ── dock 回退（没有 betterSidebar 时）──────────────────────────────────
-
-    const selectNodes = (state) => (state && state.legacy && state.legacy.nodes) || []
-
-    function AxisRow(props) {
-      const { useChat, useProjection, labels } = props
-      const dict = resolveDict(labels)
-      const nodes = typeof useChat === 'function' ? useChat(selectNodes) : []
-      const stats = typeof useProjection === 'function' ? useProjection('sessionStats') : undefined
-      const turns = Number(stats?.lastTurn ?? stats?.turns ?? 0)
-
-      let folded = 0
-      let tokens = 0
-      let tokensKnown = false
-      for (const node of Array.isArray(nodes) ? nodes : []) {
-        if (!String(node?.kind ?? '').includes('compaction')) continue
-        folded += 1
-        for (const value of [node?.data?.shadowedTokenCount, node?.data?.tokens, node?.tokens]) {
-          if (Number.isFinite(value)) { tokens += Number(value); tokensKnown = true; break }
-        }
-      }
-
-      return React.createElement('div', { className: 'dco-axis', title: dict.tabDesc },
-        React.createElement('span', { className: 'dco-axis__title' }, dict.title),
-        React.createElement('span', { className: 'dco-axis__cells' },
-          Array.from({ length: Math.min(turns, 60) }, (_, index) => React.createElement('span', {
-            key: index,
-            className: 'dco-axis__cell',
-          }))),
-        React.createElement('span', { className: 'dco-axis__meta' },
-          folded === 0
-            ? dict.none
-            : translate(dict, 'summary', { n: folded, t: tokensKnown ? formatTokens(tokens) : dict.unknown, nodes: '—' })))
-    }
-
     // ── 公共 ───────────────────────────────────────────────────────────────
 
     function resolveDict(labels) {
@@ -232,7 +189,7 @@ window.__ModuleLoader__.load({
       return injected && typeof injected.title === 'string' ? injected : DICT.zh
     }
 
-    const inject = ['slots', 'locale']
+    const inject = ['locale']
 
     function apply(ctx) {
       injectStyleOnce()
@@ -255,9 +212,15 @@ window.__ModuleLoader__.load({
         return locale.subscribe(() => labels.set(DICT[localeOf()]))
       }, `${NS}: locale`)
 
-      const sidebar = ctx.get('betterSidebar')
-      if (sidebar && typeof sidebar.registerTab === 'function') {
-        ctx.effect(() => sidebar.registerTab({
+      // betterSidebar 是可选服务，注册顺序不保证先于本插件：用 ctx.inject 等它出现，
+      // 而不是 apply 时 ctx.get 一次（那样会静默落到别的宿主位置）。
+      ctx.inject(['betterSidebar'], (scope) => {
+        const sidebar = scope.betterSidebar
+        if (!sidebar || typeof sidebar.registerTab !== 'function') {
+          log('betterSidebar 不可用，上下文大纲页不挂载')
+          return
+        }
+        scope.effect(() => sidebar.registerTab({
           id: 'dsh-context-optimize:outline',
           title: () => labels.get().tab,
           description: () => labels.get().tabDesc,
@@ -265,17 +228,7 @@ window.__ModuleLoader__.load({
           component: (props) => React.createElement(OutlinePanel, { ...props, labels }),
         }))
         log(`ready (v${VERSION})：侧边栏 tab dsh-context-optimize:outline`)
-        return
-      }
-
-      // 回退：没有 betterSidebar 时挂到输入框 dock
-      ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register({
-        name: 'conversation.composer.dock',
-        id: 'context-optimize-axis',
-        order: 6,
-        inject: () => ({ hooks: { labels } }),
-      }, AxisRow))
-      log(`ready (v${VERSION})：没有 betterSidebar，回退 conversation.composer.dock#context-optimize-axis`)
+      })
     }
 
     // 仅供 test/ 使用：不参与运行时契约。
