@@ -120,7 +120,9 @@ body[data-ds-dark-theme] .dco-axis { color: var(--dsw-alias-label-secondary, rgb
 
     function AxisRow(props) {
       const { useChat, useProjection, labels } = props
-      const dict = (labels && typeof labels.get === 'function' ? labels.get() : undefined) ?? DICT.zh
+      // 注入面可能给 store（有 get）也可能直接给字典：两种都认，避免语言切错。
+      const injected = labels && typeof labels.get === 'function' ? labels.get() : labels
+      const dict = injected && typeof injected.title === 'string' ? injected : DICT.zh
 
       const nodes = typeof useChat === 'function' ? useChat(selectNodes) : []
       const stats = typeof useProjection === 'function' ? useProjection('sessionStats') : undefined
