@@ -27,7 +27,7 @@
 | [dsh-recent-tps](dsh-recent-tps/README.md) | 最近 30 秒速度：给输入框下方的会话统计面板多一行「最近 30 秒速度」，官方四行读数与样式原样保留 | 稳定 |
 | [dsh-ark-quota-guard](dsh-ark-quota-guard/README.md) | 火山方舟额度守护：撞 429 后挂起会话，到「重置时刻 + 10 秒」自动续跑，不用人盯着发「继续」 | 稳定 |
 | [dsh-trajectory-edit](dsh-trajectory-edit/README.md) | 轨迹面板右键：编辑某条记录的文本，或按规则自动清理退化的重复内容（帧级日志手术，写前备份、写后复读校验、失败回滚） | 新增 |
-| [dsh-context-optimize](dsh-context-optimize/README.md) | 上下文优化模式：新增一个继承官方 `standard` 的会话模式，把压缩后端换成「卡片折叠」——早期任务段折成固定骨架的一页卡片（巡航写结论、代码抽文件/命令/错误），并限制折叠频率；输入框下另有「上下文大纲轴」显示折叠状态；`ask`/`expand` 取回工具在 v0.2 | 预览 |
+| [dsh-context-optimize](dsh-context-optimize/README.md) | 上下文优化模式：新增一个继承官方 `standard` 的会话模式，把压缩后端换成「卡片折叠」——早期任务段折成固定骨架的一页卡片（巡航写结论、代码抽文件/命令/错误），并限制折叠频率；侧边栏另加一页「上下文大纲」显示折叠状态；`ask`/`expand` 取回工具在 v0.2 | 预览 |
 
 > 点插件名可查看该插件的详细文档（中文 `README.md` / 英文 `README_EN.md`）。
 

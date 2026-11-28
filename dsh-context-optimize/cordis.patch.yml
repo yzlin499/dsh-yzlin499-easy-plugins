@@ -8,6 +8,10 @@
 # 升级 DSH 后请对照新版 standard.patch.yml 同步本文件（行 id 与插件名），
 # 否则新模式会落后于标准模式（例如少了新工具）。
 - insert:
+    # Host 半侧：折叠账本 + /context-optimize/outline（侧边栏页的数据源）。
+    # 放 Host 是因为它要对所有会话可见，而压缩后端只活在 context-optimize 模式的 realm 里。
+    - id: context-optimize-host
+      name: dsh-context-optimize
     - id: preset-context-optimize
       name: '@deepseek-ai/dsh-agent-preset'
       config:

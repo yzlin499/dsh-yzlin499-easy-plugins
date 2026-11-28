@@ -62,16 +62,12 @@ export async function apply(ctx, config = {}) {
       this.hasFolded = new Set()
       /** 最近一次卡片，便于 /compact 之外的诊断读取 */
       this.lastCard = new Map()
-      /** sessionId → 折叠历史（供侧边栏「上下文大纲」读取） */
-      this.history = new Map()
 
       innerCtx.on('session/event', (session, event) => {
         if (event?.type !== 'tool/call') return
         const key = session?.id ?? 'unknown'
         this.toolStepsSinceFold.set(key, (this.toolStepsSinceFold.get(key) ?? 0) + 1)
       })
-
-      this.installRoute()
     }
 
     /** 折叠准入：首折放行；之后要求「连续做过若干工具步」，溢出恢复永远放行。 */
@@ -89,59 +85,8 @@ export async function apply(ctx, config = {}) {
         const key = agent.session.id
         this.hasFolded.add(key)
         this.toolStepsSinceFold.set(key, 0)
-        const entries = this.history.get(key) ?? []
-        entries.push({
-          tokens: Number(result.shadowedTokenCount) || 0,
-          nodes: Array.isArray(result.shadowedSeqs) ? result.shadowedSeqs.length : 0,
-          start: result.shadowedRange?.start ?? null,
-          end: result.shadowedRange?.end ?? null,
-          trigger,
-          at: Date.now(),
-        })
-        this.history.set(key, entries.slice(-50))
       }
       return result
-    }
-
-    /**
-     * 给侧边栏「上下文大纲」用的只读接口：只回本引擎自己记下的折叠历史，
-     * 不猜客户端拿不到的数字。挂 /context-optimize/outline?session=<id>。
-     */
-    installRoute() {
-      const webServer = this.ctx.get?.('webServer')
-      if (!webServer || typeof webServer.register !== 'function') return
-      this.ctx.effect(() => webServer.register({
-        kind: 'prefix',
-        path: '/context-optimize',
-        handler: (req, res) => {
-          try {
-            const url = new URL(req.url ?? '/', 'http://localhost')
-            if (url.pathname !== '/context-optimize/outline') {
-              res.statusCode = 404
-              res.end()
-              return
-            }
-            const sessionId = url.searchParams.get('session') ?? ''
-            const entries = this.history.get(sessionId) ?? []
-            const body = {
-              sessionId,
-              folded: entries.length,
-              tokens: entries.reduce((sum, entry) => sum + entry.tokens, 0),
-              nodes: entries.reduce((sum, entry) => sum + entry.nodes, 0),
-              stepsSinceFold: this.toolStepsSinceFold.get(sessionId) ?? 0,
-              minToolSteps: options.minToolStepsBetweenFolds,
-              entries,
-              card: this.lastCard.get(sessionId) ?? null,
-            }
-            res.setHeader('content-type', 'application/json; charset=utf-8')
-            res.setHeader('cache-control', 'no-store')
-            res.end(JSON.stringify(body))
-          } catch (error) {
-            res.statusCode = 500
-            res.end(JSON.stringify({ error: String(error?.message ?? error) }))
-          }
-        },
-      }))
     }
 
     /**
