@@ -1,0 +1,32 @@
+{
+  "name": "dsh-context-optimize",
+  "version": "0.1.0",
+  "private": true,
+  "description": "上下文优化模式：以「卡片折叠」替换官方压缩后端，折叠由巡航判定、卡片可询问，并在输入框下显示上下文大纲轴。",
+  "type": "module",
+  "main": "index.js",
+  "license": "MIT",
+  "exports": {
+    ".": "./index.js",
+    "./compaction": "./compaction.js",
+    "./client": "./client.js",
+    "./lib/card": "./lib/card.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "inject": [
+        "slots",
+        "locale"
+      ],
+      "platform": "web"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\""
+  }
+}
